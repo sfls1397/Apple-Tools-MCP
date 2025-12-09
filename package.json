@@ -1,0 +1,83 @@
+{
+  "name": "apple-tools-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for semantic search across Apple Mail, Messages, and Calendar",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "apple-tools-mcp": "./index.js"
+  },
+  "author": "Peter Coates",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sfls1397/apple-tools-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sfls1397/apple-tools-mcp/issues"
+  },
+  "homepage": "https://github.com/sfls1397/apple-tools-mcp#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "apple",
+    "mail",
+    "email",
+    "calendar",
+    "messages",
+    "imessage",
+    "semantic-search",
+    "claude",
+    "anthropic",
+    "macos"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "index.js",
+    "indexer.js",
+    "search.js",
+    "contacts.js",
+    "lib/",
+    "scripts/audit-index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "build-index": "APPLE_TOOLS_INDEX_DAYS_BACK=30 node -e \"import('./indexer.js').then(i=>i.rebuildIndex()).catch(e=>{console.error(e.message);process.exit(1)})\"",
+    "audit": "APPLE_TOOLS_INDEX_DAYS_BACK=30 node scripts/audit-index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:coverage": "vitest run --coverage",
+    "test:idx": "vitest run tests/indexing",
+    "test:idx:accuracy": "vitest run tests/indexing/accuracy",
+    "test:idx:resource": "vitest run tests/indexing/resource",
+    "test:security": "vitest run tests/indexing/security",
+    "perf": "vitest run tests/perf",
+    "perf:quick": "vitest run tests/perf/tools.perf.test.js",
+    "perf:embedding": "vitest run tests/perf/embedding.perf.test.js",
+    "perf:stress": "vitest run tests/perf/stress.perf.test.js",
+    "perf:indexing": "vitest run tests/perf/indexing.perf.test.js",
+    "perf:search": "vitest run tests/perf/search.perf.test.js",
+    "perf:negative": "vitest run tests/perf/negative.perf.test.js",
+    "perf:regression": "vitest run tests/perf/regression.perf.test.js",
+    "perf:lancedb": "vitest run tests/perf/lancedb.perf.test.js",
+    "perf:background": "vitest run tests/perf/background-indexing.perf.test.js",
+    "perf:dates": "vitest run tests/perf/date-parsing.perf.test.js"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.22.3",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@xenova/transformers": "^2.17.2",
+    "chrono-node": "^2.9.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "fast-check": "^3.22.0"
+  }
+}
