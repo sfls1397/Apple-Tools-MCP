@@ -19,13 +19,16 @@ describe('Timeout Handling', () => {
   })
 
   describe('withTimeout utility', () => {
-    // Mock the withTimeout function behavior
+    // Mirrors indexer.js / index.js: clear the timer on fulfill or reject
     const withTimeout = (promise, timeoutMs, operation = "Operation") => {
+      let timer
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
+        if (timer.unref) timer.unref()
+      })
       return Promise.race([
-        promise,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
-        )
+        promise.finally(() => clearTimeout(timer)),
+        timeoutPromise
       ])
     }
 
@@ -51,6 +54,17 @@ describe('Timeout Handling', () => {
       await expect(
         withTimeout(slowPromise, 100, 'Custom operation')
       ).rejects.toThrow('Custom operation timed out after 100ms')
+    })
+
+    it('should clear the timer when the original promise rejects', async () => {
+      vi.useFakeTimers()
+      try {
+        const failed = Promise.reject(new Error('boom'))
+        await expect(withTimeout(failed, 10_000, 'Op')).rejects.toThrow('boom')
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 
