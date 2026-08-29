@@ -112,8 +112,9 @@ describe.skipIf(!indexExists)('Real Data Integration Tests', () => {
     })
 
     it.skip('should have reasonable dates', async () => {
-      // SKIPPED: Index may contain emails outside the 30-day window
-      // even though DAYS_BACK=30 was used during rebuild
+      // SKIPPED: Production index is unlimited by default, so dates are not
+      // constrained to a 30-day window. Kept as a sanity check that dates
+      // are parseable and not in the far future.
       if (!tables.includes('emails')) return
 
       const table = await db.openTable('emails')
@@ -122,13 +123,10 @@ describe.skipIf(!indexExists)('Real Data Integration Tests', () => {
       const results = await table.search(embedding).limit(5).toArray()
 
       const now = Date.now()
-      const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000)
 
       for (const email of results) {
         if (email.date) {
           const timestamp = typeof email.date === 'number' ? email.date : new Date(email.date).getTime()
-          // Index is limited to 30-day window, so dates should be within last 30 days and not in future
-          expect(timestamp).toBeGreaterThan(thirtyDaysAgo)
           expect(timestamp).toBeLessThanOrEqual(now + 86400000) // Allow 1 day future for timezone
         }
       }

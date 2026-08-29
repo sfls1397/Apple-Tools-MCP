@@ -35,11 +35,12 @@ export const INDEX_DIR = process.env.APPLE_TOOLS_INDEX_DIR ||
   path.join(process.env.HOME, ".apple-tools-mcp", "vector-index");
 const META_FILE = process.env.APPLE_TOOLS_META_FILE ||
   path.join(process.env.HOME, ".apple-tools-mcp", "index-meta.json");
-// Support filtering by date for testing (default: 30 days for faster indexing during testing)
-// Set APPLE_TOOLS_INDEX_DAYS_BACK=0 to disable filtering and index ALL emails
+// Optional date filter for email indexing. Default is unlimited (index all emails).
+// Set APPLE_TOOLS_INDEX_DAYS_BACK=30 to cap the window (tests do this).
+// Set APPLE_TOOLS_INDEX_DAYS_BACK=0 to explicitly disable filtering.
 const DAYS_BACK = process.env.APPLE_TOOLS_INDEX_DAYS_BACK !== undefined
   ? parseInt(process.env.APPLE_TOOLS_INDEX_DAYS_BACK, 10) || null  // 0 means null (no filter)
-  : 30;  // Default to 30 days
+  : null;  // Default: no date filter
 const MAIL_DIR = path.join(process.env.HOME, "Library", "Mail");
 
 // Load/save index metadata (timestamps, etc.)
@@ -91,11 +92,13 @@ const EMBEDDING_DIM = 384; // all-MiniLM-L6-v2 dimension
 
 // Timeout wrapper for promises
 function withTimeout(promise, timeoutMs, operation = "Operation") {
+  let timer;
   return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
-    )
+    promise.then(result => { clearTimeout(timer); return result; }),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs);
+      if (timer.unref) timer.unref();
+    })
   ]);
 }
 

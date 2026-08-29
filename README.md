@@ -72,16 +72,16 @@ Quit and reopen Claude Desktop to load the MCP server.
 
 ## Building the Index
 
-On first use, the server will automatically build a vector index of your recent emails, messages, and calendar events. This may take a few minutes depending on the volume of data.
+On first use, the server will automatically build a vector index of your emails, messages, and calendar events. Email history is unlimited by default. This may take a while depending on the volume of data.
 
 You can manually rebuild the index:
 
 ```bash
-# Index last 30 days (default)
-npx apple-tools-mcp build-index
+# Index all email history (default)
+npm run build-index
 
-# Index more history
-APPLE_TOOLS_INDEX_DAYS_BACK=90 npx apple-tools-mcp build-index
+# Optional: cap email lookback (e.g. for a faster test rebuild)
+APPLE_TOOLS_INDEX_DAYS_BACK=30 npm run build-index
 ```
 
 The index is stored in `~/.apple-tools-mcp/vector-index/`.
@@ -170,7 +170,7 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 ### Empty search results
 
 1. Check that the index was built: `ls ~/.apple-tools-mcp/vector-index/`
-2. Rebuild the index if needed: `npx apple-tools-mcp build-index`
+2. Rebuild the index if needed: `npm run build-index`
 
 ### Server not appearing in Claude
 
@@ -210,6 +210,20 @@ npm run audit
 # Detailed audit saved to file
 npm run audit -- --reporter=verbose > audit-report.txt
 ```
+
+## Claude Code Structure
+
+This project uses [Claude Code](https://claude.ai/code) with AI-assisted development tooling:
+
+| Path | Purpose |
+|------|---------|
+| `CLAUDE.md` | Project context loaded every Claude Code session |
+| `.claude/skills/` | Reusable AI workflows (invoke with `/skill-name`) |
+| `.claude/settings.json` | Hooks and permissions for Claude Code |
+| `.claude/docs/` | AI-facing reference documents |
+| `docs/architecture.md` | Detailed architecture documentation |
+| `docs/decisions/` | Architecture Decision Records |
+| `docs/runbooks/` | Operational procedures and troubleshooting |
 
 ## Development
 
