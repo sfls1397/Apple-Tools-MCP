@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import { validateEmailPath, stripHtmlTags } from "./lib/validators.js";
 
 // Lock file to prevent duplicate indexing processes
@@ -92,10 +93,9 @@ function releaseLock() {
 // Kill any zombie MCP processes on startup (except this one)
 function cleanupZombieProcesses() {
   try {
-    const { execSync } = require('child_process');
-    // Find all apple-tools-mcp index.js processes
-    const psOutput = execSync('ps aux | grep "apple-tools-mcp/index.js" | grep -v grep || true', { encoding: 'utf-8' });
+    const psOutput = execSync('ps aux | grep "[a]pple-tools-mcp/index.js" || true', { encoding: 'utf-8' });
     const lines = psOutput.trim().split('\n').filter(l => l);
+    let killedAny = false;
 
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
@@ -109,9 +109,20 @@ function cleanupZombieProcesses() {
         process.kill(pid, 0); // Check if exists
         console.error(`Killing zombie MCP process: ${pid}`);
         process.kill(pid, 'SIGTERM');
+        killedAny = true;
       } catch {
         // Process already dead
       }
+    }
+
+    // If we killed processes, remove stale lock file and wait briefly for them to die
+    if (killedAny) {
+      try {
+        if (fs.existsSync(LOCK_FILE)) {
+          fs.unlinkSync(LOCK_FILE);
+          console.error("Removed stale lock file from killed zombie process");
+        }
+      } catch { /* ignore */ }
     }
   } catch (e) {
     // Ignore errors - cleanup is best-effort
@@ -237,11 +248,13 @@ function getIndexingMessage() {
 
 // Timeout wrapper for promises
 function withTimeout(promise, timeoutMs, operation = "Operation") {
+  let timer;
   return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
-    )
+    promise.then(result => { clearTimeout(timer); return result; }),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs);
+      if (timer.unref) timer.unref();
+    })
   ]);
 }
 
@@ -1490,9 +1503,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start the server
 async function main() {
-  // Kill any zombie processes from previous sessions
-  cleanupZombieProcesses();
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Apple Tools MCP server running (v2.0.0)");
