@@ -327,11 +327,11 @@ describe('validateMailboxName', () => {
     })
 
     it('should reject names with newlines', () => {
-      // NOTE: Current implementation allows \s which includes newlines
-      // This is a potential security concern - the regex should use [ ] instead of \s
-      // For now, testing current behavior:
-      // TODO: Consider fixing validateMailboxName to reject newlines
-      expect(validateMailboxName('INBOX\nmalicious')).toBe('INBOX\nmalicious')
+      expect(validateMailboxName('INBOX\nmalicious')).toBeNull()
+    })
+
+    it('should reject names with tabs', () => {
+      expect(validateMailboxName('INBOX\tmalicious')).toBeNull()
     })
   })
 

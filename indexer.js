@@ -1,7 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { exec } from "child_process";
-import { promisify } from "util";
 import * as lancedb from "@lancedb/lancedb";
 import { pipeline } from "@xenova/transformers";
 import {
@@ -13,7 +11,7 @@ import {
   escapeSQL,
   stripHtmlTags
 } from "./lib/validators.js";
-import { safeSqlite3Json, safeOsascript } from "./lib/shell.js";
+import { safeSqlite3Json, safeOsascript, safeFind } from "./lib/shell.js";
 
 // Re-export contact functions for use by other modules
 export {
@@ -27,8 +25,6 @@ export {
   formatContact,
   getContactStats
 } from "./contacts.js";
-
-const execAsync = promisify(exec);
 
 // Support env var overrides for testing with separate index
 export const INDEX_DIR = process.env.APPLE_TOOLS_INDEX_DIR ||
@@ -339,10 +335,8 @@ function parseEmlx(filePath) {
 // Includes both .emlx and .partial.emlx files (partial = not fully downloaded via IMAP)
 async function findAllEmlxFiles() {
   try {
-    // Find both .emlx and .partial.emlx files
-    const cmd = `find "${MAIL_DIR}" \\( -name "*.emlx" -o -name "*.partial.emlx" \\) 2>/dev/null`;
-    const { stdout } = await execAsync(cmd, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, timeout: 120000 });
-    return stdout.trim().split("\n").filter(f => f);
+    // "*.emlx" also matches "*.partial.emlx"
+    return safeFind(MAIL_DIR, { name: "*.emlx", type: "f" });
   } catch (e) {
     console.error("Error finding emlx files:", e.message);
     return [];
@@ -364,9 +358,7 @@ async function findNewEmlxFiles(sinceTimestamp) {
 
     // Use find with -mtime instead of mdfind for reliability
     // find is more reliable than Spotlight which can have stale/incomplete indexes
-    const cmd = `find "${MAIL_DIR}" \\( -name "*.emlx" -o -name "*.partial.emlx" \\) -mtime -${daysAgo} 2>/dev/null`;
-    const { stdout } = await execAsync(cmd, { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, timeout: 120000 });
-    const files = stdout.trim().split("\n").filter(f => f);
+    const files = safeFind(MAIL_DIR, { name: "*.emlx", type: "f", mtime: `-${daysAgo}` });
     console.error(`find found ${files.length} new/modified emails in last ${daysAgo} days`);
     return files;
   } catch (e) {
@@ -900,12 +892,6 @@ async function getIndexedIdsWithRetry(tableName, idField, maxRetries = 3) {
 
 export async function indexEmails(progressCallback = null, forceFullScan = false) {
   await initDB();
-
-  // DEBUG: Log the DAYS_BACK value at function entry
-  console.error(`\n[DEBUG] indexEmails called:`);
-  console.error(`  - DAYS_BACK constant: ${DAYS_BACK}`);
-  console.error(`  - forceFullScan param: ${forceFullScan}`);
-  console.error(`  - env var: ${process.env.APPLE_TOOLS_INDEX_DAYS_BACK || 'NOT SET'}`);
 
   // Load last index timestamp for incremental scanning
   const meta = loadIndexMeta();

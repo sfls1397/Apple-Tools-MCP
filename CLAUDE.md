@@ -6,7 +6,7 @@ Apple Tools MCP is a Model Context Protocol server that provides semantic search
 
 ### index.js -- MCP Server and Tool Dispatcher
 
-Entry point and process lifecycle manager. Registers all 22 MCP tools, routes tool calls to handler functions, manages lock file acquisition/release, zombie process cleanup, and signal handling. Starts background indexing via `setInterval`. Tools return a "still indexing" message until the first index cycle completes (`sessionIndexComplete` flag). Contains `smartSearch()` which auto-detects data sources from query intent and searches them in parallel, then groups results into 1-hour time buckets via `synthesizeResults()`.
+Entry point and process lifecycle manager. Registers all 22 MCP tools, routes tool calls to handler functions, manages lock file acquisition/release, and signal handling. Starts background indexing via `setInterval`. Tools return a "still indexing" message until the first index cycle completes (`sessionIndexComplete` flag). Contains `smartSearch()` which auto-detects data sources from query intent and searches them in parallel, then groups results into 1-hour time buckets via `synthesizeResults()`.
 
 ### indexer.js -- Data Ingestion and Vector Storage
 

@@ -8,7 +8,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs";
 import path from "path";
-import { execSync } from "child_process";
 import { validateEmailPath, stripHtmlTags } from "./lib/validators.js";
 
 // Lock file to prevent duplicate indexing processes
@@ -87,45 +86,6 @@ function releaseLock() {
   } catch (err) {
     // Log error but don't throw - we're likely shutting down
     console.error(`Error releasing lock: ${err.message}`);
-  }
-}
-
-// Kill any zombie MCP processes on startup (except this one)
-function cleanupZombieProcesses() {
-  try {
-    const psOutput = execSync('ps aux | grep "[a]pple-tools-mcp/index.js" || true', { encoding: 'utf-8' });
-    const lines = psOutput.trim().split('\n').filter(l => l);
-    let killedAny = false;
-
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      const pid = parseInt(parts[1]);
-
-      // Skip this process
-      if (pid === process.pid) continue;
-
-      // Check if process is still running and kill it
-      try {
-        process.kill(pid, 0); // Check if exists
-        console.error(`Killing zombie MCP process: ${pid}`);
-        process.kill(pid, 'SIGTERM');
-        killedAny = true;
-      } catch {
-        // Process already dead
-      }
-    }
-
-    // If we killed processes, remove stale lock file and wait briefly for them to die
-    if (killedAny) {
-      try {
-        if (fs.existsSync(LOCK_FILE)) {
-          fs.unlinkSync(LOCK_FILE);
-          console.error("Removed stale lock file from killed zombie process");
-        }
-      } catch { /* ignore */ }
-    }
-  } catch (e) {
-    // Ignore errors - cleanup is best-effort
   }
 }
 
@@ -246,19 +206,6 @@ function getIndexingMessage() {
   return "Indexing new data. Please try again in a moment.";
 }
 
-// Timeout wrapper for promises
-function withTimeout(promise, timeoutMs, operation = "Operation") {
-  let timer;
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs);
-    if (timer.unref) timer.unref();
-  });
-  return Promise.race([
-    promise.finally(() => clearTimeout(timer)),
-    timeoutPromise
-  ]);
-}
-
 // Run a single indexing cycle (called by background timer)
 function runIndexCycle() {
   if (indexingInProgress) {
@@ -370,10 +317,11 @@ function stopBackgroundIndexing() {
 async function initializeIndexing() {
   isFirstEverRun = await checkIfFirstRun();
 
-  // Try to acquire lock - if another instance is running, exit
+  // Try to acquire lock - if another instance is indexing, skip background
+  // indexing but keep the MCP server running so search still works.
   if (!acquireLock()) {
-    console.error("Another apple-tools-mcp instance is running. Exiting.");
-    process.exit(0);
+    console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
+    return;
   }
 
   // Start background indexing
@@ -1506,7 +1454,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Apple Tools MCP server running (v2.0.0)");
+  console.error("Apple Tools MCP server running (v1.0.0)");
   // Background indexing runs automatically on startup and every INDEX_INTERVAL
 }
 
