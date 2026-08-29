@@ -11,12 +11,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sfls1397/apple-tools-mcp.git"
+    "url": "git+https://github.com/sfls1397/Apple-Tools-MCP.git"
   },
   "bugs": {
-    "url": "https://github.com/sfls1397/apple-tools-mcp/issues"
+    "url": "https://github.com/sfls1397/Apple-Tools-MCP/issues"
   },
-  "homepage": "https://github.com/sfls1397/apple-tools-mcp#readme",
+  "homepage": "https://github.com/sfls1397/Apple-Tools-MCP#readme",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -33,6 +33,12 @@
   ],
   "engines": {
     "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "index.js",

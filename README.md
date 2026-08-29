@@ -25,6 +25,21 @@ An MCP (Model Context Protocol) server that provides semantic search across Appl
 npm install -g apple-tools-mcp
 ```
 
+Or from source:
+
+```bash
+git clone https://github.com/sfls1397/Apple-Tools-MCP.git
+cd Apple-Tools-MCP
+npm install
+```
+
+If you installed from source, point Claude Desktop at the local `index.js` instead of `npx` in step 3:
+
+```json
+"command": "node",
+"args": ["/absolute/path/to/Apple-Tools-MCP/index.js"]
+```
+
 ### 2. Grant Full Disk Access
 
 The MCP server needs access to read your Mail, Messages, and Calendar databases.
@@ -210,20 +225,6 @@ npm run audit
 # Detailed audit saved to file
 npm run audit -- --reporter=verbose > audit-report.txt
 ```
-
-## Claude Code Structure
-
-This project uses [Claude Code](https://claude.ai/code) with AI-assisted development tooling:
-
-| Path | Purpose |
-|------|---------|
-| `CLAUDE.md` | Project context loaded every Claude Code session |
-| `.claude/skills/` | Reusable AI workflows (invoke with `/skill-name`) |
-| `.claude/settings.json` | Hooks and permissions for Claude Code |
-| `.claude/docs/` | AI-facing reference documents |
-| `docs/architecture.md` | Detailed architecture documentation |
-| `docs/decisions/` | Architecture Decision Records |
-| `docs/runbooks/` | Operational procedures and troubleshooting |
 
 ## Development
 

@@ -6,7 +6,7 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./tests/helpers/setup.js'],
     include: ['tests/**/*.test.js'],
-    exclude: ['tests/personal/**', 'node_modules/**'],
+    exclude: ['tests/personal/**', 'tests/agents/**', 'node_modules/**'],
     testTimeout: 30000,
     hookTimeout: 30000,
     coverage: {
