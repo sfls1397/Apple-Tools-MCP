@@ -46,8 +46,8 @@
   ],
   "scripts": {
     "start": "node index.js",
-    "build-index": "APPLE_TOOLS_INDEX_DAYS_BACK=30 node -e \"import('./indexer.js').then(i=>i.rebuildIndex()).catch(e=>{console.error(e.message);process.exit(1)})\"",
-    "audit": "APPLE_TOOLS_INDEX_DAYS_BACK=30 node scripts/audit-index.js",
+    "build-index": "node -e \"import('./indexer.js').then(i=>i.rebuildIndex()).catch(e=>{console.error(e.message);process.exit(1)})\"",
+    "audit": "node scripts/audit-index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
