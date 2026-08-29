@@ -93,12 +93,13 @@ const EMBEDDING_DIM = 384; // all-MiniLM-L6-v2 dimension
 // Timeout wrapper for promises
 function withTimeout(promise, timeoutMs, operation = "Operation") {
   let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs);
+    if (timer.unref) timer.unref();
+  });
   return Promise.race([
-    promise.then(result => { clearTimeout(timer); return result; }),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs);
-      if (timer.unref) timer.unref();
-    })
+    promise.finally(() => clearTimeout(timer)),
+    timeoutPromise
   ]);
 }
 
