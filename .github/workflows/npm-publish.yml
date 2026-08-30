@@ -1,4 +1,5 @@
-# Test on macOS (this package is darwin-only) and publish to npmjs.org on release.
+# Test on macOS (this package is darwin-only) and publish to npmjs.org on release
+# using npm trusted publishing (OIDC). No NPM_TOKEN secret is required.
 
 name: Test and Publish
 
@@ -26,13 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
       - run: npm ci
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
