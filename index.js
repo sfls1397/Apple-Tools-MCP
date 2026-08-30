@@ -1454,7 +1454,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Apple Tools MCP server running (v1.0.0)");
+  console.error("Apple Tools MCP server running (v1.1.0)");
   // Background indexing runs automatically on startup and every INDEX_INTERVAL
 }
 
