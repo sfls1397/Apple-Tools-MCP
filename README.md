@@ -137,10 +137,10 @@ Once configured, Claude can use these tools:
 | Tool | Description |
 |------|-------------|
 | `calendar_search` | Semantic search for events with filters |
-| `calendar_date` | Get events on a specific date |
+| `calendar_date` | Get events on a specific date (live Calendar.app, not the search index) |
 | `calendar_upcoming` | Get next N upcoming events |
 | `calendar_week` | Get all events for current or future week |
-| `calendar_free_time` | Find available time slots on a date |
+| `calendar_free_time` | Find available time slots on a date (live Calendar.app, not the search index) |
 | `calendar_recurring` | List recurring events |
 
 ### Contacts Tools

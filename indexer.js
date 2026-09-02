@@ -63,6 +63,7 @@ const BATCH_DELAY_MS = 0; // No delay needed - benchmarks showed no thermal thro
 
 // Mac Absolute Time epoch: Jan 1, 2001 00:00:00 UTC
 const MAC_ABSOLUTE_EPOCH = 978307200;
+export const CALENDAR_TMP_PREFIX = "apple-tools-cal-";
 
 let embeddingPipeline = null;
 let db = null;
@@ -1684,6 +1685,117 @@ export function getUpcomingEvents(limit = 10) {
   } catch (e) {
     console.error("Error getting upcoming events:", e.message);
     return { events: [], showing: 0, hasMore: false };
+  }
+}
+
+// Convert local-day unix ms bounds to Apple/Core Data seconds (unix - 978307200)
+export function localDayToMacBounds(startMs, endMs) {
+  const startMac = Math.floor(Number(startMs) / 1000) - MAC_ABSOLUTE_EPOCH;
+  const endMac = Math.floor(Number(endMs) / 1000) - MAC_ABSOLUTE_EPOCH;
+  if (!Number.isFinite(startMac) || !Number.isFinite(endMac)) {
+    throw new Error("Invalid date bounds");
+  }
+  return { startMac, endMac };
+}
+
+// Date-bounded OccurrenceCache query: one row per occurrence, no GROUP BY ci.ROWID
+export function buildEventsOnDateQuery(startMac, endMac) {
+  const startBound = Math.floor(Number(startMac));
+  const endBound = Math.floor(Number(endMac));
+  if (!Number.isFinite(startBound) || !Number.isFinite(endBound)) {
+    throw new Error("Invalid Mac Absolute Time bounds");
+  }
+  const timedStart = "COALESCE(oc.occurrence_end_date - (ci.end_date - ci.start_date), ci.start_date)";
+  const occEnd = "COALESCE(oc.occurrence_end_date, ci.end_date)";
+  // First local day = occurrence-end local date minus (durationDays - 1). Day math, not seconds (DST-safe).
+  const allDayStartDate = `date(${occEnd} + 978307200, 'unixepoch', 'localtime', '-' || (CAST(round((ci.end_date - ci.start_date) / 86400.0) AS INTEGER) - 1) || ' days')`;
+  const allDayStartMac = `CAST(strftime('%s', ${allDayStartDate} || ' 00:00:00', 'utc') AS INTEGER) - 978307200`;
+  return `
+      SELECT DISTINCT
+        ci.ROWID as itemId,
+        ci.summary as title,
+        datetime(CASE WHEN ci.all_day THEN ${allDayStartMac} ELSE ${timedStart} END + 978307200, 'unixepoch', 'localtime') as start,
+        datetime(${occEnd} + 978307200, 'unixepoch', 'localtime') as end,
+        CASE WHEN ci.all_day THEN ${allDayStartMac} ELSE ${timedStart} END as startMac,
+        ${occEnd} as endMac,
+        ci.all_day as isAllDay,
+        c.title as calendar,
+        l.title as location
+      FROM OccurrenceCache oc
+      INNER JOIN CalendarItem ci ON oc.event_id = ci.ROWID
+      LEFT JOIN Calendar c ON ci.calendar_id = c.ROWID
+      LEFT JOIN Location l ON ci.location_id = l.ROWID
+      WHERE ci.summary IS NOT NULL AND ci.summary <> ''
+        AND (c.title IS NULL OR c.title NOT IN ('Found in Mail', 'Found in Natural Language'))
+        AND (
+          (oc.day >= ${startBound} AND oc.day < ${endBound})
+          OR (
+            ci.all_day = 0
+            AND ${timedStart} < ${startBound}
+            AND ${occEnd} > ${startBound}
+          )
+        )
+      ORDER BY startMac ASC, title ASC
+    `;
+}
+
+// Copy Calendar.sqlitedb (+ wal/shm) to /tmp for one query, then delete the copies.
+// Calendar.app holds a lock on the live db; sqlite can read a snapshot copy.
+function withCalendarCopy(fn) {
+  const id = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const tmpDb = path.join("/tmp", `${CALENDAR_TMP_PREFIX}${id}.sqlitedb`);
+  const tmpWal = `${tmpDb}-wal`;
+  const tmpShm = `${tmpDb}-shm`;
+  const srcWal = `${CALENDAR_DB}-wal`;
+  const srcShm = `${CALENDAR_DB}-shm`;
+
+  try {
+    if (!fs.existsSync(CALENDAR_DB)) {
+      throw new Error("Calendar database not found");
+    }
+    fs.copyFileSync(CALENDAR_DB, tmpDb);
+    if (fs.existsSync(srcWal)) {
+      fs.copyFileSync(srcWal, tmpWal);
+    }
+    if (fs.existsSync(srcShm)) {
+      fs.copyFileSync(srcShm, tmpShm);
+    }
+    return fn(tmpDb);
+  } finally {
+    for (const file of [tmpDb, tmpWal, tmpShm]) {
+      try {
+        fs.unlinkSync(file);
+      } catch {
+        // already gone or never created
+      }
+    }
+  }
+}
+
+// calendar_date: live OccurrenceCache for every occurrence on a local day
+export function getEventsOnDate(startMs, endMs) {
+  try {
+    if (!fs.existsSync(CALENDAR_DB)) {
+      return { events: [], error: "Calendar database not found" };
+    }
+    const { startMac, endMac } = localDayToMacBounds(startMs, endMs);
+    const query = buildEventsOnDateQuery(startMac, endMac);
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const events = withCalendarCopy((dbPath) => {
+          return safeSqlite3Json(dbPath, query, { timeout: 15000 });
+        });
+        return { events, error: null };
+      } catch (e) {
+        lastError = e;
+        console.error(`Error getting events on date (attempt ${attempt + 1}):`, e.message);
+      }
+    }
+    return { events: [], error: lastError.message };
+  } catch (e) {
+    console.error("Error getting events on date:", e.message);
+    return { events: [], error: e.message };
   }
 }
 
