@@ -2,7 +2,7 @@ import * as lancedb from "@lancedb/lancedb";
 import * as chrono from "chrono-node";
 import { safeOsascript } from "./lib/shell.js";
 import { safeMatch, validateSearchQuery } from "./lib/validators.js";
-import { embed, INDEX_DIR, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getCalendarByDate, getAllCalendarEvents, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
+import { embed, INDEX_DIR, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
 
 let db = null;
 let tables = {};
@@ -1319,28 +1319,40 @@ export async function searchCalendar(query, options = {}) {
   }
 }
 
-// Get events on a specific date
+// Local midnight of parsed date through next local midnight (handles DST; not +24h)
+export function getLocalDayBounds(dateStr) {
+  const start = parseNaturalDate(dateStr);
+  if (start == null) return null;
+  const endDate = new Date(start);
+  endDate.setDate(endDate.getDate() + 1);
+  return { start, end: endDate.getTime() };
+}
+
+// Get events on a specific date from live Calendar.sqlitedb (not the vector index)
 export async function getCalendarDateResults(dateStr) {
   try {
-    const range = getDateRange(dateStr);
+    const range = getLocalDayBounds(dateStr);
     if (!range) {
       return { success: false, error: `Could not parse date: ${dateStr}` };
     }
 
     console.error(`[Calendar Date] Query for "${dateStr}"`);
-    console.error(`[Calendar Date] Range: ${new Date(range.start).toISOString()} to ${new Date(range.end).toISOString()}`);
+    console.error(`[Calendar Date] Range: ${new Date(range.start).toString()} to ${new Date(range.end).toString()}`);
 
-    const results = await getCalendarByDate(range.start, range.end);
+    const { events, error } = getEventsOnDate(range.start, range.end);
+    if (error) {
+      return { success: false, error: `Error getting calendar events: ${error}` };
+    }
 
-    const formattedResults = results.map((row, idx) => ({
+    const formattedResults = events.map((row, idx) => ({
       index: idx + 1,
       title: row.title || "No title",
-      start: formatLocalDate(row.start) || "Unknown",
-      startTimestamp: row.startTimestamp || null,
-      end: formatLocalDate(row.end) || "Unknown",
+      start: formatLocalDate(row.start) || row.start || "Unknown",
+      startTimestamp: row.startMac != null ? (Number(row.startMac) + 978307200) * 1000 : null,
+      end: formatLocalDate(row.end) || row.end || "Unknown",
       calendar: row.calendar || "Unknown",
       location: row.location || "",
-      isAllDay: row.isAllDay || false
+      isAllDay: !!row.isAllDay
     }));
 
     const dateLabel = new Date(range.start).toLocaleDateString("en-US", {
@@ -1360,6 +1372,24 @@ export async function getCalendarDateResults(dateStr) {
   }
 }
 
+// Clamp a timed event to [dayStartMs, dayEndMs) and return minutes from local midnight.
+// Overnight events (23:00–01:00) contribute only the slice that falls on this day.
+export function clampBusyToLocalDay(evtStartMs, evtEndMs, dayStartMs, dayEndMs) {
+  const clampedStart = Math.max(evtStartMs, dayStartMs);
+  const clampedEnd = Math.min(evtEndMs, dayEndMs);
+  if (!(clampedEnd > clampedStart)) return null;
+
+  const startMinutes = clampedStart <= dayStartMs
+    ? 0
+    : new Date(clampedStart).getHours() * 60 + new Date(clampedStart).getMinutes();
+  const endMinutes = clampedEnd >= dayEndMs
+    ? 24 * 60
+    : new Date(clampedEnd).getHours() * 60 + new Date(clampedEnd).getMinutes();
+
+  if (!(endMinutes > startMinutes)) return null;
+  return { startMinutes, endMinutes };
+}
+
 // Calculate free time slots on a specific date
 export async function calculateFreeTime(dateStr, options = {}) {
   const {
@@ -1369,12 +1399,17 @@ export async function calculateFreeTime(dateStr, options = {}) {
   } = options;
 
   try {
-    const range = getDateRange(dateStr);
+    const range = getLocalDayBounds(dateStr);
     if (!range) {
       return { success: false, error: `Could not parse date: ${dateStr}` };
     }
 
-    let events = await getCalendarByDate(range.start, range.end);
+    const { events: liveEvents, error } = getEventsOnDate(range.start, range.end);
+    if (error) {
+      return { success: false, error: `Error calculating free time: ${error}` };
+    }
+
+    let events = liveEvents;
 
     // Filter by calendar if specified
     if (calendarName) {
@@ -1390,16 +1425,21 @@ export async function calculateFreeTime(dateStr, options = {}) {
         continue;
       }
 
-      const evtStart = new Date(evt.startTimestamp);
-      const evtEnd = evt.end ? parseDate(evt.end) : evt.startTimestamp + (60 * 60 * 1000); // Default 1 hour
+      const evtStart = evt.startMac != null
+        ? (Number(evt.startMac) + 978307200) * 1000
+        : (evt.startTimestamp || parseDate(evt.start));
+      const evtEnd = evt.endMac != null
+        ? (Number(evt.endMac) + 978307200) * 1000
+        : (evt.end ? parseDate(evt.end) : evtStart + (60 * 60 * 1000));
 
-      const startMinutes = evtStart.getHours() * 60 + evtStart.getMinutes();
-      const endMinutes = new Date(evtEnd).getHours() * 60 + new Date(evtEnd).getMinutes();
+      const clamped = clampBusyToLocalDay(evtStart, evtEnd, range.start, range.end);
+      if (!clamped) continue;
 
-      busyPeriods.push({
-        start: Math.max(startMinutes, startHour * 60),
-        end: Math.min(endMinutes, endHour * 60)
-      });
+      const start = Math.max(clamped.startMinutes, startHour * 60);
+      const end = Math.min(clamped.endMinutes, endHour * 60);
+      if (end > start) {
+        busyPeriods.push({ start, end });
+      }
     }
 
     // Sort busy periods

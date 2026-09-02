@@ -436,29 +436,11 @@ async function calendarSearch(query, options = {}) {
 }
 
 async function calendarDate(date) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
-  }
-
-  const ready = await isIndexReady("calendar");
-  if (!ready) {
-    return "Calendar index not available. Please try again shortly.";
-  }
-
   const result = await getCalendarDateResults(date);
   return formatCalendarResults(result);
 }
 
 async function calendarFreeTime(date, options = {}) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
-  }
-
-  const ready = await isIndexReady("calendar");
-  if (!ready) {
-    return "Calendar index not available. Please try again shortly.";
-  }
-
   const result = await calculateFreeTime(date, options);
   return formatFreeTimeResults(result);
 }
