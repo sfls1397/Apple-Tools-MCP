@@ -3,6 +3,7 @@ import * as chrono from "chrono-node";
 import { safeOsascript } from "./lib/shell.js";
 import { safeMatch, validateSearchQuery, toUnixMillis } from "./lib/validators.js";
 import { embed, INDEX_DIR, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
+import { indexUnavailableMessage } from "./lib/indexGate.js";
 
 let db = null;
 let tables = {};
@@ -106,12 +107,11 @@ function resolvePronouns(query) {
     return query;
   }
 
-  // Do not use RegExp#test with /g — lastIndex is stateful and can skip the
-  // first (or only) pronoun. replace() with a fresh regex is sufficient.
-  return query.replace(
-    /\b(they|them|their|he|him|his|she|her|hers)\b/gi,
-    queryContext.lastPerson
-  );
+  // Never use RegExp#test with a /g regex — lastIndex is stateful and can
+  // skip the first (or only) pronoun on this or a later call. A fresh
+  // regex plus replace() is lastIndex-safe; do not hoist or test() it.
+  const pronounRe = new RegExp('\\b(they|them|their|he|him|his|she|her|hers)\\b', 'gi');
+  return query.replace(pronounRe, queryContext.lastPerson);
 }
 
 // Extract entities (people, dates) from natural language query and convert to filters
@@ -627,7 +627,7 @@ export async function searchEmails(query, options = {}) {
   if (!tbl) {
     return {
       success: false,
-      error: "Email index not ready. Please wait for indexing to complete."
+      error: indexUnavailableMessage("emails")
     };
   }
 
@@ -1022,7 +1022,7 @@ export async function searchMessages(query, options = {}) {
   if (!tbl) {
     return {
       success: false,
-      error: "Messages index not ready. Please wait for indexing to complete."
+      error: indexUnavailableMessage("messages")
     };
   }
 
@@ -1252,7 +1252,7 @@ export async function searchCalendar(query, options = {}) {
   if (!tbl) {
     return {
       success: false,
-      error: "Calendar index not ready. Please wait for indexing to complete."
+      error: indexUnavailableMessage("calendar")
     };
   }
 
@@ -1673,6 +1673,9 @@ export function formatWeekEventsResults(result) {
 // Format mail_thread results
 export function formatEmailThreadResults(result) {
   if (result.error) {
+    if (result.error === indexUnavailableMessage("emails")) {
+      return result.error;
+    }
     return `Error: ${result.error}`;
   }
 

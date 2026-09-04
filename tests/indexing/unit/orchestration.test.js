@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { isSearchBlockedByIndexing, cycleEndFlags } from '../../../lib/indexGate.js'
 
 /**
  * Simple lock file simulation for testing lock logic
@@ -236,6 +237,13 @@ describe('runIndexCycle', () => {
 
       expect(sessionIndexComplete).toBe(true)
     })
+
+    it('should unblock searches via cycleEndFlags on error', () => {
+      const flags = cycleEndFlags(false)
+      expect(flags.sessionIndexComplete).toBe(true)
+      expect(flags.indexingInProgress).toBe(false)
+      expect(isSearchBlockedByIndexing(flags.sessionIndexComplete, flags.ownsIndexLock)).toBe(false)
+    })
   })
 })
 
@@ -413,6 +421,17 @@ describe('initializeIndexing', () => {
     const acquired = lockMock.acquire(process.pid)
 
     expect(acquired).toBe(false)
+  })
+
+  it('should not leave searches gated when lock is lost', () => {
+    const lockMock = createLockFileMock()
+    lockMock.acquire(99999)
+    const acquired = lockMock.acquire(process.pid)
+    const sessionIndexComplete = false
+    const ownsIndexLock = acquired
+
+    expect(ownsIndexLock).toBe(false)
+    expect(isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)).toBe(false)
   })
 })
 
