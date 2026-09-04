@@ -3,6 +3,7 @@ import * as chrono from "chrono-node";
 import { safeOsascript } from "./lib/shell.js";
 import { safeMatch, validateSearchQuery, toUnixMillis } from "./lib/validators.js";
 import { embed, INDEX_DIR, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
+import { indexUnavailableMessage } from "./lib/indexGate.js";
 
 let db = null;
 let tables = {};
@@ -626,7 +627,7 @@ export async function searchEmails(query, options = {}) {
   if (!tbl) {
     return {
       success: false,
-      error: "Email index not ready. Please wait for indexing to complete."
+      error: indexUnavailableMessage("emails")
     };
   }
 
@@ -1021,7 +1022,7 @@ export async function searchMessages(query, options = {}) {
   if (!tbl) {
     return {
       success: false,
-      error: "Messages index not ready. Please wait for indexing to complete."
+      error: indexUnavailableMessage("messages")
     };
   }
 
@@ -1251,7 +1252,7 @@ export async function searchCalendar(query, options = {}) {
   if (!tbl) {
     return {
       success: false,
-      error: "Calendar index not ready. Please wait for indexing to complete."
+      error: indexUnavailableMessage("calendar")
     };
   }
 
@@ -1672,6 +1673,9 @@ export function formatWeekEventsResults(result) {
 // Format mail_thread results
 export function formatEmailThreadResults(result) {
   if (result.error) {
+    if (result.error === indexUnavailableMessage("emails")) {
+      return result.error;
+    }
     return `Error: ${result.error}`;
   }
 

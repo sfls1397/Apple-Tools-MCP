@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { isSearchBlockedByIndexing, cycleEndFlags } from '../../lib/indexGate.js'
+import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from '../../lib/indexGate.js'
 
 /** Tools PR #1 gated on sessionIndexComplete; lost-lock must not strand them. */
 const INDEX_BACKED_TOOLS = [
@@ -167,5 +167,60 @@ describe('index.js wiring', () => {
     expect(indexSrc).toMatch(
       /Server will run without background indexing\.[\s\S]{0,400}ownsIndexLock = false[\s\S]{0,80}return;/
     )
+  })
+
+  it('advertises package.json version, not a hardcoded 2.0.0', () => {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8')
+    )
+    expect(pkg.version).toBe('1.1.3')
+    expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.0["']/)
+    expect(indexSrc).toContain('PACKAGE_VERSION')
+    expect(indexSrc).toContain('new URL("./package.json", import.meta.url)')
+    expect(indexSrc).toContain('version: PACKAGE_VERSION')
+    expect(indexSrc).toContain('Apple Tools MCP server running (v${PACKAGE_VERSION})')
+  })
+
+  it('rebuild in-progress messages share the same wording', () => {
+    expect(indexSrc).toContain(
+      'Indexing is already in progress. Please wait for it to complete before starting a rebuild.'
+    )
+    expect(indexSrc).toContain(
+      'Indexing is already in progress in a different session. Please wait for it to complete before starting a rebuild.'
+    )
+    expect(indexSrc).not.toContain('Another indexing operation is already in progress')
+  })
+})
+
+describe('indexUnavailableMessage', () => {
+  it('uses the same not-available wording for every source', () => {
+    expect(indexUnavailableMessage('emails')).toBe('Email index not available. Please try again shortly.')
+    expect(indexUnavailableMessage('messages')).toBe('Messages index not available. Please try again shortly.')
+    expect(indexUnavailableMessage('calendar')).toBe('Calendar index not available. Please try again shortly.')
+    expect(indexUnavailableMessage()).toBe('Index not available. Please try again shortly.')
+  })
+
+  it('does not use still-indexing phrasing for a missing index', () => {
+    for (const type of ['emails', 'messages', 'calendar', undefined]) {
+      const msg = indexUnavailableMessage(type)
+      expect(msg).toContain('not available')
+      expect(msg).not.toMatch(/not ready/i)
+      expect(msg).not.toMatch(/wait for indexing to complete/i)
+      expect(msg).not.toMatch(/still indexing/i)
+    }
+  })
+})
+
+describe('search.js and indexer.js use the shared unavailable message', () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
+  const searchSrc = fs.readFileSync(path.join(root, 'search.js'), 'utf8')
+  const indexerSrc = fs.readFileSync(path.join(root, 'indexer.js'), 'utf8')
+
+  it('does not leave leftover index-not-ready still-indexing copy', () => {
+    expect(searchSrc).not.toMatch(/index not ready/i)
+    expect(searchSrc).not.toMatch(/wait for indexing to complete/i)
+    expect(indexerSrc).not.toMatch(/Email index not ready/)
+    expect(searchSrc).toContain('indexUnavailableMessage')
+    expect(indexerSrc).toContain('indexUnavailableMessage')
   })
 })
