@@ -106,12 +106,11 @@ function resolvePronouns(query) {
     return query;
   }
 
-  // Do not use RegExp#test with /g — lastIndex is stateful and can skip the
-  // first (or only) pronoun. replace() with a fresh regex is sufficient.
-  return query.replace(
-    /\b(they|them|their|he|him|his|she|her|hers)\b/gi,
-    queryContext.lastPerson
-  );
+  // Never use RegExp#test with a /g regex — lastIndex is stateful and can
+  // skip the first (or only) pronoun on this or a later call. A fresh
+  // regex plus replace() is lastIndex-safe; do not hoist or test() it.
+  const pronounRe = new RegExp('\\b(they|them|their|he|him|his|she|her|hers)\\b', 'gi');
+  return query.replace(pronounRe, queryContext.lastPerson);
 }
 
 // Extract entities (people, dates) from natural language query and convert to filters
