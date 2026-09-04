@@ -141,6 +141,14 @@ describe('Timezone: DST Transitions', () => {
     // Should still represent a valid day
     expect(dstDay.end).toBeGreaterThan(dstDay.start)
   })
+
+  it('should match getLocalDayBounds (local next midnight, not +24h)', async () => {
+    const { getDateRange, getLocalDayBounds } = await import('../../search.js')
+
+    for (const day of ['2024-03-10', '2024-11-03', '2024-01-15']) {
+      expect(getDateRange(day)).toEqual(getLocalDayBounds(day))
+    }
+  })
 })
 
 describe('Timezone: All-Day Events', () => {

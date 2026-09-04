@@ -8,7 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs";
 import path from "path";
-import { validateEmailPath, stripHtmlTags } from "./lib/validators.js";
+import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
 
 // Lock file to prevent duplicate indexing processes
 const LOCK_FILE = path.join(process.env.HOME, ".apple-tools-mcp", "indexer.lock");
@@ -234,12 +234,12 @@ function runIndexCycle() {
   progressCheckTimer = setInterval(() => {
     const timeSinceProgress = Date.now() - lastProgressTime;
     if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
-      console.error(`⚠️  No indexing progress for ${Math.round(timeSinceProgress / 60000)} minutes. Terminating hung process.`);
+      console.error(`⚠️  No indexing progress for ${Math.round(timeSinceProgress / 60000)} minutes. Indexing still running; not starting another cycle.`);
       clearInterval(progressCheckTimer);
       progressCheckTimer = null;
-      indexingInProgress = false;
+      // Allow searches, but do NOT clear indexingInProgress or release the lock
+      // while indexAll() is still running — overlapping writes can corrupt LanceDB.
       sessionIndexComplete = true;
-      releaseLock();
     }
   }, PROGRESS_CHECK_INTERVAL_MS);
 
@@ -464,7 +464,7 @@ function readFullEmail(filePath) {
       return "Email file not found.";
     }
 
-    const content = fs.readFileSync(validatedPath, 'utf-8');
+    const content = unfoldRfc822Headers(fs.readFileSync(validatedPath, 'utf-8'));
 
     // Parse email headers and body
     const fromMatch = content.match(/^From:\s*(.+)$/m);
@@ -565,7 +565,7 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
       sections.push(`  [${r.rank}] Score: ${r.score}`);
       sections.push(`      From: ${r.sender}${r.isGroupChat ? ' (Group)' : ''}`);
       sections.push(`      Date: ${r.date}`);
-      sections.push(`      Text: ${r.text.substring(0, 100)}...`);
+      sections.push(`      Text: ${(r.text || "").substring(0, 100)}${(r.text || "").length > 100 ? "..." : ""}`);
     }
     sections.push("");
   }
@@ -591,6 +591,10 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
 
 // Smart search - routes to appropriate sources and optionally synthesizes results
 async function smartSearch(query, options = {}) {
+  if (!sessionIndexComplete) {
+    return getIndexingMessage();
+  }
+
   const { limit = 5, synthesize = true } = options;
 
   const sources = detectSources(query);
@@ -671,21 +675,21 @@ function synthesizeResults(mailResults, messageResults, calendarResults) {
 
   // Add mail results
   for (const r of mailResults) {
-    const ts = r.dateTimestamp || new Date(r.date).getTime();
+    const ts = toUnixMillis(r.dateTimestamp) || new Date(r.date).getTime();
     const bucket = getBucket(ts);
     if (bucket) bucket.mail.push(r);
   }
 
   // Add message results
   for (const r of messageResults) {
-    const ts = r.dateTimestamp || new Date(r.date).getTime();
+    const ts = toUnixMillis(r.dateTimestamp) || new Date(r.date).getTime();
     const bucket = getBucket(ts);
     if (bucket) bucket.messages.push(r);
   }
 
   // Add calendar results
   for (const r of calendarResults) {
-    const ts = r.startTimestamp || new Date(r.start).getTime();
+    const ts = toUnixMillis(r.startTimestamp) || new Date(r.start).getTime();
     const bucket = getBucket(ts);
     if (bucket) bucket.calendar.push(r);
   }
@@ -759,6 +763,10 @@ function formatContactLookupResult(contact) {
 // ============ PERSON SEARCH (CROSS-SOURCE) ============
 
 async function personSearch(name, limit = 10) {
+  if (!sessionIndexComplete) {
+    return getIndexingMessage();
+  }
+
   // First, try to find the contact to get all their identifiers
   const contacts = searchContacts(name, 5);
 
@@ -887,7 +895,7 @@ function formatPersonSearchResults(results) {
   if (results.messages && results.messages.results && results.messages.results.length > 0) {
     sections.push(`💬 MESSAGES (${results.messages.results.length}):`);
     for (const r of results.messages.results.slice(0, 10)) {
-      sections.push(`  • ${r.text.substring(0, 80)}${r.text.length > 80 ? "..." : ""}`);
+      sections.push(`  • ${(r.text || "").substring(0, 80)}${(r.text || "").length > 80 ? "..." : ""}`);
       sections.push(`    ${r.date}`);
     }
     sections.push("");
@@ -1244,7 +1252,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Smart search (agentic)
       case "smart_search":
         result = await smartSearch(args.query, {
-          limit: args?.limit || 5,
+          limit: validateLimit(args?.limit, 5, 100),
           synthesize: args?.synthesize !== false
         });
         break;
@@ -1252,8 +1260,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Email tools
       case "mail_search":
         result = await mailSearch(args.query, {
-          limit: args?.limit || 30,
-          daysBack: args?.days_back || 0,
+          limit: validateLimit(args?.limit, 30),
+          daysBack: validateDaysBack(args?.days_back),
           sender: args?.sender || null,
           recipient: args?.recipient || null,
           hasAttachment: args?.has_attachment ?? null,
@@ -1266,7 +1274,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "mail_recent":
-        result = await mailRecent(args?.limit || 30, args?.days_back || 7, args?.unread_only || false, args?.include_junk || false);
+        result = await mailRecent(
+          validateLimit(args?.limit, 30),
+          validateDaysBack(args?.days_back) || 7,
+          args?.unread_only || false,
+          args?.include_junk || false
+        );
         break;
 
       case "mail_date":
@@ -1280,8 +1293,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Messages tools
       case "messages_search":
         result = await messagesSearch(args.query, {
-          limit: args?.limit || 30,
-          daysBack: args?.days_back || 0,
+          limit: validateLimit(args?.limit, 30),
+          daysBack: validateDaysBack(args?.days_back),
           contact: args?.contact || null,
           groupChatOnly: args?.group_chat_only || false,
           groupChatName: args?.group_chat_name || null,
@@ -1291,19 +1304,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "messages_recent":
-        result = await messagesRecent(args?.limit || 30, args?.days_back || 1);
+        result = await messagesRecent(
+          validateLimit(args?.limit, 30),
+          validateDaysBack(args?.days_back) || 1
+        );
         break;
 
       case "messages_conversation":
-        result = await messagesConversation(args.contact, args?.limit || 50);
+        result = await messagesConversation(args.contact, validateLimit(args?.limit, 50));
         break;
 
       // Calendar tools
       case "calendar_search":
         result = await calendarSearch(args.query, {
-          limit: args?.limit || 30,
-          daysBack: args?.days_back || 0,
-          daysAhead: args?.days_ahead || 0,
+          limit: validateLimit(args?.limit, 30),
+          daysBack: validateDaysBack(args?.days_back),
+          daysAhead: validateDaysBack(args?.days_ahead),
           calendarName: args?.calendar_name || null,
           allDayOnly: args?.all_day_only || false,
           sortBy: args?.sort_by || "relevance"
@@ -1326,7 +1342,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Mail tools
       case "mail_senders":
-        result = formatSendersResults(await getFrequentSenders(args?.limit || 30, args?.days_back || 0, args?.include_junk || false));
+        if (!sessionIndexComplete) {
+          result = getIndexingMessage();
+          break;
+        }
+        result = formatSendersResults(await getFrequentSenders(
+          validateLimit(args?.limit, 30),
+          validateDaysBack(args?.days_back),
+          args?.include_junk || false
+        ));
         break;
 
       case "rebuild_index":
@@ -1344,6 +1368,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Start rebuild in background and return immediately
         indexingInProgress = true;
+        sessionIndexComplete = false;
         const rebuildSources = args?.sources || ["emails", "messages", "calendar"];
 
         // Fire and forget - don't await
@@ -1381,34 +1406,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Messages tools
       case "messages_contacts":
-        result = formatMessageContactsResults(getMessageContacts(args?.limit || 50));
+        result = formatMessageContactsResults(getMessageContacts(validateLimit(args?.limit, 50, 500)));
         break;
 
       // Calendar tools
       case "calendar_upcoming":
-        result = formatUpcomingEventsResults(getUpcomingEvents(args?.limit || 30));
+        result = formatUpcomingEventsResults(getUpcomingEvents(validateLimit(args?.limit, 30, 100)));
         break;
 
       // ============ NEW TOOLS - PHASE 2 ============
 
       case "calendar_week":
-        result = formatWeekEventsResults(getWeekEvents(args?.week_offset || 0));
+        result = formatWeekEventsResults(getWeekEvents(validateWeekOffset(args?.week_offset)));
         break;
 
       // ============ NEW TOOLS - PHASE 3 ============
 
       case "mail_thread":
-        result = formatEmailThreadResults(await getEmailThread(args.file_path, args?.limit || 30));
+        if (!sessionIndexComplete) {
+          result = getIndexingMessage();
+          break;
+        }
+        result = formatEmailThreadResults(await getEmailThread(args.file_path, validateLimit(args?.limit, 30)));
         break;
 
       case "calendar_recurring":
-        result = formatRecurringEventsResults(getRecurringEvents(args?.limit || 30));
+        result = formatRecurringEventsResults(getRecurringEvents(validateLimit(args?.limit, 30, 100)));
         break;
 
       // ============ CONTACTS TOOLS ============
 
       case "contacts_search":
-        result = formatContactsSearchResults(searchContacts(args.query, args?.limit || 30));
+        result = formatContactsSearchResults(searchContacts(args.query, validateLimit(args?.limit, 30)));
         break;
 
       case "contacts_lookup":
@@ -1416,7 +1445,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "person_search":
-        result = await personSearch(args.name, args?.limit || 10);
+        result = await personSearch(args.name, validateLimit(args?.limit, 10));
         break;
 
       default:
