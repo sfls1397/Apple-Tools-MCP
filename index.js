@@ -9,7 +9,11 @@ import {
 import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
-import { isSearchBlockedByIndexing, cycleEndFlags } from "./lib/indexGate.js";
+import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from "./lib/indexGate.js";
+
+const PACKAGE_VERSION = JSON.parse(
+  fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
+).version;
 
 // Lock file to prevent duplicate indexing processes
 const LOCK_FILE = path.join(process.env.HOME, ".apple-tools-mcp", "indexer.lock");
@@ -376,7 +380,7 @@ async function mailSearch(query, options = {}) {
 
   const ready = await isIndexReady("emails");
   if (!ready) {
-    return "Email index not available. Please try again shortly.";
+    return indexUnavailableMessage("emails");
   }
 
   const result = await searchEmails(query, options);
@@ -391,7 +395,7 @@ async function mailRecent(limit = 30, daysBack = 7, unreadOnly = false, includeJ
 
   const ready = await isIndexReady("emails");
   if (!ready) {
-    return "Email index not available. Please try again shortly.";
+    return indexUnavailableMessage("emails");
   }
 
   const result = await getRecentEmailResults(limit, daysBack, unreadOnly, includeJunk);
@@ -406,7 +410,7 @@ async function mailDate(date, includeJunk = false) {
 
   const ready = await isIndexReady("emails");
   if (!ready) {
-    return "Email index not available. Please try again shortly.";
+    return indexUnavailableMessage("emails");
   }
 
   const result = await getEmailDateResults(date, includeJunk);
@@ -421,7 +425,7 @@ async function messagesSearch(query, options = {}) {
 
   const ready = await isIndexReady("messages");
   if (!ready) {
-    return "Messages index not available. Please try again shortly.";
+    return indexUnavailableMessage("messages");
   }
 
   const result = await searchMessages(query, options);
@@ -436,7 +440,7 @@ async function messagesRecent(limit = 10, daysBack = 1) {
 
   const ready = await isIndexReady("messages");
   if (!ready) {
-    return "Messages index not available. Please try again shortly.";
+    return indexUnavailableMessage("messages");
   }
 
   const result = await getRecentMessageResults(limit, daysBack);
@@ -451,7 +455,7 @@ async function messagesConversation(contact, limit = 50) {
 
   const ready = await isIndexReady("messages");
   if (!ready) {
-    return "Messages index not available. Please try again shortly.";
+    return indexUnavailableMessage("messages");
   }
 
   const result = await getConversationResults(contact, limit);
@@ -466,7 +470,7 @@ async function calendarSearch(query, options = {}) {
 
   const ready = await isIndexReady("calendar");
   if (!ready) {
-    return "Calendar index not available. Please try again shortly.";
+    return indexUnavailableMessage("calendar");
   }
 
   const result = await searchCalendar(query, options);
@@ -676,6 +680,10 @@ async function smartSearch(query, options = {}) {
   }
 
   await Promise.all(searches);
+
+  if (Object.keys(results).length === 0) {
+    return indexUnavailableMessage();
+  }
 
   // Synthesize results into timeline if multiple sources returned data
   let synthesizedGroups = null;
@@ -964,7 +972,7 @@ function formatPersonSearchResults(results) {
 // ============ MCP SERVER SETUP ============
 
 const server = new Server(
-  { name: "apple-tools-mcp", version: "2.0.0" },
+  { name: "apple-tools-mcp", version: PACKAGE_VERSION },
   { capabilities: { tools: {} } }
 );
 
@@ -1389,6 +1397,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             break;
           }
         }
+        if (!(await isIndexReady("emails"))) {
+          result = indexUnavailableMessage("emails");
+          break;
+        }
         result = formatSendersResults(await getFrequentSenders(
           validateLimit(args?.limit, 30),
           validateDaysBack(args?.days_back),
@@ -1399,13 +1411,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "rebuild_index":
         // Check if indexing is already in progress in this session
         if (indexingInProgress) {
-          result = "⏳ Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
+          result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
           break;
         }
 
         // Acquire lock to prevent parallel rebuilds across multiple MCP instances
         if (!acquireLock()) {
-          result = "Another indexing operation is already in progress in a different session. Please wait for it to complete.";
+          result = "Indexing is already in progress in a different session. Please wait for it to complete before starting a rebuild.";
           break;
         }
 
@@ -1469,6 +1481,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             break;
           }
         }
+        if (!(await isIndexReady("emails"))) {
+          result = indexUnavailableMessage("emails");
+          break;
+        }
         result = formatEmailThreadResults(await getEmailThread(args.file_path, validateLimit(args?.limit, 30)));
         break;
 
@@ -1507,7 +1523,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Apple Tools MCP server running (v1.1.3)");
+  console.error(`Apple Tools MCP server running (v${PACKAGE_VERSION})`);
   // Background indexing runs automatically on startup and every INDEX_INTERVAL
 }
 

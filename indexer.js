@@ -15,6 +15,7 @@ import {
   stripSubjectPrefixes
 } from "./lib/validators.js";
 import { safeSqlite3Json, safeOsascript, safeFind } from "./lib/shell.js";
+import { indexUnavailableMessage } from "./lib/indexGate.js";
 
 // Re-export contact functions for use by other modules
 export {
@@ -1936,7 +1937,7 @@ export function getWeekEvents(weekOffset = 0) {
 // Uses subject-based matching since Message-ID isn't indexed
 export async function getEmailThread(filePath, limit = 20) {
   await initDB();
-  if (!tables.emails) return { error: "Email index not ready", emails: [] };
+  if (!tables.emails) return { error: indexUnavailableMessage("emails"), emails: [] };
 
   try {
     // Validate file path to prevent path traversal attacks
