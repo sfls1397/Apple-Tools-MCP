@@ -9,10 +9,19 @@ import {
 import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
+import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from "./lib/indexGate.js";
+
+const PACKAGE_VERSION = JSON.parse(
+  fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
+).version;
 
 // Lock file to prevent duplicate indexing processes
 const LOCK_FILE = path.join(process.env.HOME, ".apple-tools-mcp", "indexer.lock");
 const LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - if lock is older, assume hung process
+// True only while this process won the indexer lock. Distinct from
+// sessionIndexComplete: a secondary instance that lost the lock never
+// completes a local cycle and must not stay on "still indexing" forever.
+let ownsIndexLock = false;
 
 function acquireLock() {
   try {
@@ -32,6 +41,7 @@ function acquireLock() {
 
       // If we already hold the lock, return true
       if (pid === process.pid) {
+        ownsIndexLock = true;
         return true;
       }
 
@@ -44,6 +54,7 @@ function acquireLock() {
           fs.unlinkSync(LOCK_FILE);
         } else {
           console.error(`Another indexing instance running (PID ${pid}). Skipping indexing.`);
+          ownsIndexLock = false;
           return false;
         }
       } catch {
@@ -57,17 +68,20 @@ function acquireLock() {
     // This prevents TOCTOU race condition - will throw EEXIST if file was created between check and write
     try {
       fs.writeFileSync(LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' });
+      ownsIndexLock = true;
       return true;
     } catch (err) {
       if (err.code === 'EEXIST') {
         // Another process won the race
         console.error("Another process acquired lock during race. Skipping indexing.");
+        ownsIndexLock = false;
         return false;
       }
       throw err; // Re-throw unexpected errors
     }
   } catch (e) {
     console.error("Lock file error:", e.message);
+    ownsIndexLock = false;
     return false; // On error, fail safe - don't proceed
   }
 }
@@ -80,6 +94,7 @@ function releaseLock() {
       const pid = parseInt(pidStr);
       if (pid === process.pid) {
         fs.unlinkSync(LOCK_FILE);
+        ownsIndexLock = false;
         console.error(`Released lock file (PID ${process.pid})`);
       }
     }
@@ -259,11 +274,8 @@ function runIndexCycle() {
 
       lastIndexTime = Date.now();
       lastProgressTime = Date.now();
-      indexingInProgress = false;
-      sessionIndexComplete = true;
-      isFirstEverRun = false;  // After successful index, no longer first run
+      applyCycleEnd(true);
       console.error("Indexing complete.");
-      releaseLock(); // Allow other instances to index
       // Pre-warm tables to eliminate first-query latency
       await prewarmTables();
     }).catch(e => {
@@ -274,9 +286,7 @@ function runIndexCycle() {
       }
 
       console.error("Indexing error:", e.message);
-      indexingInProgress = false;
-      sessionIndexComplete = true;  // Mark complete even on error so queries can proceed
-      releaseLock(); // Allow other instances to index
+      applyCycleEnd(false);
     });
 }
 
@@ -313,6 +323,28 @@ function stopBackgroundIndexing() {
   console.error("Background indexing stopped");
 }
 
+// Unblock searches and drop the indexer lock after a cycle ends.
+// Must run on failure as well as success so tools are not stuck forever.
+function applyCycleEnd(success) {
+  const flags = cycleEndFlags(success);
+  indexingInProgress = flags.indexingInProgress;
+  sessionIndexComplete = flags.sessionIndexComplete;
+  ownsIndexLock = flags.ownsIndexLock;
+  if (flags.isFirstEverRun === false) {
+    isFirstEverRun = false;
+  }
+  releaseLock();
+}
+
+// Index-backed tools wait only while THIS process owns the lock and has not
+// finished its cycle. Lost-lock secondaries fall through to isIndexReady().
+function stillIndexingMessage() {
+  if (isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)) {
+    return getIndexingMessage();
+  }
+  return null;
+}
+
 // Initialize and start indexing
 async function initializeIndexing() {
   isFirstEverRun = await checkIfFirstRun();
@@ -321,6 +353,9 @@ async function initializeIndexing() {
   // indexing but keep the MCP server running so search still works.
   if (!acquireLock()) {
     console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
+    // Lost lock is not "still indexing": this process will never complete a
+    // local cycle. Searches proceed whenever isIndexReady() is true.
+    ownsIndexLock = false;
     return;
   }
 
@@ -338,13 +373,14 @@ async function mailSearch(query, options = {}) {
     return "Error: query parameter is required for mail_search";
   }
 
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("emails");
   if (!ready) {
-    return "Email index not available. Please try again shortly.";
+    return indexUnavailableMessage("emails");
   }
 
   const result = await searchEmails(query, options);
@@ -352,13 +388,14 @@ async function mailSearch(query, options = {}) {
 }
 
 async function mailRecent(limit = 30, daysBack = 7, unreadOnly = false, includeJunk = false) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("emails");
   if (!ready) {
-    return "Email index not available. Please try again shortly.";
+    return indexUnavailableMessage("emails");
   }
 
   const result = await getRecentEmailResults(limit, daysBack, unreadOnly, includeJunk);
@@ -366,13 +403,14 @@ async function mailRecent(limit = 30, daysBack = 7, unreadOnly = false, includeJ
 }
 
 async function mailDate(date, includeJunk = false) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("emails");
   if (!ready) {
-    return "Email index not available. Please try again shortly.";
+    return indexUnavailableMessage("emails");
   }
 
   const result = await getEmailDateResults(date, includeJunk);
@@ -380,13 +418,14 @@ async function mailDate(date, includeJunk = false) {
 }
 
 async function messagesSearch(query, options = {}) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("messages");
   if (!ready) {
-    return "Messages index not available. Please try again shortly.";
+    return indexUnavailableMessage("messages");
   }
 
   const result = await searchMessages(query, options);
@@ -394,13 +433,14 @@ async function messagesSearch(query, options = {}) {
 }
 
 async function messagesRecent(limit = 10, daysBack = 1) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("messages");
   if (!ready) {
-    return "Messages index not available. Please try again shortly.";
+    return indexUnavailableMessage("messages");
   }
 
   const result = await getRecentMessageResults(limit, daysBack);
@@ -408,13 +448,14 @@ async function messagesRecent(limit = 10, daysBack = 1) {
 }
 
 async function messagesConversation(contact, limit = 50) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("messages");
   if (!ready) {
-    return "Messages index not available. Please try again shortly.";
+    return indexUnavailableMessage("messages");
   }
 
   const result = await getConversationResults(contact, limit);
@@ -422,13 +463,14 @@ async function messagesConversation(contact, limit = 50) {
 }
 
 async function calendarSearch(query, options = {}) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const ready = await isIndexReady("calendar");
   if (!ready) {
-    return "Calendar index not available. Please try again shortly.";
+    return indexUnavailableMessage("calendar");
   }
 
   const result = await searchCalendar(query, options);
@@ -591,8 +633,9 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
 
 // Smart search - routes to appropriate sources and optionally synthesizes results
 async function smartSearch(query, options = {}) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   const { limit = 5, synthesize = true } = options;
@@ -637,6 +680,10 @@ async function smartSearch(query, options = {}) {
   }
 
   await Promise.all(searches);
+
+  if (Object.keys(results).length === 0) {
+    return indexUnavailableMessage();
+  }
 
   // Synthesize results into timeline if multiple sources returned data
   let synthesizedGroups = null;
@@ -763,8 +810,9 @@ function formatContactLookupResult(contact) {
 // ============ PERSON SEARCH (CROSS-SOURCE) ============
 
 async function personSearch(name, limit = 10) {
-  if (!sessionIndexComplete) {
-    return getIndexingMessage();
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
 
   // First, try to find the contact to get all their identifiers
@@ -924,7 +972,7 @@ function formatPersonSearchResults(results) {
 // ============ MCP SERVER SETUP ============
 
 const server = new Server(
-  { name: "apple-tools-mcp", version: "2.0.0" },
+  { name: "apple-tools-mcp", version: PACKAGE_VERSION },
   { capabilities: { tools: {} } }
 );
 
@@ -1342,8 +1390,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Mail tools
       case "mail_senders":
-        if (!sessionIndexComplete) {
-          result = getIndexingMessage();
+        {
+          const indexing = stillIndexingMessage();
+          if (indexing) {
+            result = indexing;
+            break;
+          }
+        }
+        if (!(await isIndexReady("emails"))) {
+          result = indexUnavailableMessage("emails");
           break;
         }
         result = formatSendersResults(await getFrequentSenders(
@@ -1356,13 +1411,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "rebuild_index":
         // Check if indexing is already in progress in this session
         if (indexingInProgress) {
-          result = "⏳ Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
+          result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
           break;
         }
 
         // Acquire lock to prevent parallel rebuilds across multiple MCP instances
         if (!acquireLock()) {
-          result = "Another indexing operation is already in progress in a different session. Please wait for it to complete.";
+          result = "Indexing is already in progress in a different session. Please wait for it to complete before starting a rebuild.";
           break;
         }
 
@@ -1373,10 +1428,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Fire and forget - don't await
         rebuildIndex(rebuildSources).then((rebuildResult) => {
-          sessionIndexComplete = true;
-          isFirstEverRun = false;
-          indexingInProgress = false;
-          releaseLock();
+          applyCycleEnd(true);
           console.error("Index rebuild completed:", JSON.stringify({
             cleared: rebuildResult.cleared,
             indexed: Object.fromEntries(
@@ -1386,8 +1438,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }));
         }).catch(e => {
           console.error("Index rebuild error:", e.message);
-          indexingInProgress = false;
-          releaseLock();
+          applyCycleEnd(false);
         });
 
         result = `🔄 Index rebuild started for: ${rebuildSources.join(", ")}.\n\nThis runs in the background and may take several minutes for large mailboxes. You can continue using other tools - searches will use the new index once complete.`;
@@ -1423,8 +1474,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ============ NEW TOOLS - PHASE 3 ============
 
       case "mail_thread":
-        if (!sessionIndexComplete) {
-          result = getIndexingMessage();
+        {
+          const indexing = stillIndexingMessage();
+          if (indexing) {
+            result = indexing;
+            break;
+          }
+        }
+        if (!(await isIndexReady("emails"))) {
+          result = indexUnavailableMessage("emails");
           break;
         }
         result = formatEmailThreadResults(await getEmailThread(args.file_path, validateLimit(args?.limit, 30)));
@@ -1465,7 +1523,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Apple Tools MCP server running (v1.1.2)");
+  console.error(`Apple Tools MCP server running (v${PACKAGE_VERSION})`);
   // Background indexing runs automatically on startup and every INDEX_INTERVAL
 }
 

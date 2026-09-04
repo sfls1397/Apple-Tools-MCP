@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import fs from 'fs'
 
 // ============ QUERY EXPANSION ============
 
@@ -375,6 +376,30 @@ describe('Pronoun Resolution', () => {
     const { resolvePronouns, updateContext } = await import('../../search.js')
     updateContext('emails from John', { person: 'John' }, 'mail')
     expect(resolvePronouns('what did they send to their team')).toBe('what did John send to John team')
+  })
+
+  it('documents that /g + test() lastIndex alternates across calls', () => {
+    const re = /\b(they|them|their|he|him|his|she|her|hers)\b/gi
+    expect(re.test('they sent a report')).toBe(true)
+    expect(re.test('they sent a report')).toBe(false)
+    expect(re.test('they sent a report')).toBe(true)
+  })
+
+  it('repeated resolvePronouns calls stay stable (no lastIndex leftover)', async () => {
+    const { resolvePronouns, updateContext } = await import('../../search.js')
+    updateContext('emails from John', { person: 'John' }, 'mail')
+    for (let i = 0; i < 20; i++) {
+      expect(resolvePronouns('they sent a report')).toBe('John sent a report')
+      expect(resolvePronouns('what did they send to their team')).toBe('what did John send to John team')
+      expect(resolvePronouns('emails about Q3')).toBe('emails about Q3')
+    }
+  })
+
+  it('resolvePronouns does not use /g with RegExp#test', async () => {
+    const src = fs.readFileSync(new URL('../../search.js', import.meta.url), 'utf8')
+    const fn = src.slice(src.indexOf('function resolvePronouns'), src.indexOf('function extractFiltersFromQuery'))
+    expect(fn).not.toMatch(/\.test\s*\(/)
+    expect(fn).toContain('new RegExp')
   })
 })
 

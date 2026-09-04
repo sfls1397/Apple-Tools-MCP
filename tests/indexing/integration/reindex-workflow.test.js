@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { cycleEndFlags, isSearchBlockedByIndexing } from '../../../lib/indexGate.js'
 
 /**
  * Create a lock file mock for testing lock behavior
@@ -293,6 +294,27 @@ describe('Rebuild Index Tool', () => {
         const message = 'Index rebuild already in progress. Please wait for completion.'
         expect(message).toContain('already in progress')
       }
+    })
+  })
+
+  describe('failed rebuild must not block searches', () => {
+    it('should restore searchable flags when rebuild rejects', () => {
+      let sessionIndexComplete = true
+      let indexingInProgress = false
+      let ownsIndexLock = true
+
+      indexingInProgress = true
+      sessionIndexComplete = false
+      expect(isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)).toBe(true)
+
+      const flags = cycleEndFlags(false)
+      indexingInProgress = flags.indexingInProgress
+      sessionIndexComplete = flags.sessionIndexComplete
+      ownsIndexLock = flags.ownsIndexLock
+
+      expect(indexingInProgress).toBe(false)
+      expect(sessionIndexComplete).toBe(true)
+      expect(isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)).toBe(false)
     })
   })
 
