@@ -1,7 +1,7 @@
 import * as lancedb from "@lancedb/lancedb";
 import * as chrono from "chrono-node";
 import { safeOsascript } from "./lib/shell.js";
-import { safeMatch, validateSearchQuery } from "./lib/validators.js";
+import { safeMatch, validateSearchQuery, toUnixMillis } from "./lib/validators.js";
 import { embed, INDEX_DIR, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
 
 let db = null;
@@ -102,13 +102,16 @@ function resolvePronouns(query) {
     return query;
   }
 
-  const pronounPattern = /\b(they|them|their|he|him|his|she|her|hers)\b/gi;
-
-  if (pronounPattern.test(query) && queryContext.lastPerson) {
-    return query.replace(pronounPattern, queryContext.lastPerson);
+  if (!queryContext.lastPerson) {
+    return query;
   }
 
-  return query;
+  // Do not use RegExp#test with /g — lastIndex is stateful and can skip the
+  // first (or only) pronoun. replace() with a fresh regex is sufficient.
+  return query.replace(
+    /\b(they|them|their|he|him|his|she|her|hers)\b/gi,
+    queryContext.lastPerson
+  );
 }
 
 // Extract entities (people, dates) from natural language query and convert to filters
@@ -525,8 +528,10 @@ export function getDateRange(dateStr) {
   const start = parseNaturalDate(dateStr);
   if (!start) return null;
 
-  const end = start + (24 * 60 * 60 * 1000); // End of day
-  return { start, end };
+  // Local next midnight — not +24h, which is wrong on DST transition days
+  const endDate = new Date(start);
+  endDate.setDate(endDate.getDate() + 1);
+  return { start, end: endDate.getTime() };
 }
 
 // Parse various date formats and return timestamp (for filtering results)
@@ -559,7 +564,7 @@ function filterByDateRange(results, daysBack, daysAhead, dateField = "date") {
   if (daysBack === 0 && daysAhead === 0) return results;
 
   return results.filter(r => {
-    const ts = r.dateTimestamp || parseDate(r[dateField]);
+    const ts = toUnixMillis(r.dateTimestamp) || parseDate(r[dateField]);
     if (!ts) return daysBack === 0 && daysAhead === 0;
     return ts >= cutoffPast && ts <= cutoffFuture;
   });
@@ -568,8 +573,8 @@ function filterByDateRange(results, daysBack, daysAhead, dateField = "date") {
 // Sort results by date (newest first)
 function sortByDate(results, descending = true) {
   return results.sort((a, b) => {
-    const tsA = a.dateTimestamp || parseDate(a.date) || parseDate(a.start) || 0;
-    const tsB = b.dateTimestamp || parseDate(b.date) || parseDate(b.start) || 0;
+    const tsA = toUnixMillis(a.dateTimestamp) || parseDate(a.date) || parseDate(a.start) || 0;
+    const tsB = toUnixMillis(b.dateTimestamp) || parseDate(b.date) || parseDate(b.start) || 0;
     return descending ? tsB - tsA : tsA - tsB;
   });
 }
@@ -582,7 +587,7 @@ export async function searchEmails(query, options = {}) {
   try {
     validatedQuery = validateSearchQuery(query);
   } catch (e) {
-    return { results: [], error: e.message };
+    return { success: false, results: [], error: e.message };
   }
 
   // Check result cache first
@@ -714,6 +719,7 @@ export async function searchEmails(query, options = {}) {
         to: row.to || "Unknown",
         subject: row.subject || "No subject",
         date: formatLocalDate(row.date) || "Unknown",
+        dateTimestamp: toUnixMillis(row.dateTimestamp) || null,
         mailbox: row.mailbox || "Unknown",
         hasAttachment: row.hasAttachment || false,
         isFlagged: row.isFlagged || false,
@@ -950,7 +956,7 @@ export async function getEmailDateResults(dateStr, includeJunk = false) {
 }
 
 export function formatEmailResults(searchResult) {
-  if (!searchResult.success) return searchResult.error;
+  if (!searchResult.success) return searchResult.error || "Email search failed";
   if (searchResult.results.length === 0) return searchResult.message;
 
   const results = searchResult.results.map(r => {
@@ -965,6 +971,9 @@ export function formatEmailResults(searchResult) {
     return result + "\n---";
   }).join("\n");
 
+  if (searchResult.hasMore) {
+    return results + `\n\nShowing ${searchResult.showing} results. More matches exist; increase limit to see them.`;
+  }
   return results;
 }
 
@@ -976,7 +985,7 @@ export async function searchMessages(query, options = {}) {
   try {
     validatedQuery = validateSearchQuery(query);
   } catch (e) {
-    return { results: [], error: e.message };
+    return { success: false, results: [], error: e.message };
   }
 
   // Check result cache first
@@ -1084,6 +1093,7 @@ export async function searchMessages(query, options = {}) {
         rank: idx + 1,
         score: row._hybridScore ? row._hybridScore.toFixed(3) : (row._distance ? (1 - row._distance).toFixed(3) : "N/A"),
         date: formatLocalDate(row.date) || "Unknown",
+        dateTimestamp: toUnixMillis(row.dateTimestamp) || null,
         sender: sender,
         senderContact: senderContact,  // Resolved contact name (if found)
         text: row.text || "",
@@ -1126,6 +1136,7 @@ export async function getRecentMessageResults(limit = 10, daysBack = 1) {
       return {
         rank: idx + 1,
         date: formatLocalDate(row.date) || "Unknown",
+        dateTimestamp: toUnixMillis(row.dateTimestamp) || null,
         sender: sender,
         senderContact: senderContact,
         text: row.text || "",
@@ -1166,7 +1177,7 @@ export async function getConversationResults(contact, limit = 50) {
 }
 
 export function formatMessageResults(searchResult) {
-  if (!searchResult.success) return searchResult.error;
+  if (!searchResult.success) return searchResult.error || "Message search failed";
   if (searchResult.results.length === 0) return searchResult.message;
 
   const results = searchResult.results.map(r => {
@@ -1180,6 +1191,9 @@ export function formatMessageResults(searchResult) {
     return result + "\n---";
   }).join("\n");
 
+  if (searchResult.hasMore) {
+    return results + `\n\nShowing ${searchResult.showing} results. More matches exist; increase limit to see them.`;
+  }
   return results;
 }
 
@@ -1202,7 +1216,7 @@ export async function searchCalendar(query, options = {}) {
   try {
     validatedQuery = validateSearchQuery(query);
   } catch (e) {
-    return { results: [], error: e.message };
+    return { success: false, results: [], error: e.message };
   }
 
   // Check result cache first
@@ -1498,7 +1512,7 @@ function formatMinutes(minutes) {
 }
 
 export function formatCalendarResults(searchResult) {
-  if (!searchResult.success) return searchResult.error;
+  if (!searchResult.success) return searchResult.error || "Calendar search failed";
   if (searchResult.results.length === 0) return searchResult.message;
 
   let header = "";
@@ -1521,6 +1535,9 @@ export function formatCalendarResults(searchResult) {
     return result + "\n---";
   }).join("\n");
 
+  if (searchResult.hasMore) {
+    return header + results + `\n\nShowing ${searchResult.showing} results. More matches exist; increase limit to see them.`;
+  }
   return header + results;
 }
 
@@ -1567,6 +1584,9 @@ export function formatSendersResults(senders) {
 
 // Format messages_contacts results
 export function formatMessageContactsResults(contacts) {
+  if (contacts?.error) {
+    return `Error getting message contacts: ${contacts.error}`;
+  }
   if (!contacts || contacts.length === 0) {
     return "No message contacts found.";
   }
@@ -1581,6 +1601,9 @@ export function formatMessageContactsResults(contacts) {
 
 // Format calendar_upcoming results
 export function formatUpcomingEventsResults(result) {
+  if (result?.error) {
+    return `Error getting upcoming events: ${result.error}`;
+  }
   const events = result.events || result; // Handle both new {events, showing, hasMore} and old array format
   if (!events || events.length === 0) {
     return "No upcoming events found.";
@@ -1673,6 +1696,9 @@ export function formatEmailThreadResults(result) {
 
 // Format calendar_recurring results
 export function formatRecurringEventsResults(result) {
+  if (result?.error) {
+    return `Error getting recurring events: ${result.error}`;
+  }
   const events = result.events || result; // Handle both new {events, showing, hasMore} and old array format
   if (!events || events.length === 0) {
     return "No recurring events found.";
@@ -1689,4 +1715,4 @@ export function formatRecurringEventsResults(result) {
 }
 
 // Export internal functions for testing
-export { expandQuery, parseNegation, extractKeywords };
+export { expandQuery, parseNegation, extractKeywords, resolvePronouns, updateContext };
