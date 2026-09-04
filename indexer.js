@@ -9,7 +9,10 @@ import {
   validateLimit,
   validateLanceDBId,
   escapeSQL,
-  stripHtmlTags
+  stripHtmlTags,
+  toUnixMillis,
+  unfoldRfc822Headers,
+  stripSubjectPrefixes
 } from "./lib/validators.js";
 import { safeSqlite3Json, safeOsascript, safeFind } from "./lib/shell.js";
 
@@ -252,14 +255,17 @@ function parseEmlx(filePath) {
       content = lines.slice(1).join("\n");
     }
 
+    // Unfold RFC 822 wrapped headers so long From/Subject/To values are complete
+    const unfolded = unfoldRfc822Headers(content);
+
     // Extract headers
-    const fromMatch = content.match(/^From:\s*(.+)$/m);
-    const subjectMatch = content.match(/^Subject:\s*(.+)$/m);
-    const dateMatch = content.match(/^Date:\s*(.+)$/m);
-    const toMatch = content.match(/^To:\s*(.+)$/m);
-    const ccMatch = content.match(/^Cc:\s*(.+)$/m);
-    const messageIdMatch = content.match(/^Message-ID:\s*(.+)$/im);
-    const flaggedMatch = content.match(/^X-Flagged:\s*(.+)$/im) || content.match(/flags.*flagged/i);
+    const fromMatch = unfolded.match(/^From:\s*(.+)$/m);
+    const subjectMatch = unfolded.match(/^Subject:\s*(.+)$/m);
+    const dateMatch = unfolded.match(/^Date:\s*(.+)$/m);
+    const toMatch = unfolded.match(/^To:\s*(.+)$/m);
+    const ccMatch = unfolded.match(/^Cc:\s*(.+)$/m);
+    const messageIdMatch = unfolded.match(/^Message-ID:\s*(.+)$/im);
+    const flaggedMatch = unfolded.match(/^X-Flagged:\s*(.+)$/im) || unfolded.match(/flags.*flagged/i);
 
     // Check for attachments
     const hasAttachment = /Content-Disposition:\s*attachment/i.test(content) ||
@@ -335,13 +341,10 @@ function parseEmlx(filePath) {
 // Full scan - used for first run and rebuild_index
 // Includes both .emlx and .partial.emlx files (partial = not fully downloaded via IMAP)
 async function findAllEmlxFiles() {
-  try {
-    // "*.emlx" also matches "*.partial.emlx"
-    return safeFind(MAIL_DIR, { name: "*.emlx", type: "f" });
-  } catch (e) {
-    console.error("Error finding emlx files:", e.message);
-    return [];
-  }
+  // "*.emlx" also matches "*.partial.emlx"
+  // Let permission/IO errors propagate so indexEmails does not persist a
+  // timestamp for an empty scan and skip real mail forever.
+  return safeFind(MAIL_DIR, { name: "*.emlx", type: "f" });
 }
 
 // Fast incremental scan - uses find with -mtime filter (more reliable than mdfind/Spotlight)
@@ -579,6 +582,9 @@ function getMessages(sinceTimestamp = null) {
       ORDER BY m.date DESC
     `;
     const results = safeSqlite3Json(MESSAGES_DB, query, { timeout: 60000 });
+    if (!Array.isArray(results)) {
+      throw new Error("Unexpected sqlite3 result for messages");
+    }
 
     // Post-process: extract text from attributedBody where text is NULL
     let extractedCount = 0;
@@ -607,7 +613,7 @@ function getMessages(sinceTimestamp = null) {
     return results.filter(msg => msg.text && msg.text.trim() !== '');
   } catch (e) {
     console.error("Error reading messages:", e.message);
-    return [];
+    throw e;
   }
 }
 
@@ -645,19 +651,24 @@ function getParticipantStatus(status) {
 }
 
 function getCalendarEvents() {
-  try {
-    // NOTE: We index ALL calendar events, not filtered by date
-    // Calendar events don't have a "file modification time" like emails do,
-    // so we can't use the mdfind + DAYS_BACK approach.
-    // Calendar indexing is always comprehensive - filtering by date would lose historical context.
-    const now = Date.now();
-    const pastDate = unixMsToMacAbsolute(now - 10 * 365 * 24 * 60 * 60 * 1000); // 10 years back
-    const futureDate = unixMsToMacAbsolute(now + 10 * 365 * 24 * 60 * 60 * 1000); // 10 years ahead
+  // NOTE: We index ALL calendar events, not filtered by date
+  // Calendar events don't have a "file modification time" like emails do,
+  // so we can't use the mdfind + DAYS_BACK approach.
+  // Calendar indexing is always comprehensive - filtering by date would lose historical context.
+  // Must throw on source-read failure: a silent [] would look like "every event
+  // was deleted" and the stale-entry pass would wipe the calendar index.
+  if (!fs.existsSync(CALENDAR_DB)) {
+    throw new Error("Calendar database not found");
+  }
 
-    // Query OccurrenceCache for recurring events and their calculated occurrences
-    // This includes both recurring and non-recurring events
-    // GROUP BY to avoid duplicate entries for recurring events
-    const query = `
+  const now = Date.now();
+  const pastDate = unixMsToMacAbsolute(now - 10 * 365 * 24 * 60 * 60 * 1000); // 10 years back
+  const futureDate = unixMsToMacAbsolute(now + 10 * 365 * 24 * 60 * 60 * 1000); // 10 years ahead
+
+  // Query OccurrenceCache for recurring events and their calculated occurrences
+  // This includes both recurring and non-recurring events
+  // GROUP BY to avoid duplicate entries for recurring events
+  const query = `
       SELECT
         ci.ROWID as id,
         ci.summary,
@@ -679,10 +690,7 @@ function getCalendarEvents() {
       ORDER BY MIN(oc.day) ASC
     `;
 
-    const rows = safeSqlite3Json(CALENDAR_DB, query, { timeout: 30000 });
-
-    // Get attendees for events that have them (separate query for efficiency)
-    const attendeesQuery = `
+  const attendeesQuery = `
       SELECT
         p.owner_id,
         COALESCE(i.display_name, p.email, 'Unknown') as name,
@@ -692,11 +700,13 @@ function getCalendarEvents() {
       WHERE p.entity_type = 0
     `;
 
+  return withCalendarCopy((dbPath) => {
+    const rows = safeSqlite3Json(dbPath, query, { timeout: 30000 });
+
     let attendeesMap = new Map();
     try {
-      const attendeesRows = safeSqlite3Json(CALENDAR_DB, attendeesQuery, { timeout: 10000 });
+      const attendeesRows = safeSqlite3Json(dbPath, attendeesQuery, { timeout: 10000 });
 
-      // Group attendees by owner_id (event id)
       for (const att of attendeesRows) {
         if (!attendeesMap.has(att.owner_id)) {
           attendeesMap.set(att.owner_id, []);
@@ -734,10 +744,7 @@ function getCalendarEvents() {
 
     console.error(`Calendar: Retrieved ${events.length} events via SQLite (~${Math.round((Date.now() - now))}ms)`);
     return events;
-  } catch (e) {
-    console.error("Error reading calendar:", e.message);
-    return [];
-  }
+  });
 }
 
 // ============ DATABASE FUNCTIONS ============
@@ -927,7 +934,13 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   // Use fast incremental scan if we have a previous timestamp
   const startTime = Date.now();
   console.error(`Calling findNewEmlxFiles with timestamp: ${lastEmailIndexTime ? new Date(lastEmailIndexTime).toISOString() : 'null (full scan)'}`);
-  const newFiles = await findNewEmlxFiles(lastEmailIndexTime);
+  let newFiles;
+  try {
+    newFiles = await findNewEmlxFiles(lastEmailIndexTime);
+  } catch (e) {
+    console.error(`Email source read failed; skipping this cycle so the lookback timestamp is not advanced: ${e.message}`);
+    return { indexed: 0, added: 0, error: e.message };
+  }
   console.error(`Found ${newFiles.length} new/modified email files (${Date.now() - startTime}ms)`);
 
   const indexedPaths = await getIndexedIdsWithRetry("emails", "filePath");
@@ -1041,6 +1054,13 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
       if (uniqueRecords.length > 0) {
         if (!tables.emails) {
           tables.emails = await db.createTable("emails", uniqueRecords, { mode: "overwrite" });
+          // Track messageIds from the first batch so later batches can
+          // dedupe IMAP copies (INBOX vs Junk) of the same Message-ID.
+          for (const record of uniqueRecords) {
+            if (record.messageId) {
+              indexedMessageIds.add(record.messageId);
+            }
+          }
         } else {
           // Double-check: verify these IDs truly aren't in the index
           const currentIndexed = await getIndexedIdsWithRetry("emails", "filePath");
@@ -1130,7 +1150,13 @@ export async function indexMessages(forceFullScan = false) {
   const indexStartTime = Date.now();
 
   // Use incremental scan if we have a previous timestamp
-  const messages = getMessages(lastMessageIndexTime);
+  let messages;
+  try {
+    messages = getMessages(lastMessageIndexTime);
+  } catch (e) {
+    console.error(`Messages source read failed; skipping this cycle so the lookback timestamp is not advanced: ${e.message}`);
+    return { indexed: 0, added: 0, error: e.message };
+  }
   console.error(`Found ${messages.length} messages${lastMessageIndexTime ? ' (incremental)' : ' (full scan)'}`);
 
   const indexed = await getIndexedIdsWithRetry("messages", "id");
@@ -1186,7 +1212,7 @@ export async function indexMessages(forceFullScan = false) {
       return {
         id: String(msg.id),
         date: msg.date,
-        dateTimestamp: msg.dateTimestamp || 0,
+        dateTimestamp: toUnixMillis(msg.dateTimestamp),
         sender: msg.sender,
         text: msg.text?.substring(0, 500) || "",
         chatId: String(msg.chatId || ""),
@@ -1270,7 +1296,15 @@ export async function indexMessages(forceFullScan = false) {
 export async function indexCalendar() {
   await initDB();
 
-  const events = getCalendarEvents();
+  let events;
+  try {
+    events = getCalendarEvents();
+  } catch (e) {
+    // Do not treat a source-read failure as "zero events" — that would mark
+    // every indexed row stale and delete the calendar index.
+    console.error(`Calendar source read failed; skipping index update to avoid data loss: ${e.message}`);
+    return { indexed: 0, added: 0, removed: 0, error: e.message };
+  }
   console.error(`Found ${events.length} calendar events`);
 
   // Get already indexed event IDs for incremental indexing
@@ -1493,14 +1527,14 @@ export async function getRecentMessages(limit = 10, daysBack = 1) {
   if (!tables.messages) return { messages: [], hasMore: false };
 
   try {
-    const cutoff = Date.now() / 1000 - (daysBack * 24 * 60 * 60); // Messages use Unix timestamp
+    const cutoff = Date.now() - (daysBack * 24 * 60 * 60 * 1000);
     const results = await tables.messages.query()
       .select(["id", "date", "dateTimestamp", "sender", "text", "chatId", "isGroupChat"])
       .toArray();
 
     const filtered = results
-      .filter(r => r.dateTimestamp >= cutoff)
-      .sort((a, b) => b.dateTimestamp - a.dateTimestamp);
+      .filter(r => toUnixMillis(r.dateTimestamp) >= cutoff)
+      .sort((a, b) => toUnixMillis(b.dateTimestamp) - toUnixMillis(a.dateTimestamp));
 
     const hasMore = filtered.length > limit;
     const messages = filtered.slice(0, limit);
@@ -1530,7 +1564,7 @@ export async function getConversation(contact, limit = 50) {
 
     // Sort chronologically (oldest first for conversation view)
     return filtered
-      .sort((a, b) => a.dateTimestamp - b.dateTimestamp)
+      .sort((a, b) => toUnixMillis(a.dateTimestamp) - toUnixMillis(b.dateTimestamp))
       .slice(-limit); // Take last N messages
   } catch (e) {
     console.error("Error getting conversation:", e.message);
@@ -1648,7 +1682,7 @@ export function getMessageContacts(limit = 50) {
     return safeSqlite3Json(MESSAGES_DB, query, { timeout: 30000 });
   } catch (e) {
     console.error("Error getting message contacts:", e.message);
-    return [];
+    return { error: e.message };
   }
 }
 
@@ -1678,13 +1712,15 @@ export function getUpcomingEvents(limit = 10) {
       ORDER BY sort_day ASC
       LIMIT ${fetchLimit}
     `;
-    const events = safeSqlite3Json(CALENDAR_DB, query, { timeout: 10000 });
+    const events = withCalendarCopy((dbPath) => {
+      return safeSqlite3Json(dbPath, query, { timeout: 10000 });
+    });
     const hasMore = events.length > safeLimit;
     const limitedEvents = events.slice(0, safeLimit);
     return { events: limitedEvents, showing: limitedEvents.length, hasMore };
   } catch (e) {
     console.error("Error getting upcoming events:", e.message);
-    return { events: [], showing: 0, hasMore: false };
+    return { events: [], showing: 0, hasMore: false, error: e.message };
   }
 }
 
@@ -1876,7 +1912,9 @@ export function getWeekEvents(weekOffset = 0) {
         AND ci.summary IS NOT NULL AND ci.summary <> ''
       ORDER BY oc.day ASC
     `;
-    const events = safeSqlite3Json(CALENDAR_DB, query, { timeout: 15000 });
+    const events = withCalendarCopy((dbPath) => {
+      return safeSqlite3Json(dbPath, query, { timeout: 15000 });
+    });
 
     const weekStart = monday.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     const weekEnd = sunday.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -1915,15 +1953,13 @@ export async function getEmailThread(filePath, limit = 20) {
     }
 
     // Read the email to get subject
-    const content = fs.readFileSync(validatedPath, "utf-8");
+    const content = unfoldRfc822Headers(fs.readFileSync(validatedPath, "utf-8"));
     const subjectMatch = content.match(/^Subject:\s*(.+)$/m);
     if (!subjectMatch) {
       return { error: "Could not extract subject from email", emails: [] };
     }
 
-    // Clean subject - remove Re:, Fwd:, etc.
-    let subject = subjectMatch[1].trim();
-    const baseSubject = subject.replace(/^(Re|Fwd|Fw):\s*/gi, "").trim();
+    const baseSubject = stripSubjectPrefixes(subjectMatch[1]);
 
     if (baseSubject.length < 5) {
       return { error: "Subject too short to find thread", emails: [] };
@@ -1937,7 +1973,7 @@ export async function getEmailThread(filePath, limit = 20) {
     // Filter to emails with matching base subject
     const threadEmails = allEmails
       .filter(e => {
-        const eBaseSubject = (e.subject || "").replace(/^(Re|Fwd|Fw):\s*/gi, "").trim();
+        const eBaseSubject = stripSubjectPrefixes(e.subject || "");
         return eBaseSubject.toLowerCase() === baseSubject.toLowerCase();
       })
       .sort((a, b) => a.dateTimestamp - b.dateTimestamp)
@@ -1981,12 +2017,14 @@ export function getRecurringEvents(limit = 20) {
       ORDER BY occurrenceCount DESC, MIN(oc.day) ASC
       LIMIT ${fetchLimit}
     `;
-    const events = safeSqlite3Json(CALENDAR_DB, query, { timeout: 30000 });
+    const events = withCalendarCopy((dbPath) => {
+      return safeSqlite3Json(dbPath, query, { timeout: 30000 });
+    });
     const hasMore = events.length > safeLimit;
     const limitedEvents = events.slice(0, safeLimit);
     return { events: limitedEvents, showing: limitedEvents.length, hasMore };
   } catch (e) {
     console.error("Error getting recurring events:", e.message);
-    return { events: [], showing: 0, hasMore: false };
+    return { events: [], showing: 0, hasMore: false, error: e.message };
   }
 }

@@ -23,7 +23,10 @@ import {
   escapeRegex,
   safeMatch,
   safeReplace,
-  stripHtmlTags
+  stripHtmlTags,
+  toUnixMillis,
+  unfoldRfc822Headers,
+  stripSubjectPrefixes
 } from '../../lib/validators.js'
 
 // ============ PATH VALIDATION TESTS ============
@@ -266,10 +269,17 @@ describe('escapeAppleScript', () => {
       expect(escaped).toBe('\\"; tell app \\"Terminal\\" to do script \\"')
     })
 
-    it('should escape quoted form injection', () => {
-      const malicious = "' & quoted form of \"malicious\""
+    it('should escape newlines that would break out of an AppleScript string', () => {
+      const malicious = '"\nend tell\ntell application "Finder" to delete every item of desktop\nset x to "'
       const escaped = escapeAppleScript(malicious)
-      expect(escaped).toBe("' & quoted form of \\\"malicious\\\"")
+      expect(escaped).not.toContain('\n')
+      expect(escaped).toContain('\\n')
+      expect(escaped).toContain('\\"')
+    })
+
+    it('should escape carriage returns', () => {
+      const escaped = escapeAppleScript('line1\rline2')
+      expect(escaped).toBe('line1\\rline2')
     })
   })
 
@@ -777,5 +787,62 @@ describe('stripHtmlTags', () => {
       // Note: This function doesn't decode entities, just strips tags
       expect(stripHtmlTags('<p>&amp; &lt;</p>')).toBe('&amp; &lt;')
     })
+  })
+})
+
+describe('toUnixMillis', () => {
+  it('should leave millisecond timestamps unchanged', () => {
+    expect(toUnixMillis(1705276800000)).toBe(1705276800000)
+  })
+
+  it('should convert Unix seconds to milliseconds', () => {
+    expect(toUnixMillis(1705276800)).toBe(1705276800000)
+  })
+
+  it('should return 0 for missing or invalid values', () => {
+    expect(toUnixMillis(null)).toBe(0)
+    expect(toUnixMillis(undefined)).toBe(0)
+    expect(toUnixMillis('')).toBe(0)
+    expect(toUnixMillis(0)).toBe(0)
+    expect(toUnixMillis(-5)).toBe(0)
+    expect(toUnixMillis(NaN)).toBe(0)
+  })
+
+  it('should coerce numeric strings', () => {
+    expect(toUnixMillis('1705276800')).toBe(1705276800000)
+  })
+})
+
+describe('unfoldRfc822Headers', () => {
+  it('should join folded header continuation lines', () => {
+    const raw = 'From: Jane Doe\n <jane@example.com>\nSubject: Hello\n\nBody'
+    const unfolded = unfoldRfc822Headers(raw)
+    expect(unfolded).toMatch(/^From: Jane Doe <jane@example.com>$/m)
+    expect(unfolded).toContain('\n\nBody')
+  })
+
+  it('should not rewrite the body', () => {
+    const raw = 'Subject: Hi\n\nLine1\n continued body'
+    const unfolded = unfoldRfc822Headers(raw)
+    expect(unfolded).toContain('\n continued body')
+  })
+
+  it('should handle empty input', () => {
+    expect(unfoldRfc822Headers('')).toBe('')
+    expect(unfoldRfc822Headers(null)).toBe('')
+  })
+})
+
+describe('stripSubjectPrefixes', () => {
+  it('should strip nested Re:/Fwd: prefixes', () => {
+    expect(stripSubjectPrefixes('Re: Re: Fwd: Meeting')).toBe('Meeting')
+  })
+
+  it('should be case-insensitive', () => {
+    expect(stripSubjectPrefixes('RE: FW: Hello')).toBe('Hello')
+  })
+
+  it('should leave subjects without prefixes unchanged', () => {
+    expect(stripSubjectPrefixes('Quarterly report')).toBe('Quarterly report')
   })
 })

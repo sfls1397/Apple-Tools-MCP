@@ -365,60 +365,16 @@ describe('Filter Extraction from Natural Language', () => {
 // ============ PRONOUN RESOLUTION ============
 
 describe('Pronoun Resolution', () => {
-  // Simulating context tracking
-  let queryContext = {
-    lastPerson: null,
-    lastTimestamp: 0
-  }
-
-  const CONTEXT_EXPIRY_MS = 5 * 60 * 1000
-
-  const resolvePronouns = (query, context) => {
-    if (Date.now() - context.lastTimestamp > CONTEXT_EXPIRY_MS) {
-      return query
-    }
-
-    const pronounPattern = /\b(they|them|their|he|him|his|she|her|hers)\b/gi
-
-    if (pronounPattern.test(query) && context.lastPerson) {
-      return query.replace(pronounPattern, context.lastPerson)
-    }
-
-    return query
-  }
-
-  beforeEach(() => {
-    queryContext = {
-      lastPerson: 'John',
-      lastTimestamp: Date.now()
-    }
+  it('should replace a leading pronoun (RegExp lastIndex must not skip it)', async () => {
+    const { resolvePronouns, updateContext } = await import('../../search.js')
+    updateContext('emails from John', { person: 'John' }, 'mail')
+    expect(resolvePronouns('they sent a report')).toBe('John sent a report')
   })
 
-  it('should replace "they" with last person', () => {
-    const result = resolvePronouns('what did they say', queryContext)
-    expect(result).toBe('what did John say')
-  })
-
-  it('should replace "their" with last person', () => {
-    const result = resolvePronouns('check their email', queryContext)
-    expect(result).toBe('check John email')
-  })
-
-  it('should replace "he/him" with last person', () => {
-    const result = resolvePronouns('email from him', queryContext)
-    expect(result).toBe('email from John')
-  })
-
-  it('should not replace if context expired', () => {
-    queryContext.lastTimestamp = Date.now() - (10 * 60 * 1000) // 10 minutes ago
-    const result = resolvePronouns('what did they say', queryContext)
-    expect(result).toBe('what did they say')
-  })
-
-  it('should not replace if no last person', () => {
-    queryContext.lastPerson = null
-    const result = resolvePronouns('what did they say', queryContext)
-    expect(result).toBe('what did they say')
+  it('should replace every pronoun in the query', async () => {
+    const { resolvePronouns, updateContext } = await import('../../search.js')
+    updateContext('emails from John', { person: 'John' }, 'mail')
+    expect(resolvePronouns('what did they send to their team')).toBe('what did John send to John team')
   })
 })
 
@@ -629,5 +585,38 @@ describe('Junk Mail Filtering', () => {
     ]
     const filtered = excludeJunkMail(results, false, 'Junk')
     expect(filtered.length).toBe(1)
+  })
+})
+
+describe('Formatter error surfacing', () => {
+  it('should show calendar source errors instead of "no events"', async () => {
+    const { formatUpcomingEventsResults, formatRecurringEventsResults, formatMessageContactsResults } =
+      await import('../../search.js')
+
+    expect(formatUpcomingEventsResults({ events: [], error: 'database is locked' }))
+      .toContain('database is locked')
+    expect(formatRecurringEventsResults({ events: [], error: 'authorization denied' }))
+      .toContain('authorization denied')
+    expect(formatMessageContactsResults({ error: 'unable to open database' }))
+      .toContain('unable to open database')
+  })
+
+  it('should mention truncated result sets', async () => {
+    const { formatEmailResults } = await import('../../search.js')
+    const text = formatEmailResults({
+      success: true,
+      hasMore: true,
+      showing: 1,
+      results: [{
+        rank: 1,
+        from: 'a@b.com',
+        to: 'c@d.com',
+        subject: 'Hi',
+        date: 'today',
+        preview: 'hello',
+        filePath: '/tmp/x.emlx'
+      }]
+    })
+    expect(text).toContain('More matches exist')
   })
 })
