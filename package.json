@@ -27,8 +27,6 @@
     "messages",
     "imessage",
     "semantic-search",
-    "claude",
-    "anthropic",
     "macos"
   ],
   "engines": {
