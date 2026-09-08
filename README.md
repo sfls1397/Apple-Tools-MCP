@@ -1,6 +1,6 @@
 # apple-tools-mcp
 
-An MCP (Model Context Protocol) server that provides semantic search across Apple Mail, Messages, Calendar, and Contacts on macOS. Use natural language to search your emails, iMessages, calendar events, and contacts directly from Claude.
+An MCP (Model Context Protocol) server that provides semantic search across Apple Mail, Messages, Calendar, and Contacts on macOS. Use natural language to search your emails, iMessages, calendar events, and contacts from any compatible MCP client over stdio.
 
 ## Features
 
@@ -14,7 +14,6 @@ An MCP (Model Context Protocol) server that provides semantic search across Appl
 
 - **macOS** (Ventura 13.0 or later recommended)
 - **Node.js** 18.0 or later
-- **Claude Desktop** app
 - **Full Disk Access** permission for the Node.js binary
 
 ## Installation
@@ -33,7 +32,7 @@ cd Apple-Tools-MCP
 npm install
 ```
 
-If you installed from source, point Claude Desktop at the local `index.js` instead of `npx` in step 3:
+If you installed from source, point your MCP client at the local `index.js` instead of `npx` in step 3:
 
 ```json
 "command": "node",
@@ -64,11 +63,18 @@ The MCP server needs access to read your Mail, Messages, and Calendar databases.
 
 7. Ensure the toggle for Node.js is enabled
 
-### 3. Configure Claude Desktop
+### 3. Configure your MCP client
 
-Add to your Claude Desktop config file:
+This server speaks MCP over **stdio**. Any compatible client can run it — Claude Desktop is one example, not the only one. Cursor, Grok Bot, and other stdio MCP clients work the same way: register the command below in that client's MCP settings.
 
-**Location:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Command**
+
+- `npx` with args `["-y", "apple-tools-mcp"]` (npm install)
+- or `node` with args `["/absolute/path/to/Apple-Tools-MCP/index.js"]` (from source)
+
+**Example: Claude Desktop**
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -81,9 +87,11 @@ Add to your Claude Desktop config file:
 }
 ```
 
-### 4. Restart Claude Desktop
+Other clients use their own settings UI or config file. Use the same `command` and `args`; only the file path or UI differs.
 
-Quit and reopen Claude Desktop to load the MCP server.
+### 4. Restart your MCP client
+
+Quit and reopen the client so it loads the server. For Claude Desktop, fully quit (Cmd+Q) and reopen.
 
 ## Building the Index
 
@@ -103,7 +111,7 @@ The index is stored in `~/.apple-tools-mcp/vector-index/`.
 
 ## Available Tools
 
-Once configured, Claude can use these tools:
+Once configured, your MCP client can use these tools:
 
 ### Universal Search
 
@@ -159,7 +167,7 @@ Once configured, Claude can use these tools:
 
 ## Example Queries
 
-Ask Claude things like:
+Ask your MCP client things like:
 
 - "Find emails from John about the quarterly report"
 - "What messages did I get from Mom last week?"
@@ -187,11 +195,11 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 1. Check that the index was built: `ls ~/.apple-tools-mcp/vector-index/`
 2. Rebuild the index if needed: `npm run build-index`
 
-### Server not appearing in Claude
+### Server not appearing in the MCP client
 
-1. Verify your config file syntax is valid JSON
-2. Restart Claude Desktop completely (Cmd+Q, then reopen)
-3. Check Claude's MCP logs for errors
+1. Verify your client config is valid (JSON files must be valid JSON)
+2. Restart the MCP client completely (for Claude Desktop: Cmd+Q, then reopen)
+3. Check the client's MCP logs for errors
 
 ### Force rebuild the index
 
@@ -203,12 +211,12 @@ rm -rf ~/.apple-tools-mcp/vector-index
 rm -f ~/.apple-tools-mcp/index-meta.json
 rm -f ~/.apple-tools-mcp/indexer.lock
 
-# Restart Claude Desktop to trigger a fresh rebuild
+# Restart your MCP client to trigger a fresh rebuild
 ```
 
 ### Monitor indexing progress
 
-Watch the MCP server logs in real-time:
+Watch the MCP server logs in your client. Log locations vary by client; Claude Desktop example:
 
 ```bash
 tail -f ~/Library/Logs/Claude/mcp-server-apple-tools.log
