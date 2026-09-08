@@ -1,9 +1,0 @@
-node_modules/
-coverage/
-*.lock
-.env*
-.git/
-*.sqlite
-*.db
-.mcp.json
-package-lock.json
