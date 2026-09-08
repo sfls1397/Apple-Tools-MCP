@@ -140,7 +140,7 @@ process.on("unhandledRejection", (reason, promise) => {
   process.exit(1);
 });
 
-// Exit when stdin closes (Claude client disconnected)
+// Exit when stdin closes (MCP client disconnected)
 process.stdin.on("close", () => {
   console.error("Client disconnected. Exiting.");
   stopBackgroundIndexing();
