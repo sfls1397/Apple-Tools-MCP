@@ -22,3 +22,6 @@ npm-debug.log*
 
 # Local Claude Code / team-agent tooling (not part of the product)
 .claude/
+
+# Local CodeGraph index data (not part of the product)
+.codegraph/
