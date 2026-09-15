@@ -108,6 +108,7 @@ describe('createIndexerLock runtime', () => {
     const fsApi = {
       existsSync: (p) => fs.existsSync(p),
       mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      renameSync: (from, to) => fs.renameSync(from, to),
       unlinkSync: (p) => fs.unlinkSync(p),
       writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
       readFileSync: (p, enc) => {
@@ -151,6 +152,76 @@ describe('createIndexerLock runtime', () => {
     })
     expect(a.acquire()).toBe(true)
     expect(b.acquire()).toBe(false)
+    expect(parseLockData(fs.readFileSync(lockFile, 'utf8')).pid).toBe(100)
+  })
+
+  it('does not unlink a replacement lock installed between stale compare and delete', () => {
+    fs.writeFileSync(lockFile, formatLockData(99999999, 1))
+    const unlinkedPaths = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      renameSync: (from, to) => {
+        fs.renameSync(from, to)
+        if (from === lockFile && !fs.existsSync(lockFile)) {
+          fs.writeFileSync(lockFile, formatLockData(300, 9), { flag: 'wx' })
+        }
+      },
+      readFileSync: (p, enc) => fs.readFileSync(p, enc),
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinkedPaths.push(p)
+        if (p === lockFile) {
+          fs.writeFileSync(lockFile, formatLockData(300, 9))
+        }
+        fs.unlinkSync(p)
+      }
+    }
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 400,
+      isAlive: () => false,
+      now: () => 10,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(false)
+    expect(waiter.ownsLock).toBe(false)
+    expect(unlinkedPaths).not.toContain(lockFile)
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(300, 9))
+  })
+
+  it('MCP-style owner heartbeats so a long cycle does not look stale', () => {
+    let t = 1_000
+    let tick = null
+    const owner = createIndexerLock({
+      lockFile,
+      pid: 100,
+      isAlive: (p) => p === 100 || p === 200,
+      now: () => t,
+      setIntervalFn: (fn) => {
+        tick = fn
+        return 1
+      },
+      clearIntervalFn: () => {},
+      log: (m) => logs.push(m)
+    })
+    expect(owner.acquire()).toBe(true)
+    owner.startHeartbeat(60_000)
+    t = 1_000 + 45 * 60 * 1000
+    expect(typeof tick).toBe('function')
+    tick()
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(100, t))
+
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 200,
+      timeoutMs: DEFAULT_LOCK_TIMEOUT_MS,
+      now: () => t,
+      isAlive: (p) => p === 100 || p === 200,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(false)
     expect(parseLockData(fs.readFileSync(lockFile, 'utf8')).pid).toBe(100)
   })
 
