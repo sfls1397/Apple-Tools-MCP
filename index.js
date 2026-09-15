@@ -12,6 +12,15 @@ import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, v
 import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from "./lib/indexGate.js";
 import { isIndexerMode } from "./lib/processMode.js";
 import { loadResolvedIndexInterval, logResolvedInterval } from "./lib/config.js";
+import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
+import {
+  shouldConnectMcpStdio,
+  bindStdinCloseExit,
+  beginIndexCycle,
+  applyIndexerCycleEnd,
+  mcpIndexingStartup,
+  waitForIndexerLock
+} from "./lib/indexerRuntime.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -21,132 +30,37 @@ const PACKAGE_VERSION = JSON.parse(
 const INDEXER_MODE = isIndexerMode();
 const resolvedIndexInterval = loadResolvedIndexInterval();
 const INDEX_INTERVAL = resolvedIndexInterval.ms;
-const LOCK_HEARTBEAT_MS = 60 * 1000;
+const LOCK_HEARTBEAT_MS = DEFAULT_LOCK_HEARTBEAT_MS;
 const LOCK_RETRY_MS = 5 * 1000;
 
 // Lock file to prevent duplicate indexing processes
 const LOCK_FILE = path.join(process.env.HOME, ".apple-tools-mcp", "indexer.lock");
-const LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - if lock is older, assume hung process
+const indexerLock = createIndexerLock({
+  lockFile: LOCK_FILE,
+  log: (msg) => console.error(msg)
+});
 // True only while this process won the indexer lock. Distinct from
 // sessionIndexComplete: a secondary instance that lost the lock never
 // completes a local cycle and must not stay on "still indexing" forever.
 let ownsIndexLock = false;
-let lockHeartbeatTimer = null;
 
 function acquireLock() {
-  try {
-    // Ensure directory exists first
-    const lockDir = path.dirname(LOCK_FILE);
-    if (!fs.existsSync(lockDir)) {
-      fs.mkdirSync(lockDir, { recursive: true });
-    }
-
-    // Check for existing lock file
-    if (fs.existsSync(LOCK_FILE)) {
-      const lockData = fs.readFileSync(LOCK_FILE, "utf8");
-      const [pidStr, timestampStr] = lockData.split(':');
-      const pid = parseInt(pidStr);
-      const timestamp = parseInt(timestampStr) || Date.now();
-      const lockAge = Date.now() - timestamp;
-
-      // If we already hold the lock, refresh the timestamp so a long-lived
-      // indexer daemon is not treated as a hung process.
-      if (pid === process.pid) {
-        ownsIndexLock = true;
-        try {
-          fs.writeFileSync(LOCK_FILE, `${process.pid}:${Date.now()}`);
-        } catch {
-          // Keep going; heartbeat or the next cycle can retry the write.
-        }
-        return true;
-      }
-
-      try {
-        process.kill(pid, 0); // Check if process exists (signal 0 = no-op)
-
-        // Process exists - check if lock is stale (hung process)
-        if (lockAge > LOCK_TIMEOUT_MS) {
-          console.error(`Lock file is ${Math.round(lockAge / 60000)} minutes old. Assuming hung process (PID ${pid}). Removing stale lock.`);
-          fs.unlinkSync(LOCK_FILE);
-        } else {
-          console.error(`Another indexing instance running (PID ${pid}). Skipping indexing.`);
-          ownsIndexLock = false;
-          return false;
-        }
-      } catch {
-        // Process doesn't exist, stale lock file - remove it
-        console.error(`Removing stale lock file (PID ${pid} not running)`);
-        fs.unlinkSync(LOCK_FILE);
-      }
-    }
-
-    // Use atomic 'wx' flag to create lock file exclusively
-    // This prevents TOCTOU race condition - will throw EEXIST if file was created between check and write
-    try {
-      fs.writeFileSync(LOCK_FILE, `${process.pid}:${Date.now()}`, { flag: 'wx' });
-      ownsIndexLock = true;
-      return true;
-    } catch (err) {
-      if (err.code === 'EEXIST') {
-        // Another process won the race
-        console.error("Another process acquired lock during race. Skipping indexing.");
-        ownsIndexLock = false;
-        return false;
-      }
-      throw err; // Re-throw unexpected errors
-    }
-  } catch (e) {
-    console.error("Lock file error:", e.message);
-    ownsIndexLock = false;
-    return false; // On error, fail safe - don't proceed
-  }
+  const ok = indexerLock.acquire();
+  ownsIndexLock = indexerLock.ownsLock;
+  return ok;
 }
 
 function releaseLock() {
-  try {
-    if (fs.existsSync(LOCK_FILE)) {
-      const lockData = fs.readFileSync(LOCK_FILE, "utf8");
-      const [pidStr] = lockData.split(':');
-      const pid = parseInt(pidStr);
-      if (pid === process.pid) {
-        fs.unlinkSync(LOCK_FILE);
-        ownsIndexLock = false;
-        console.error(`Released lock file (PID ${process.pid})`);
-      }
-    }
-  } catch (err) {
-    // Log error but don't throw - we're likely shutting down
-    console.error(`Error releasing lock: ${err.message}`);
-  }
-}
-
-function refreshLockHeartbeat() {
-  try {
-    if (!ownsIndexLock || !fs.existsSync(LOCK_FILE)) {
-      return;
-    }
-    const lockData = fs.readFileSync(LOCK_FILE, "utf8");
-    const [pidStr] = lockData.split(":");
-    if (parseInt(pidStr) === process.pid) {
-      fs.writeFileSync(LOCK_FILE, `${process.pid}:${Date.now()}`);
-    }
-  } catch (err) {
-    console.error(`Lock heartbeat error: ${err.message}`);
-  }
+  indexerLock.release();
+  ownsIndexLock = indexerLock.ownsLock;
 }
 
 function startLockHeartbeat() {
-  if (lockHeartbeatTimer) {
-    return;
-  }
-  lockHeartbeatTimer = setInterval(refreshLockHeartbeat, LOCK_HEARTBEAT_MS);
+  indexerLock.startHeartbeat(LOCK_HEARTBEAT_MS);
 }
 
 function stopLockHeartbeat() {
-  if (lockHeartbeatTimer) {
-    clearInterval(lockHeartbeatTimer);
-    lockHeartbeatTimer = null;
-  }
+  indexerLock.stopHeartbeat();
 }
 
 function shutdownIndexing(exitCode) {
@@ -190,12 +104,10 @@ process.on("unhandledRejection", (reason, promise) => {
 
 // MCP stdio clients exit when the host closes stdin. The indexer daemon must
 // not — LaunchAgent / KeepAlive often attaches stdin to /dev/null.
-if (!INDEXER_MODE) {
-  process.stdin.on("close", () => {
-    console.error("Client disconnected. Exiting.");
-    shutdownIndexing(0);
-  });
-}
+bindStdinCloseExit(process.stdin, INDEXER_MODE, () => {
+  console.error("Client disconnected. Exiting.");
+  shutdownIndexing(0);
+});
 
 // Vector search imports
 import {
@@ -271,13 +183,15 @@ function getIndexingMessage() {
 
 // Run a single indexing cycle (called by background timer)
 function runIndexCycle() {
-  if (indexingInProgress) {
-    console.error("Indexing already in progress, skipping cycle");
+  const cycle = beginIndexCycle(indexingInProgress);
+  if (!cycle.started) {
     return;
   }
+  indexingInProgress = cycle.indexingInProgress;
 
   // Safety net: check lock before indexing
   if (!acquireLock()) {
+    indexingInProgress = false;
     console.error("Another instance is indexing. Skipping.");
     return;
   }
@@ -380,18 +294,18 @@ function stopBackgroundIndexing() {
 // so tools are not stuck forever. The indexer daemon keeps indexer.lock for
 // the process lifetime; MCP local-fallback still releases between cycles.
 function applyCycleEnd(success) {
-  const flags = cycleEndFlags(success);
-  indexingInProgress = flags.indexingInProgress;
-  sessionIndexComplete = flags.sessionIndexComplete;
-  if (flags.isFirstEverRun === false) {
+  const result = applyIndexerCycleEnd({
+    success,
+    indexerMode: INDEXER_MODE,
+    cycleEndFlags,
+    releaseLock
+  });
+  indexingInProgress = result.indexingInProgress;
+  sessionIndexComplete = result.sessionIndexComplete;
+  ownsIndexLock = result.ownsIndexLock;
+  if (result.isFirstEverRun === false) {
     isFirstEverRun = false;
   }
-  if (INDEXER_MODE) {
-    ownsIndexLock = true;
-    return;
-  }
-  ownsIndexLock = flags.ownsIndexLock;
-  releaseLock();
 }
 
 // Index-backed tools wait only while THIS process owns the lock and has not
@@ -404,17 +318,13 @@ function stillIndexingMessage() {
 }
 
 function waitForLockAndStartDaemon() {
-  const tryAcquire = () => {
-    if (acquireLock()) {
-      console.error("Indexer daemon acquired indexer.lock");
+  waitForIndexerLock(acquireLock, {
+    retryMs: LOCK_RETRY_MS,
+    onAcquired: () => {
       startLockHeartbeat();
       startBackgroundIndexing();
-      return;
     }
-    console.error("Indexer daemon waiting for indexer.lock...");
-    setTimeout(tryAcquire, LOCK_RETRY_MS);
-  };
-  tryAcquire();
+  });
 }
 
 // Initialize and start indexing
@@ -432,7 +342,8 @@ async function initializeIndexing() {
   // MCP stdio: if the indexer daemon (or another instance) holds the lock,
   // skip background refresh and use the shared index. If nothing holds the
   // lock, index locally as before so the stdio happy path still works.
-  if (!acquireLock()) {
+  const startup = mcpIndexingStartup(() => acquireLock());
+  if (!startup.startBackground) {
     console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
     // Lost lock is not "still indexing": this process will never complete a
     // local cycle. Searches proceed whenever isIndexReady() is true.
@@ -1609,6 +1520,6 @@ async function main() {
   // fallback on this stdio process only if indexer.lock is free.
 }
 
-if (!INDEXER_MODE) {
+if (shouldConnectMcpStdio(INDEXER_MODE)) {
   main().catch(console.error);
 }
