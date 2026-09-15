@@ -39,6 +39,8 @@ If you installed from source, point your MCP client at the local `index.js` inst
 "args": ["/absolute/path/to/Apple-Tools-MCP/index.js"]
 ```
 
+**Mac Mini** stays on a **global npm** install (`npm install -g apple-tools-mcp`) — no git clone on Mini. **MacBook / development** uses the clone above.
+
 ### 2. Grant Full Disk Access
 
 The MCP server needs access to read your Mail, Messages, and Calendar databases.
@@ -89,15 +91,22 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 Other clients use their own settings UI or config file. Use the same `command` and `args`; only the file path or UI differs.
 
+MCP clients are **short-lived stdio** processes: they exit when the client closes stdin. Always-on indexing belongs on the **indexer daemon**, not a sleep-pipe wrapper around this binary.
+
 ### 4. Restart your MCP client
 
 Quit and reopen the client so it loads the server. For Claude Desktop, fully quit (Cmd+Q) and reopen.
 
 ## Building the Index
 
-On first use, the server will automatically build a vector index of your emails, messages, and calendar events. Email history is unlimited by default. This may take a while depending on the volume of data.
+On first use, a vector index of your emails, messages, and calendar events is built automatically. Email history is unlimited by default. This may take a while depending on the volume of data.
 
-You can manually rebuild the index:
+**Who indexes**
+
+- **Indexer daemon running** (recommended on Mac Mini): the daemon owns `~/.apple-tools-mcp/indexer.lock` and refreshes `~/.apple-tools-mcp/vector-index/`. MCP stdio clients only search; they do not start background refresh.
+- **No daemon** (default MacBook / Claude Desktop / Cursor): the MCP stdio process indexes **locally on startup**, same as previous versions, then exits when the client disconnects.
+
+You can manually rebuild the index (stop the indexer daemon first if it is running, so it is not writing at the same time):
 
 ```bash
 # Index all email history (default)
@@ -108,6 +117,95 @@ APPLE_TOOLS_INDEX_DAYS_BACK=30 npm run build-index
 ```
 
 The index is stored in `~/.apple-tools-mcp/vector-index/`.
+
+## Index refresh interval
+
+Resolved **once at process start**. Precedence (highest wins):
+
+1. `INDEX_INTERVAL_MS` environment variable (milliseconds or human form: `30s`, `1m`, `5m`, `1h`)
+2. `~/.apple-tools-mcp/config.json` keys `indexInterval` or `indexIntervalMs`
+3. Product default: **5 minutes** (`300000` ms) — typical MacBook / MCP local-fallback
+
+Values are **clamped** to **15 seconds** minimum and **6 hours** maximum. Invalid JSON, unknown keys, and unparseable intervals are logged and ignored (the process does not crash). The effective interval is logged at start, for example:
+
+```text
+Effective index refresh interval: 1m (60000 ms) [source=config]
+```
+
+A warn line is also logged when clamping occurs.
+
+### Example `~/.apple-tools-mcp/config.json` (Mac Mini)
+
+Recommended Mini always-on interval is **1 minute**. 30 seconds is allowed (at or above the 15s floor).
+
+```json
+{
+  "indexInterval": "1m"
+}
+```
+
+Equivalent: `"indexIntervalMs": 60000`, or `INDEX_INTERVAL_MS=60000` (env overrides the file).
+
+Missing `config.json` is fine — env then the 5-minute default apply.
+
+## Always-on indexer (Mac Mini LaunchAgent)
+
+On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tools-mcp`. Grok Bot, Claude Desktop, and other clients still attach via short-lived stdio MCP (`npx -y apple-tools-mcp` or the global `apple-tools-mcp` bin).
+
+**Entrypoint:** `node index.js --mode=indexer`  
+**Convenience bin:** `apple-tools-indexer` (same file; npm global install provides it)  
+**npm script (clone only):** `npm run indexer`
+
+LaunchAgent should invoke **node + `--mode=indexer`** on the **global** package (Mini has no git clone). LaunchAgent does not inherit your shell `PATH`, so use absolute paths from `which node` and `npm root -g`.
+
+```bash
+which node
+# Apple Silicon Homebrew example: /opt/homebrew/bin/node
+# Intel Homebrew / usr/local example: /usr/local/bin/node
+
+npm root -g
+# Example: /opt/homebrew/lib/node_modules
+```
+
+Example `~/Library/LaunchAgents/com.apple-tools-mcp.indexer.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.apple-tools-mcp.indexer</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/opt/homebrew/lib/node_modules/apple-tools-mcp/index.js</string>
+    <string>--mode=indexer</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/apple-tools-indexer.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/apple-tools-indexer.err.log</string>
+</dict>
+</plist>
+```
+
+Replace the node and `node_modules` paths with the values from `which node` and `npm root -g`. Load it with:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.apple-tools-mcp.indexer.plist
+```
+
+KeepAlive belongs on this indexer job only — not on the MCP stdio process.
 
 ## Available Tools
 
@@ -206,12 +304,15 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 If the index becomes corrupted or out of sync:
 
 ```bash
+# If the Mini indexer LaunchAgent is running, unload it first
+# launchctl unload ~/Library/LaunchAgents/com.apple-tools-mcp.indexer.plist
+
 # Remove existing index files
 rm -rf ~/.apple-tools-mcp/vector-index
 rm -f ~/.apple-tools-mcp/index-meta.json
 rm -f ~/.apple-tools-mcp/indexer.lock
 
-# Restart your MCP client to trigger a fresh rebuild
+# Restart the indexer daemon or your MCP client to trigger a fresh rebuild
 ```
 
 ### Monitor indexing progress
@@ -249,6 +350,12 @@ npm install -D vitest @vitest/coverage-v8 fast-check
 
 # Run tests
 npm test
+
+# Run the indexer daemon (owns indexer.lock + vector-index refresh)
+npm run indexer
+
+# Build index with debug output
+npm run build-index
 
 # Run tests with verbose coverage report
 npx vitest run --coverage --reporter=verbose
