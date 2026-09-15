@@ -14,6 +14,7 @@ import {
   formatLockData,
   isProcessAlive,
   getTakeoverMutexPath,
+  getTakeoverFencePath,
   DEFAULT_LOCK_TIMEOUT_MS
 } from '../../lib/indexerLock.js'
 
@@ -47,6 +48,7 @@ describe('takeover does not rename the live lock path', () => {
   it('uses a wx mutex beside indexer.lock instead of rename-aside', () => {
     expect(lockSrc).toContain('TAKEOVER_MUTEX_SUFFIX')
     expect(lockSrc).toContain('.takeover')
+    expect(lockSrc).toContain('getTakeoverFencePath')
     expect(lockSrc).not.toMatch(/renameSync\s*\(\s*lockFile/)
     expect(lockSrc).not.toContain('unlinkVerifiedStale')
   })
@@ -208,6 +210,110 @@ describe('createIndexerLock runtime', () => {
     expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(300, 9))
   })
 
+  it('does not unlink an orphaned takeover mutex; recovers via a dead-pid wx fence', () => {
+    const mutexPath = getTakeoverMutexPath(lockFile)
+    const deadMutexPid = 88888888
+    const fencePath = getTakeoverFencePath(lockFile, deadMutexPid)
+    fs.writeFileSync(lockFile, formatLockData(99999999, 1))
+    fs.writeFileSync(mutexPath, formatLockData(deadMutexPid, 1))
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => fs.readFileSync(p, enc),
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 200,
+      isAlive: (p) => p === 200,
+      now: () => 50_000,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(true)
+    expect(waiter.ownsLock).toBe(true)
+    expect(unlinked).not.toContain(mutexPath)
+    expect(fs.readFileSync(mutexPath, 'utf8')).toBe(formatLockData(deadMutexPid, 1))
+    expect(fs.existsSync(fencePath)).toBe(false)
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(200, 50_000))
+  })
+
+  it('does not steal a live recover fence or displace a peer wx mutex', () => {
+    const mutexPath = getTakeoverMutexPath(lockFile)
+    const deadMutexPid = 88888888
+    const fencePath = getTakeoverFencePath(lockFile, deadMutexPid)
+    fs.writeFileSync(lockFile, formatLockData(99999999, 1))
+    fs.writeFileSync(mutexPath, formatLockData(deadMutexPid, 1))
+    fs.writeFileSync(fencePath, formatLockData(300, 9))
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => fs.readFileSync(p, enc),
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 400,
+      isAlive: (p) => p === 300,
+      now: () => 10,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(false)
+    expect(waiter.ownsLock).toBe(false)
+    expect(unlinked).toEqual([])
+    expect(fs.readFileSync(mutexPath, 'utf8')).toBe(formatLockData(deadMutexPid, 1))
+    expect(fs.readFileSync(fencePath, 'utf8')).toBe(formatLockData(300, 9))
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(99999999, 1))
+  })
+
+  it('recovers a two-level crash (orphaned mutex and orphaned fence) without unlinking either', () => {
+    const mutexPath = getTakeoverMutexPath(lockFile)
+    const deadMutexPid = 88888888
+    const deadFencePid = 77777777
+    const fencePath = getTakeoverFencePath(lockFile, deadMutexPid)
+    const fence2Path = getTakeoverFencePath(lockFile, deadMutexPid, deadFencePid)
+    fs.writeFileSync(lockFile, formatLockData(99999999, 1))
+    fs.writeFileSync(mutexPath, formatLockData(deadMutexPid, 1))
+    fs.writeFileSync(fencePath, formatLockData(deadFencePid, 1))
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => fs.readFileSync(p, enc),
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 200,
+      isAlive: (p) => p === 200,
+      now: () => 50_000,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(true)
+    expect(unlinked).not.toContain(mutexPath)
+    expect(unlinked).not.toContain(fencePath)
+    expect(unlinked).toContain(fence2Path)
+    expect(fs.readFileSync(mutexPath, 'utf8')).toBe(formatLockData(deadMutexPid, 1))
+    expect(fs.readFileSync(fencePath, 'utf8')).toBe(formatLockData(deadFencePid, 1))
+    expect(fs.existsSync(fence2Path)).toBe(false)
+  })
+
   it('multi-contender stale takeover: at most one ownsLock (rename-aside regression)', () => {
     // Rename-aside failed this pattern (~2/200 with 8 waiters): moving the live
     // path aside let a peer wx-create, then restore/unlink displaced that lock
@@ -292,6 +398,98 @@ describe('createIndexerLock runtime', () => {
       const ownerPid = parseLockData(fs.readFileSync(lockFile, 'utf8')).pid
       expect(ownerPid).toBe(winners[0].pid)
       expect(fs.existsSync(mutexPath)).toBe(false)
+    }
+  })
+
+  it('multi-contender crash-orphaned takeover mutex: at most one ownsLock', () => {
+    // Compare-then-unlink of indexer.lock.takeover let two waiters steal a
+    // crash-orphaned mutex and both keep ownsLock. Pump on mutex/fence/lock wx
+    // and on mutex/lock unlink. Dead mutex must stay; a live fence must not be
+    // deleted by a peer.
+    const waiterPids = [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007]
+    const deadLockPid = 99999999
+    const deadMutexPid = 88888888
+    const isAlive = (p) => waiterPids.includes(p)
+    const rounds = 200
+    const mutexPath = getTakeoverMutexPath(lockFile)
+    const fencePath = getTakeoverFencePath(lockFile, deadMutexPid)
+
+    for (let round = 0; round < rounds; round++) {
+      fs.writeFileSync(lockFile, formatLockData(deadLockPid, 1))
+      fs.writeFileSync(mutexPath, formatLockData(deadMutexPid, 1))
+      try {
+        fs.unlinkSync(fencePath)
+      } catch {
+        // no leftover fence
+      }
+
+      const waiters = []
+      let pumping = false
+      const mutexUnlinks = []
+
+      const pumpPeers = (selfPid) => {
+        if (pumping) {
+          return
+        }
+        pumping = true
+        try {
+          for (const w of waiters) {
+            if (w.pid !== selfPid) {
+              w.lock.acquire()
+            }
+          }
+        } finally {
+          pumping = false
+        }
+      }
+
+      for (const waiterPid of waiterPids) {
+        const fsApi = {
+          existsSync: (p) => fs.existsSync(p),
+          mkdirSync: (p, o) => fs.mkdirSync(p, o),
+          readFileSync: (p, enc) => fs.readFileSync(p, enc),
+          writeFileSync: (p, c, o) => {
+            fs.writeFileSync(p, c, o)
+            if (o?.flag === 'wx' && (p === lockFile || p === mutexPath || p === fencePath)) {
+              pumpPeers(waiterPid)
+            }
+          },
+          unlinkSync: (p) => {
+            if (p === mutexPath) {
+              mutexUnlinks.push(waiterPid)
+            }
+            fs.unlinkSync(p)
+            if (p === lockFile || p === mutexPath || p === fencePath) {
+              pumpPeers(waiterPid)
+            }
+          }
+        }
+        waiters.push({
+          pid: waiterPid,
+          lock: createIndexerLock({
+            lockFile,
+            pid: waiterPid,
+            isAlive,
+            now: () => 10 + waiterPid,
+            fsApi,
+            log: () => {}
+          })
+        })
+      }
+
+      waiters[0].lock.acquire()
+      for (const w of waiters) {
+        w.lock.acquire()
+      }
+
+      const winners = waiters.filter((w) => w.lock.ownsLock)
+      expect(winners.length, `round ${round} owners`).toBeLessThanOrEqual(1)
+      expect(winners.length, `round ${round} should elect an owner`).toBe(1)
+      const ownerPid = parseLockData(fs.readFileSync(lockFile, 'utf8')).pid
+      expect(ownerPid).toBe(winners[0].pid)
+      expect(mutexUnlinks, `round ${round} must not unlink live takeover path`).toEqual([])
+      expect(fs.readFileSync(mutexPath, 'utf8')).toBe(formatLockData(deadMutexPid, 1))
+      expect(fs.existsSync(fencePath)).toBe(false)
     }
   })
 
