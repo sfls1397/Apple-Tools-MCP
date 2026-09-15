@@ -44,7 +44,7 @@ Detects `--mode=indexer` / `--mode indexer` / `apple-tools-indexer` bin so the s
 
 ### lib/indexerLock.js -- indexer.lock
 
-Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals from a live PID (even if the timestamp is old). Dead PIDs are removed by renaming the lock aside, verifying that inode's contents, then deleting the verified temp file (never unlink the live path after a non-atomic compare). MCP local-fallback starts the same lock heartbeat as the daemon.
+Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals from a live PID (even if the timestamp is old). Dead-PID takeover uses a `wx` mutex beside the lock (`indexer.lock.takeover`), re-reads, unlinks only if contents are still the expected dead lock, then `wx`-creates — never renames the live path. MCP local-fallback starts the same lock heartbeat as the daemon.
 
 ### lib/indexerRuntime.js -- Daemon vs stdio control flow
 
