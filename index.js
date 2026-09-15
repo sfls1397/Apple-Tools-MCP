@@ -19,7 +19,8 @@ import {
   beginIndexCycle,
   applyIndexerCycleEnd,
   mcpIndexingStartup,
-  waitForIndexerLock
+  waitForIndexerLock,
+  beginOwnedIndexing
 } from "./lib/indexerRuntime.js";
 
 const PACKAGE_VERSION = JSON.parse(
@@ -47,12 +48,18 @@ let ownsIndexLock = false;
 function acquireLock() {
   const ok = indexerLock.acquire();
   ownsIndexLock = indexerLock.ownsLock;
+  if (ok) {
+    startLockHeartbeat();
+  }
   return ok;
 }
 
 function releaseLock() {
   indexerLock.release();
   ownsIndexLock = indexerLock.ownsLock;
+  if (!ownsIndexLock) {
+    stopLockHeartbeat();
+  }
 }
 
 function startLockHeartbeat() {
@@ -321,8 +328,10 @@ function waitForLockAndStartDaemon() {
   waitForIndexerLock(acquireLock, {
     retryMs: LOCK_RETRY_MS,
     onAcquired: () => {
-      startLockHeartbeat();
-      startBackgroundIndexing();
+      beginOwnedIndexing({
+        startHeartbeat: startLockHeartbeat,
+        startBackground: startBackgroundIndexing
+      });
     }
   });
 }
@@ -352,7 +361,12 @@ async function initializeIndexing() {
   }
 
   // Start background indexing (local fallback when no daemon is running)
-  startBackgroundIndexing();
+  // using the same heartbeat path as the daemon so a long first-index cycle
+  // cannot look like a stale lock to another waiter.
+  beginOwnedIndexing({
+    startHeartbeat: startLockHeartbeat,
+    startBackground: startBackgroundIndexing
+  });
 }
 
 // Start indexing immediately on server startup

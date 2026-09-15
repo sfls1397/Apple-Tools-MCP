@@ -17,7 +17,8 @@ import {
   beginIndexCycle,
   applyIndexerCycleEnd,
   mcpIndexingStartup,
-  waitForIndexerLock
+  waitForIndexerLock,
+  beginOwnedIndexing
 } from '../../lib/indexerRuntime.js'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -112,6 +113,7 @@ describe('MCP stdio vs indexer daemon runtime', () => {
     expect(fallback).toEqual({
       startBackground: true,
       ownsIndexLock: true,
+      startHeartbeat: true,
       reason: 'local-fallback'
     })
 
@@ -119,8 +121,28 @@ describe('MCP stdio vs indexer daemon runtime', () => {
     expect(skipped).toEqual({
       startBackground: false,
       ownsIndexLock: false,
+      startHeartbeat: false,
       reason: 'lock-held'
     })
+  })
+
+  it('starts lock heartbeat when MCP local-fallback owns the lock', () => {
+    const calls = []
+    beginOwnedIndexing({
+      startHeartbeat: () => calls.push('heartbeat'),
+      startBackground: () => calls.push('background')
+    })
+    expect(calls).toEqual(['heartbeat', 'background'])
+
+    const fallback = mcpIndexingStartup(() => true)
+    expect(fallback.startHeartbeat).toBe(true)
+    if (fallback.startHeartbeat) {
+      beginOwnedIndexing({
+        startHeartbeat: () => calls.push('mcp-heartbeat'),
+        startBackground: () => calls.push('mcp-background')
+      })
+    }
+    expect(calls).toEqual(['heartbeat', 'background', 'mcp-heartbeat', 'mcp-background'])
   })
 
   it('retries until the daemon acquires indexer.lock', () => {
@@ -163,7 +185,8 @@ describe('index.js wires the runtime helpers', () => {
     expect(indexSrc).toContain('applyIndexerCycleEnd')
     expect(indexSrc).toContain('mcpIndexingStartup')
     expect(indexSrc).toContain('waitForIndexerLock')
-    expect(indexSrc).toContain('shouldConnectMcpStdio')
+    expect(indexSrc).toContain('beginOwnedIndexing')
+    expect(indexSrc).toContain('startHeartbeat: startLockHeartbeat')
     expect(indexSrc).toContain('local fallback when no daemon is running')
   })
 })
