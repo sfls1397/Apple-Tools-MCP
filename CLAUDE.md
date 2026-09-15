@@ -1,12 +1,14 @@
 # Project Architecture
 
-Apple Tools MCP is a Model Context Protocol server that provides semantic search across Apple Mail, iMessages, and Calendar on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 22 tools organized by data source. Background indexing runs on a 5-minute interval after the initial index cycle completes.
+Apple Tools MCP is a Model Context Protocol server that provides semantic search across Apple Mail, iMessages, and Calendar on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 22 tools organized by data source.
+
+A long-lived **indexer daemon** (`--mode=indexer` / `apple-tools-indexer`) owns `~/.apple-tools-mcp/indexer.lock` and refreshes the vector index on an interval from `~/.apple-tools-mcp/config.json` (env `INDEX_INTERVAL_MS` overrides; default 5 minutes, clamped to 15s–6h). MCP stdio clients stay short-lived, exit on stdin close, and index locally only when no daemon holds the lock.
 
 ## Core Modules
 
-### index.js -- MCP Server and Tool Dispatcher
+### index.js -- MCP Server, Indexer Daemon, and Tool Dispatcher
 
-Entry point and process lifecycle manager. Registers all 22 MCP tools, routes tool calls to handler functions, manages lock file acquisition/release, and signal handling. Starts background indexing via `setInterval`. Index-backed tools (`mail_*`, `messages_*`, `calendar_search`) return a "still indexing" message until the first index cycle completes (`sessionIndexComplete` flag). `calendar_date` and `calendar_free_time` query live Calendar.sqlitedb and do not wait. Contains `smartSearch()` which auto-detects data sources from query intent and searches them in parallel, then groups results into 1-hour time buckets via `synthesizeResults()`.
+Entry point and process lifecycle manager. Default mode is MCP stdio: registers all 22 MCP tools, routes tool calls, and **exits on stdin close**. `--mode=indexer` (or the `apple-tools-indexer` bin) skips MCP stdio, holds `indexer.lock` for the process lifetime, and runs startup index + background refresh. MCP instances that lose the lock skip background indexing and search the shared index; if the lock is free they index locally (stdio happy path). Index-backed tools (`mail_*`, `messages_*`, `calendar_search`) return a "still indexing" message until the first index cycle completes (`sessionIndexComplete` flag) **while this process owns the lock**. `calendar_date` and `calendar_free_time` query live Calendar.sqlitedb and do not wait. Contains `smartSearch()` which auto-detects data sources from query intent and searches them in parallel, then groups results into 1-hour time buckets via `synthesizeResults()`.
 
 ### indexer.js -- Data Ingestion and Vector Storage
 
@@ -32,9 +34,18 @@ Centralizes injection prevention: path traversal checks, AppleScript/SQL escapin
 
 Compares the vector index against all three source databases with 0% tolerance. Reports missing items, orphaned entries, and duplicates.
 
+### lib/config.js -- Config File and Interval Clamp
+
+Loads `~/.apple-tools-mcp/config.json` (missing/invalid JSON is non-fatal). Resolves the index refresh interval with precedence env `INDEX_INTERVAL_MS` > file `indexInterval` / `indexIntervalMs` > 5-minute default. Accepts human durations (`30s`, `1m`, `1h`) and clamps to 15 seconds–6 hours, logging the effective interval.
+
+### lib/processMode.js -- Indexer vs MCP stdio
+
+Detects `--mode=indexer` / `--mode indexer` / `apple-tools-indexer` bin so the same `index.js` can run as a daemon or as a short-lived MCP client.
+
 ## Common Commands
 
 - **Start server**: `npm start`
+- **Indexer daemon**: `npm run indexer` (or `node index.js --mode=indexer`)
 - **Run all tests**: `npm test`
 - **Unit tests**: `npm run test:unit`
 - **Integration tests**: `npm run test:integration`

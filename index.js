@@ -10,10 +10,19 @@ import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
 import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from "./lib/indexGate.js";
+import { isIndexerMode } from "./lib/processMode.js";
+import { loadResolvedIndexInterval, logResolvedInterval } from "./lib/config.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
 ).version;
+
+// Canonical indexer entrypoint: `node index.js --mode=indexer` or `apple-tools-indexer`.
+const INDEXER_MODE = isIndexerMode();
+const resolvedIndexInterval = loadResolvedIndexInterval();
+const INDEX_INTERVAL = resolvedIndexInterval.ms;
+const LOCK_HEARTBEAT_MS = 60 * 1000;
+const LOCK_RETRY_MS = 5 * 1000;
 
 // Lock file to prevent duplicate indexing processes
 const LOCK_FILE = path.join(process.env.HOME, ".apple-tools-mcp", "indexer.lock");
@@ -22,6 +31,7 @@ const LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - if lock is older, assume
 // sessionIndexComplete: a secondary instance that lost the lock never
 // completes a local cycle and must not stay on "still indexing" forever.
 let ownsIndexLock = false;
+let lockHeartbeatTimer = null;
 
 function acquireLock() {
   try {
@@ -39,9 +49,15 @@ function acquireLock() {
       const timestamp = parseInt(timestampStr) || Date.now();
       const lockAge = Date.now() - timestamp;
 
-      // If we already hold the lock, return true
+      // If we already hold the lock, refresh the timestamp so a long-lived
+      // indexer daemon is not treated as a hung process.
       if (pid === process.pid) {
         ownsIndexLock = true;
+        try {
+          fs.writeFileSync(LOCK_FILE, `${process.pid}:${Date.now()}`);
+        } catch {
+          // Keep going; heartbeat or the next cycle can retry the write.
+        }
         return true;
       }
 
@@ -104,49 +120,82 @@ function releaseLock() {
   }
 }
 
+function refreshLockHeartbeat() {
+  try {
+    if (!ownsIndexLock || !fs.existsSync(LOCK_FILE)) {
+      return;
+    }
+    const lockData = fs.readFileSync(LOCK_FILE, "utf8");
+    const [pidStr] = lockData.split(":");
+    if (parseInt(pidStr) === process.pid) {
+      fs.writeFileSync(LOCK_FILE, `${process.pid}:${Date.now()}`);
+    }
+  } catch (err) {
+    console.error(`Lock heartbeat error: ${err.message}`);
+  }
+}
+
+function startLockHeartbeat() {
+  if (lockHeartbeatTimer) {
+    return;
+  }
+  lockHeartbeatTimer = setInterval(refreshLockHeartbeat, LOCK_HEARTBEAT_MS);
+}
+
+function stopLockHeartbeat() {
+  if (lockHeartbeatTimer) {
+    clearInterval(lockHeartbeatTimer);
+    lockHeartbeatTimer = null;
+  }
+}
+
+function shutdownIndexing(exitCode) {
+  stopBackgroundIndexing();
+  stopLockHeartbeat();
+  releaseLock();
+  if (exitCode !== undefined) {
+    process.exit(exitCode);
+  }
+}
+
 // Clean up lock and timer on exit
 process.on("exit", () => {
   stopBackgroundIndexing();
+  stopLockHeartbeat();
   releaseLock();
 });
 process.on("SIGINT", () => {
-  stopBackgroundIndexing();
-  releaseLock();
+  shutdownIndexing();
   process.exit();
 });
 process.on("SIGTERM", () => {
-  stopBackgroundIndexing();
-  releaseLock();
+  shutdownIndexing();
   process.exit();
 });
 process.on("SIGHUP", () => {
-  stopBackgroundIndexing();
-  releaseLock();
+  shutdownIndexing();
   process.exit();
 });
 
 // Handle uncaught errors - cleanup before crashing
 process.on("uncaughtException", (err) => {
   console.error("Uncaught exception:", err);
-  stopBackgroundIndexing();
-  releaseLock();
-  process.exit(1);
+  shutdownIndexing(1);
 });
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled rejection at:", promise, "reason:", reason);
-  stopBackgroundIndexing();
-  releaseLock();
-  process.exit(1);
+  shutdownIndexing(1);
 });
 
-// Exit when stdin closes (MCP client disconnected)
-process.stdin.on("close", () => {
-  console.error("Client disconnected. Exiting.");
-  stopBackgroundIndexing();
-  releaseLock();
-  process.exit(0);
-});
+// MCP stdio clients exit when the host closes stdin. The indexer daemon must
+// not — LaunchAgent / KeepAlive often attaches stdin to /dev/null.
+if (!INDEXER_MODE) {
+  process.stdin.on("close", () => {
+    console.error("Client disconnected. Exiting.");
+    shutdownIndexing(0);
+  });
+}
 
 // Vector search imports
 import {
@@ -199,10 +248,9 @@ let sessionIndexComplete = false;  // Track if this session's indexing is done
 let isFirstEverRun = true;  // True if no index exists yet
 let lastIndexTime = 0;
 let lastProgressTime = 0;  // Track when we last made progress (for hung detection)
-// Allow environment variable to override default 5-minute interval
-const INDEX_INTERVAL = parseInt(process.env.INDEX_INTERVAL_MS || (5 * 60 * 1000));
 let indexTimer = null;
 let progressCheckTimer = null;
+let loggedIndexInterval = false;
 
 // Check if this is the first ever run (no index exists)
 async function checkIfFirstRun() {
@@ -299,6 +347,11 @@ function triggerIndexIfNeeded() {
 
 // Start continuous background indexing
 function startBackgroundIndexing() {
+  if (!loggedIndexInterval) {
+    logResolvedInterval(resolvedIndexInterval);
+    loggedIndexInterval = true;
+  }
+
   // Run indexing immediately on startup
   runIndexCycle();
 
@@ -307,7 +360,7 @@ function startBackgroundIndexing() {
     runIndexCycle();
   }, INDEX_INTERVAL);
 
-  console.error(`Background indexing started (interval: ${INDEX_INTERVAL / 1000}s)`);
+  console.error(`Background indexing started (interval: ${resolvedIndexInterval.human} / ${INDEX_INTERVAL} ms)`);
 }
 
 // Stop background indexing and clean up timers
@@ -323,16 +376,21 @@ function stopBackgroundIndexing() {
   console.error("Background indexing stopped");
 }
 
-// Unblock searches and drop the indexer lock after a cycle ends.
-// Must run on failure as well as success so tools are not stuck forever.
+// Unblock searches after a cycle ends. Must run on failure as well as success
+// so tools are not stuck forever. The indexer daemon keeps indexer.lock for
+// the process lifetime; MCP local-fallback still releases between cycles.
 function applyCycleEnd(success) {
   const flags = cycleEndFlags(success);
   indexingInProgress = flags.indexingInProgress;
   sessionIndexComplete = flags.sessionIndexComplete;
-  ownsIndexLock = flags.ownsIndexLock;
   if (flags.isFirstEverRun === false) {
     isFirstEverRun = false;
   }
+  if (INDEXER_MODE) {
+    ownsIndexLock = true;
+    return;
+  }
+  ownsIndexLock = flags.ownsIndexLock;
   releaseLock();
 }
 
@@ -345,12 +403,35 @@ function stillIndexingMessage() {
   return null;
 }
 
+function waitForLockAndStartDaemon() {
+  const tryAcquire = () => {
+    if (acquireLock()) {
+      console.error("Indexer daemon acquired indexer.lock");
+      startLockHeartbeat();
+      startBackgroundIndexing();
+      return;
+    }
+    console.error("Indexer daemon waiting for indexer.lock...");
+    setTimeout(tryAcquire, LOCK_RETRY_MS);
+  };
+  tryAcquire();
+}
+
 // Initialize and start indexing
 async function initializeIndexing() {
   isFirstEverRun = await checkIfFirstRun();
 
-  // Try to acquire lock - if another instance is indexing, skip background
-  // indexing but keep the MCP server running so search still works.
+  if (INDEXER_MODE) {
+    console.error(`Apple Tools MCP indexer running (v${PACKAGE_VERSION})`);
+    logResolvedInterval(resolvedIndexInterval);
+    loggedIndexInterval = true;
+    waitForLockAndStartDaemon();
+    return;
+  }
+
+  // MCP stdio: if the indexer daemon (or another instance) holds the lock,
+  // skip background refresh and use the shared index. If nothing holds the
+  // lock, index locally as before so the stdio happy path still works.
   if (!acquireLock()) {
     console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
     // Lost lock is not "still indexing": this process will never complete a
@@ -359,7 +440,7 @@ async function initializeIndexing() {
     return;
   }
 
-  // Start background indexing
+  // Start background indexing (local fallback when no daemon is running)
   startBackgroundIndexing();
 }
 
@@ -1524,7 +1605,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`Apple Tools MCP server running (v${PACKAGE_VERSION})`);
-  // Background indexing runs automatically on startup and every INDEX_INTERVAL
+  // Background indexing: indexer daemon when --mode=indexer; otherwise local
+  // fallback on this stdio process only if indexer.lock is free.
 }
 
-main().catch(console.error);
+if (!INDEXER_MODE) {
+  main().catch(console.error);
+}
