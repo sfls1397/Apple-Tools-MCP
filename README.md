@@ -154,7 +154,8 @@ On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tool
 
 **Entrypoint:** `node index.js --mode=indexer`  
 **Convenience bin:** `apple-tools-indexer` (same file; npm global install provides it)  
-**npm script (clone only):** `npm run indexer`
+**npm script (clone only):** `npm run indexer`  
+**One-shot rebuild:** `npm run build-index` (stop the indexer daemon first)
 
 LaunchAgent should invoke **node + `--mode=indexer`** on the **global** package (Mini has no git clone). LaunchAgent does not inherit your shell `PATH`, so use absolute paths from `which node` and `npm root -g`.
 
@@ -354,14 +355,11 @@ npm test
 # Run the indexer daemon (owns indexer.lock + vector-index refresh)
 npm run indexer
 
-# Build index with debug output
+# One-shot rebuild (stop the indexer daemon first)
 npm run build-index
 
 # Run tests with verbose coverage report
 npx vitest run --coverage --reporter=verbose
-
-# Build index with debug output
-npm run build-index
 
 # Run audit to check index health
 npm run audit

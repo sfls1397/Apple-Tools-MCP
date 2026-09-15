@@ -42,6 +42,14 @@ Loads `~/.apple-tools-mcp/config.json` (missing/invalid JSON is non-fatal). Reso
 
 Detects `--mode=indexer` / `--mode indexer` / `apple-tools-indexer` bin so the same `index.js` can run as a daemon or as a short-lived MCP client.
 
+### lib/indexerLock.js -- indexer.lock
+
+Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals from a live PID (even if the timestamp is old). Dead PIDs are removed with a compare-and-swap unlink.
+
+### lib/indexerRuntime.js -- Daemon vs stdio control flow
+
+Stdin-exit policy, overlapping-cycle skip, lock retention across daemon cycles, MCP local-fallback startup, and daemon lock retry.
+
 ## Common Commands
 
 - **Start server**: `npm start`
