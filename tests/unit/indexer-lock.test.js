@@ -314,6 +314,180 @@ describe('createIndexerLock runtime', () => {
     expect(fs.existsSync(fence2Path)).toBe(false)
   })
 
+  it('does not fence or steal when takeover mutex is empty or unparsable (N1)', () => {
+    const mutexPath = getTakeoverMutexPath(lockFile)
+    const fenceOrphan = getTakeoverFencePath(lockFile, 'orphan')
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => fs.readFileSync(p, enc),
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+
+    fs.writeFileSync(lockFile, formatLockData(99999999, 1))
+    fs.writeFileSync(mutexPath, '')
+    const emptyWaiter = createIndexerLock({
+      lockFile,
+      pid: 200,
+      isAlive: (p) => p === 200,
+      now: () => 10,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(emptyWaiter.acquire()).toBe(false)
+    expect(emptyWaiter.ownsLock).toBe(false)
+    expect(fs.existsSync(fenceOrphan)).toBe(false)
+    expect(fs.readFileSync(mutexPath, 'utf8')).toBe('')
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(99999999, 1))
+
+    fs.writeFileSync(mutexPath, 'nope')
+    const badWaiter = createIndexerLock({
+      lockFile,
+      pid: 201,
+      isAlive: (p) => p === 201,
+      now: () => 11,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(badWaiter.acquire()).toBe(false)
+    expect(badWaiter.ownsLock).toBe(false)
+    expect(fs.existsSync(fenceOrphan)).toBe(false)
+    expect(unlinked).not.toContain(lockFile)
+    expect(unlinked).not.toContain(mutexPath)
+    expect(fs.readFileSync(mutexPath, 'utf8')).toBe('nope')
+  })
+
+  it('does not fence past an in-flight mutex whose contents read as empty (N1)', () => {
+    const mutexPath = getTakeoverMutexPath(lockFile)
+    const fenceOrphan = getTakeoverFencePath(lockFile, 'orphan')
+    fs.writeFileSync(lockFile, formatLockData(99999999, 1))
+    fs.writeFileSync(mutexPath, formatLockData(300, 9))
+    const fenced = []
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => {
+        if (p === mutexPath) {
+          return ''
+        }
+        return fs.readFileSync(p, enc)
+      },
+      writeFileSync: (p, c, o) => {
+        if (o?.flag === 'wx' && p !== lockFile && p !== mutexPath) {
+          fenced.push(p)
+        }
+        fs.writeFileSync(p, c, o)
+      },
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 400,
+      isAlive: (p) => p === 300 || p === 400,
+      now: () => 10,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(false)
+    expect(waiter.ownsLock).toBe(false)
+    expect(fenced).toEqual([])
+    expect(fs.existsSync(fenceOrphan)).toBe(false)
+    expect(unlinked).not.toContain(lockFile)
+    expect(unlinked).not.toContain(mutexPath)
+    expect(fs.readFileSync(mutexPath, 'utf8')).toBe(formatLockData(300, 9))
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(99999999, 1))
+  })
+
+  it('does not steal an empty or unparsable indexer.lock (N2)', () => {
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => fs.readFileSync(p, enc),
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+
+    fs.writeFileSync(lockFile, '')
+    const emptyWaiter = createIndexerLock({
+      lockFile,
+      pid: 200,
+      isAlive: (p) => p === 200,
+      now: () => 10,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(emptyWaiter.acquire()).toBe(false)
+    expect(emptyWaiter.ownsLock).toBe(false)
+    expect(unlinked).not.toContain(lockFile)
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe('')
+
+    fs.writeFileSync(lockFile, 'nope')
+    const badWaiter = createIndexerLock({
+      lockFile,
+      pid: 201,
+      isAlive: (p) => p === 201,
+      now: () => 11,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(badWaiter.acquire()).toBe(false)
+    expect(unlinked).not.toContain(lockFile)
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe('nope')
+  })
+
+  it('does not unlink a live lock when heartbeat truncation reads as empty (N2)', () => {
+    const owner = createIndexerLock({
+      lockFile,
+      pid: 100,
+      isAlive: (p) => p === 100 || p === 200,
+      now: () => 1_000,
+      log: (m) => logs.push(m)
+    })
+    expect(owner.acquire()).toBe(true)
+    const held = fs.readFileSync(lockFile, 'utf8')
+    const unlinked = []
+    const fsApi = {
+      existsSync: (p) => fs.existsSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      readFileSync: (p, enc) => {
+        if (p === lockFile) {
+          return ''
+        }
+        return fs.readFileSync(p, enc)
+      },
+      writeFileSync: (p, c, o) => fs.writeFileSync(p, c, o),
+      unlinkSync: (p) => {
+        unlinked.push(p)
+        fs.unlinkSync(p)
+      }
+    }
+    const waiter = createIndexerLock({
+      lockFile,
+      pid: 200,
+      isAlive: (p) => p === 100 || p === 200,
+      now: () => 90_000,
+      fsApi,
+      log: (m) => logs.push(m)
+    })
+    expect(waiter.acquire()).toBe(false)
+    expect(waiter.ownsLock).toBe(false)
+    expect(unlinked).not.toContain(lockFile)
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(held)
+  })
+
   it('multi-contender stale takeover: at most one ownsLock (rename-aside regression)', () => {
     // Rename-aside failed this pattern (~2/200 with 8 waiters): moving the live
     // path aside let a peer wx-create, then restore/unlink displaced that lock

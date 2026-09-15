@@ -44,7 +44,7 @@ Detects `--mode=indexer` / `--mode indexer` / `apple-tools-indexer` bin so the s
 
 ### lib/indexerLock.js -- indexer.lock
 
-Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals from a live PID (even if the timestamp is old). Dead-PID takeover uses a `wx` mutex beside the lock (`indexer.lock.takeover`), re-reads, unlinks only if contents are still the expected dead lock, then `wx`-creates — never renames the live path. A crash-orphaned `.takeover` file is not stolen with compare-then-unlink; waiters `wx` a fence named by the dead PID. MCP local-fallback starts the same lock heartbeat as the daemon.
+Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals from a live PID (even if the timestamp is old). Dead-PID takeover uses a `wx` mutex beside the lock (`indexer.lock.takeover`), re-reads, unlinks only if contents are still the expected dead lock, then `wx`-creates — never renames the live path. A crash-orphaned `.takeover` file is not stolen with compare-then-unlink; waiters `wx` a fence named by the dead PID. Empty or unparsable mutex/lock bytes are unknown (no fence, no steal), so a peer cannot sneak past an in-flight `wx` or heartbeat truncate. MCP local-fallback starts the same lock heartbeat as the daemon.
 
 ### lib/indexerRuntime.js -- Daemon vs stdio control flow
 
