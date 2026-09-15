@@ -1,17 +1,26 @@
 /**
- * MCP stdio must read a shared on-disk index while the indexer daemon holds
- * indexer.lock. The failure mode was initDB() caching an empty {db, tables}
- * after the first connect (tableNames empty / not yet visible), then
- * `if (db) return` forever — isIndexReady() stayed false and mail_recent /
- * messages_recent returned indexUnavailableMessage even though tables existed.
+ * BA AC: MCP query tools must succeed against an existing on-disk vector-index
+ * while the indexer daemon holds the lock (not gated only on this process’s
+ * first-index cycle). Source:
+ * https://app.notion.com/p/3dc6f1b360ee81e7956ed6199c5cf9a5
+ *
+ * Root cause: initDB() cached the first LanceDB connect even when tableNames
+ * was empty, so isIndexReady() stayed false and mail_recent / messages_recent
+ * returned indexUnavailableMessage.
  */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { isSearchBlockedByIndexing, indexUnavailableMessage } from '../../lib/indexGate.js'
-import { mcpIndexingStartup } from '../../lib/indexerRuntime.js'
+import {
+  isSearchBlockedByIndexing,
+  indexUnavailableMessage,
+  indexQueryGate,
+  BUILDING_INITIAL_INDEX_MESSAGE,
+  INDEXING_NEW_DATA_MESSAGE
+} from '../../lib/indexGate.js'
+import { mcpIndexingStartup, beginIndexCycle } from '../../lib/indexerRuntime.js'
 import {
   INDEX_TABLE_NAMES,
   LANCE_CONNECT_OPTIONS,
@@ -22,14 +31,25 @@ import {
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
-function mcpToolResponse({ sessionIndexComplete, ownsIndexLock, indexReady, type }) {
-  if (isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)) {
-    return 'still indexing'
+const INDEX_BACKED_TOOLS = [
+  'mail_search',
+  'mail_recent',
+  'mail_date',
+  'mail_senders',
+  'mail_thread',
+  'messages_search',
+  'messages_recent',
+  'messages_conversation',
+  'calendar_search',
+  'smart_search',
+  'person_search'
+]
+
+function toolOutcome(gate) {
+  if (gate.ok) {
+    return 'search results'
   }
-  if (!indexReady) {
-    return indexUnavailableMessage(type)
-  }
-  return 'search results'
+  return gate.message
 }
 
 function mockConnection(getNames, { openError } = {}) {
@@ -46,7 +66,7 @@ function mockConnection(getNames, { openError } = {}) {
 }
 
 describe('lanceTableExistsOnDisk', () => {
-  it('looks for <name>.lance under the index dir', () => {
+  it('looks for <name>.lance under the index dir only', () => {
     const seen = []
     const exists = lanceTableExistsOnDisk('/idx', 'emails', (p) => {
       seen.push(p)
@@ -54,6 +74,11 @@ describe('lanceTableExistsOnDisk', () => {
     })
     expect(exists).toBe(true)
     expect(seen[0]).toBe(path.join('/idx', 'emails.lance'))
+  })
+
+  it('does not walk names outside emails/messages/calendar', () => {
+    expect(lanceTableExistsOnDisk('/idx', '../etc/passwd', () => true)).toBe(false)
+    expect(lanceTableExistsOnDisk('/idx', 'secrets', () => true)).toBe(false)
   })
 })
 
@@ -96,6 +121,7 @@ describe('openMissingIndexTables', () => {
     expect(connects).toBe(1)
     expect(tables.emails).toEqual({ name: 'emails' })
     expect(logs.some((m) => m.includes('reconnecting'))).toBe(true)
+    expect(logs.join('\n')).not.toMatch(/token|password|api[_-]?key/i)
   })
 
   it('does not reconnect on a genuine empty index (no .lance dirs)', async () => {
@@ -116,7 +142,7 @@ describe('openMissingIndexTables', () => {
   })
 })
 
-describe('createLanceTableCache / isIndexReady', () => {
+describe('createLanceTableCache / isIndexReady (on-disk readiness, not local cycle)', () => {
   it('does not cache an empty first connect forever', async () => {
     let names = []
     const cache = createLanceTableCache({
@@ -202,8 +228,8 @@ describe('createLanceTableCache / isIndexReady', () => {
   })
 })
 
-describe('MCP stdio + daemon lock + on-disk index', () => {
-  it('reports ready and does not return indexUnavailable when another process holds the lock', async () => {
+describe('AC: readiness with daemon holding the lock', () => {
+  it('mail_recent / messages_recent / search tools succeed when tables exist and this process never indexed', async () => {
     const startup = mcpIndexingStartup(() => false)
     expect(startup).toEqual({
       startBackground: false,
@@ -211,7 +237,6 @@ describe('MCP stdio + daemon lock + on-disk index', () => {
       startHeartbeat: false,
       reason: 'lock-held'
     })
-    expect(isSearchBlockedByIndexing(false, startup.ownsIndexLock)).toBe(false)
 
     const cache = createLanceTableCache({
       indexDir: '/idx',
@@ -220,22 +245,60 @@ describe('MCP stdio + daemon lock + on-disk index', () => {
       connect: async () => mockConnection(() => [...INDEX_TABLE_NAMES])
     })
 
-    for (const type of INDEX_TABLE_NAMES) {
+    const typeByTool = {
+      mail_search: 'emails',
+      mail_recent: 'emails',
+      mail_date: 'emails',
+      mail_senders: 'emails',
+      mail_thread: 'emails',
+      messages_search: 'messages',
+      messages_recent: 'messages',
+      messages_conversation: 'messages',
+      calendar_search: 'calendar',
+      smart_search: 'emails',
+      person_search: 'emails'
+    }
+
+    for (const tool of INDEX_BACKED_TOOLS) {
+      const type = typeByTool[tool]
       const ready = await cache.isIndexReady(type)
-      expect(ready).toBe(true)
-      const response = mcpToolResponse({
+      expect(ready, tool).toBe(true)
+      const gate = indexQueryGate({
         sessionIndexComplete: false,
         ownsIndexLock: startup.ownsIndexLock,
         indexReady: ready,
-        type
+        type,
+        isFirstEverRun: true
       })
-      expect(response).toBe('search results')
-      expect(response).not.toBe(indexUnavailableMessage(type))
-      expect(response).not.toBe('still indexing')
+      const outcome = toolOutcome(gate)
+      expect(outcome, tool).toBe('search results')
+      expect(outcome, tool).not.toBe(indexUnavailableMessage(type))
+      expect(outcome, tool).not.toBe(BUILDING_INITIAL_INDEX_MESSAGE)
+      expect(outcome, tool).not.toBe(INDEXING_NEW_DATA_MESSAGE)
+      expect(String(outcome), tool).not.toMatch(/index not available/i)
+      expect(String(outcome), tool).not.toMatch(/building initial index/i)
     }
   })
 
-  it('lost-lock with no tables is unavailable, not still-indexing', async () => {
+  it('session readiness is on-disk tables, not this process completing a lock-held cycle', async () => {
+    expect(isSearchBlockedByIndexing(false, false)).toBe(false)
+    const cache = createLanceTableCache({
+      indexDir: '/idx',
+      mkdirSync: () => {},
+      existsSync: () => false,
+      connect: async () => mockConnection(() => ['emails', 'messages', 'calendar'])
+    })
+    expect(await cache.isIndexReady('emails')).toBe(true)
+    const gate = indexQueryGate({
+      sessionIndexComplete: false,
+      ownsIndexLock: false,
+      indexReady: true,
+      type: 'emails'
+    })
+    expect(gate.ok).toBe(true)
+  })
+
+  it('missing or unusable index still refuses — does not invent empty search results', async () => {
     const startup = mcpIndexingStartup(() => false)
     const cache = createLanceTableCache({
       indexDir: '/idx',
@@ -245,17 +308,24 @@ describe('MCP stdio + daemon lock + on-disk index', () => {
     })
 
     expect(await cache.isIndexReady('emails')).toBe(false)
-    expect(
-      mcpToolResponse({
+    expect(await cache.isIndexReady('messages')).toBe(false)
+    expect(await cache.isIndexReady('calendar')).toBe(false)
+
+    for (const type of INDEX_TABLE_NAMES) {
+      const gate = indexQueryGate({
         sessionIndexComplete: false,
         ownsIndexLock: startup.ownsIndexLock,
         indexReady: false,
-        type: 'emails'
+        type
       })
-    ).toBe(indexUnavailableMessage('emails'))
+      expect(gate.ok).toBe(false)
+      expect(gate.message).toBe(indexUnavailableMessage(type))
+      expect(gate.message).not.toBe('search results')
+      expect(gate.message).not.toBe(BUILDING_INITIAL_INDEX_MESSAGE)
+    }
   })
 
-  it('local-fallback still starts background indexing when the lock is free', () => {
+  it('local-fallback still starts when no daemon holds the lock', () => {
     const fallback = mcpIndexingStartup(() => true)
     expect(fallback).toEqual({
       startBackground: true,
@@ -264,17 +334,32 @@ describe('MCP stdio + daemon lock + on-disk index', () => {
       reason: 'local-fallback'
     })
     expect(isSearchBlockedByIndexing(false, fallback.ownsIndexLock)).toBe(true)
+    const gate = indexQueryGate({
+      sessionIndexComplete: false,
+      ownsIndexLock: true,
+      indexReady: false,
+      type: 'emails',
+      isFirstEverRun: true
+    })
+    expect(gate.message).toBe(BUILDING_INITIAL_INDEX_MESSAGE)
+  })
+
+  it('overlapping daemon cycles still skip; readers use cross-process catalog freshness', () => {
+    const nested = beginIndexCycle(true, () => {})
+    expect(nested).toEqual({ started: false, indexingInProgress: true })
+    expect(LANCE_CONNECT_OPTIONS.readConsistencyInterval).toBe(0)
   })
 })
 
-describe('source wiring', () => {
+describe('AC: regression / packaging / security', () => {
   const indexerSrc = fs.readFileSync(path.join(root, 'indexer.js'), 'utf8')
   const searchSrc = fs.readFileSync(path.join(root, 'search.js'), 'utf8')
   const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
+  const tablesSrc = fs.readFileSync(path.join(root, 'lib/lancedbTables.js'), 'utf8')
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
 
   it('does not early-return an empty initDB cache', () => {
-    const tablesSrc = fs.readFileSync(path.join(root, 'lib/lancedbTables.js'), 'utf8')
     expect(indexerSrc).not.toMatch(/if\s*\(\s*db\s*\)\s*return\s*\{\s*db,\s*tables\s*\}/)
     expect(indexerSrc).toContain('createLanceTableCache')
     expect(indexerSrc).toContain('LANCE_CONNECT_OPTIONS')
@@ -287,16 +372,33 @@ describe('source wiring', () => {
     expect(searchSrc).not.toMatch(/lancedb\.connect/)
   })
 
-  it('index-backed tools still gate on isIndexReady after lost-lock', () => {
+  it('query tools use requireIndex / indexQueryGate against isIndexReady', () => {
+    expect(indexSrc).toContain('requireIndex')
+    expect(indexSrc).toContain('indexQueryGate')
     expect(indexSrc).toContain('isIndexReady("emails")')
     expect(indexSrc).toContain('isIndexReady("messages")')
     expect(indexSrc).toContain('isIndexReady("calendar")')
-    expect(indexSrc).toContain('indexUnavailableMessage')
     expect(indexSrc).toContain('ownsIndexLock = false')
+    expect(indexSrc).toContain('requireIndex("emails")')
+    expect(indexSrc).toContain('requireIndex("messages")')
+    expect(indexSrc).toContain('requireIndex("calendar")')
   })
 
-  it('does not bump package version', () => {
+  it('does not bump package version or add dependencies', () => {
     expect(pkg.version).toBe('1.2.0')
-    expect(LANCE_CONNECT_OPTIONS.readConsistencyInterval).toBe(0)
+    expect(lock.version).toBe('1.2.0')
+    expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      '@lancedb/lancedb',
+      '@modelcontextprotocol/sdk',
+      '@xenova/transformers',
+      'chrono-node'
+    ])
+  })
+
+  it('index dir checks stay under the configured index directory', () => {
+    expect(tablesSrc).toContain('INDEX_TABLE_NAMES.includes(name)')
+    expect(tablesSrc).toContain('${name}.lance')
+    expect(indexerSrc).toContain('.apple-tools-mcp')
+    expect(indexerSrc).toContain('vector-index')
   })
 })
