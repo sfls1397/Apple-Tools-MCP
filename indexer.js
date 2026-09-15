@@ -16,6 +16,7 @@ import {
 } from "./lib/validators.js";
 import { safeSqlite3Json, safeOsascript, safeFind } from "./lib/shell.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
+import { createLanceTableCache, LANCE_CONNECT_OPTIONS } from "./lib/lancedbTables.js";
 
 // Re-export contact functions for use by other modules
 export {
@@ -70,8 +71,17 @@ const MAC_ABSOLUTE_EPOCH = 978307200;
 export const CALENDAR_TMP_PREFIX = "apple-tools-cal-";
 
 let embeddingPipeline = null;
+
+// One connection per process. Do not early-return a first connect that saw an
+// empty catalog — MCP stdio must pick up tables the indexer daemon already wrote.
+const lanceCache = createLanceTableCache({
+  connect: (uri, options) => lancedb.connect(uri, options),
+  indexDir: INDEX_DIR,
+  mkdirSync: (p, o) => fs.mkdirSync(p, o),
+  connectOptions: LANCE_CONNECT_OPTIONS
+});
+const tables = lanceCache.tables;
 let db = null;
-let tables = {};
 
 async function getEmbedder() {
   if (!embeddingPipeline) {
@@ -751,23 +761,19 @@ function getCalendarEvents() {
 // ============ DATABASE FUNCTIONS ============
 
 export async function initDB() {
-  if (db) return { db, tables };
-
-  fs.mkdirSync(INDEX_DIR, { recursive: true });
-  db = await lancedb.connect(INDEX_DIR);
-
-  const tableNames = await db.tableNames();
-  if (tableNames.includes("emails")) {
-    tables.emails = await db.openTable("emails");
-  }
-  if (tableNames.includes("messages")) {
-    tables.messages = await db.openTable("messages");
-  }
-  if (tableNames.includes("calendar")) {
-    tables.calendar = await db.openTable("calendar");
-  }
-
+  const result = await lanceCache.initDB();
+  db = result.db;
   return { db, tables };
+}
+
+export async function getOpenTable(type) {
+  await initDB();
+  return tables[type] || null;
+}
+
+function resetLanceConnection() {
+  lanceCache.reset();
+  db = null;
 }
 
 export async function clearEmailsTable() {
@@ -828,10 +834,9 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
     }
   }
 
-  // Reset module-level cache after dropping tables
-  // This ensures that initDB() will re-initialize and pick up the newly created tables
-  db = null;
-  tables = {};
+  // Reset connection cache after dropping tables so initDB() re-opens
+  // (or recreates) them instead of holding stale/empty handles.
+  resetLanceConnection();
 
   // Re-index requested sources
   for (const source of sources) {
@@ -1451,7 +1456,7 @@ export async function indexAll(progressCallback = null) {
 
 export async function isIndexReady(type = "emails") {
   await initDB();
-  return tables[type] !== null && tables[type] !== undefined;
+  return tables[type] != null;
 }
 
 // ============ DIRECT QUERIES (for recent items) ============

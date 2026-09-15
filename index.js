@@ -355,7 +355,8 @@ async function initializeIndexing() {
   if (!startup.startBackground) {
     console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
     // Lost lock is not "still indexing": this process will never complete a
-    // local cycle. Searches proceed whenever isIndexReady() is true.
+    // local cycle. Searches proceed whenever isIndexReady() is true (initDB
+    // re-lists shared on-disk tables; it must not cache an empty first connect).
     ownsIndexLock = false;
     return;
   }
