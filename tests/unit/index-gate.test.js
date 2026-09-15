@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from '../../lib/indexGate.js'
+import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage, indexQueryGate, BUILDING_INITIAL_INDEX_MESSAGE, INDEXING_NEW_DATA_MESSAGE } from '../../lib/indexGate.js'
 
 /** Tools PR #1 gated on sessionIndexComplete; lost-lock must not strand them. */
 const INDEX_BACKED_TOOLS = [
@@ -152,7 +152,8 @@ describe('index.js wiring', () => {
 
   it('does not gate searches on raw sessionIndexComplete (lost-lock safe)', () => {
     expect(indexSrc).toContain('stillIndexingMessage')
-    expect(indexSrc).toContain('isSearchBlockedByIndexing')
+    expect(indexSrc).toContain('indexQueryGate')
+    expect(indexSrc).toContain('requireIndex')
     expect(indexSrc.match(/if \(!sessionIndexComplete\)/g)).toBeNull()
   })
 
@@ -208,6 +209,56 @@ describe('indexUnavailableMessage', () => {
       expect(msg).not.toMatch(/wait for indexing to complete/i)
       expect(msg).not.toMatch(/still indexing/i)
     }
+  })
+})
+
+describe('indexQueryGate', () => {
+  it('lost-lock + ready index is ok even if this process never indexed and isFirstEverRun is stale', () => {
+    const gate = indexQueryGate({
+      sessionIndexComplete: false,
+      ownsIndexLock: false,
+      indexReady: true,
+      type: 'emails',
+      isFirstEverRun: true
+    })
+    expect(gate.ok).toBe(true)
+    expect(gate.message).toBeNull()
+  })
+
+  it('does not return building-initial-index for a lost-lock reader', () => {
+    const gate = indexQueryGate({
+      sessionIndexComplete: false,
+      ownsIndexLock: false,
+      indexReady: true,
+      type: 'emails',
+      isFirstEverRun: true
+    })
+    expect(gate.message).not.toBe(BUILDING_INITIAL_INDEX_MESSAGE)
+    expect(gate.message).not.toBe(INDEXING_NEW_DATA_MESSAGE)
+    expect(String(gate.message || '')).not.toMatch(/building initial index/i)
+  })
+
+  it('refuses a missing index with the unavailable message, not empty results', () => {
+    const gate = indexQueryGate({
+      sessionIndexComplete: false,
+      ownsIndexLock: false,
+      indexReady: false,
+      type: 'messages'
+    })
+    expect(gate.ok).toBe(false)
+    expect(gate.message).toBe(indexUnavailableMessage('messages'))
+  })
+
+  it('owner still blocked until its own cycle finishes', () => {
+    const gate = indexQueryGate({
+      sessionIndexComplete: false,
+      ownsIndexLock: true,
+      indexReady: true,
+      type: 'emails',
+      isFirstEverRun: true
+    })
+    expect(gate.ok).toBe(false)
+    expect(gate.message).toBe(BUILDING_INITIAL_INDEX_MESSAGE)
   })
 })
 

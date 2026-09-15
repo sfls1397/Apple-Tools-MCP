@@ -9,7 +9,7 @@ import {
 import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
-import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage } from "./lib/indexGate.js";
+import { cycleEndFlags, indexUnavailableMessage, indexQueryGate } from "./lib/indexGate.js";
 import { isIndexerMode } from "./lib/processMode.js";
 import { loadResolvedIndexInterval, logResolvedInterval } from "./lib/config.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
@@ -180,14 +180,6 @@ async function checkIfFirstRun() {
   return !(emailsReady || messagesReady || calendarReady);
 }
 
-// Get appropriate status message based on indexing state
-function getIndexingMessage() {
-  if (isFirstEverRun) {
-    return "Building initial index. This may take several minutes on first run. Please try again shortly.";
-  }
-  return "Indexing new data. Please try again in a moment.";
-}
-
 // Run a single indexing cycle (called by background timer)
 function runIndexCycle() {
   const cycle = beginIndexCycle(indexingInProgress);
@@ -318,10 +310,30 @@ function applyCycleEnd(success) {
 // Index-backed tools wait only while THIS process owns the lock and has not
 // finished its cycle. Lost-lock secondaries fall through to isIndexReady().
 function stillIndexingMessage() {
-  if (isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)) {
-    return getIndexingMessage();
+  const gate = indexQueryGate({
+    sessionIndexComplete,
+    ownsIndexLock,
+    indexReady: true,
+    isFirstEverRun
+  });
+  return gate.ok ? null : gate.message;
+}
+
+/** Shared preflight for index-backed query tools (on-disk tables, not local cycle). */
+async function requireIndex(type) {
+  const indexing = stillIndexingMessage();
+  if (indexing) {
+    return indexing;
   }
-  return null;
+  const ready = await isIndexReady(type);
+  const gate = indexQueryGate({
+    sessionIndexComplete,
+    ownsIndexLock,
+    indexReady: ready,
+    type,
+    isFirstEverRun
+  });
+  return gate.ok ? null : gate.message;
 }
 
 function waitForLockAndStartDaemon() {
@@ -380,14 +392,9 @@ async function mailSearch(query, options = {}) {
     return "Error: query parameter is required for mail_search";
   }
 
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("emails");
-  if (!ready) {
-    return indexUnavailableMessage("emails");
+  const blocked = await requireIndex("emails");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await searchEmails(query, options);
@@ -395,14 +402,9 @@ async function mailSearch(query, options = {}) {
 }
 
 async function mailRecent(limit = 30, daysBack = 7, unreadOnly = false, includeJunk = false) {
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("emails");
-  if (!ready) {
-    return indexUnavailableMessage("emails");
+  const blocked = await requireIndex("emails");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await getRecentEmailResults(limit, daysBack, unreadOnly, includeJunk);
@@ -410,14 +412,9 @@ async function mailRecent(limit = 30, daysBack = 7, unreadOnly = false, includeJ
 }
 
 async function mailDate(date, includeJunk = false) {
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("emails");
-  if (!ready) {
-    return indexUnavailableMessage("emails");
+  const blocked = await requireIndex("emails");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await getEmailDateResults(date, includeJunk);
@@ -425,14 +422,9 @@ async function mailDate(date, includeJunk = false) {
 }
 
 async function messagesSearch(query, options = {}) {
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("messages");
-  if (!ready) {
-    return indexUnavailableMessage("messages");
+  const blocked = await requireIndex("messages");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await searchMessages(query, options);
@@ -440,14 +432,9 @@ async function messagesSearch(query, options = {}) {
 }
 
 async function messagesRecent(limit = 10, daysBack = 1) {
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("messages");
-  if (!ready) {
-    return indexUnavailableMessage("messages");
+  const blocked = await requireIndex("messages");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await getRecentMessageResults(limit, daysBack);
@@ -455,14 +442,9 @@ async function messagesRecent(limit = 10, daysBack = 1) {
 }
 
 async function messagesConversation(contact, limit = 50) {
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("messages");
-  if (!ready) {
-    return indexUnavailableMessage("messages");
+  const blocked = await requireIndex("messages");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await getConversationResults(contact, limit);
@@ -470,14 +452,9 @@ async function messagesConversation(contact, limit = 50) {
 }
 
 async function calendarSearch(query, options = {}) {
-  const indexing = stillIndexingMessage();
-  if (indexing) {
-    return indexing;
-  }
-
-  const ready = await isIndexReady("calendar");
-  if (!ready) {
-    return indexUnavailableMessage("calendar");
+  const blocked = await requireIndex("calendar");
+  if (blocked) {
+    return blocked;
   }
 
   const result = await searchCalendar(query, options);
@@ -1398,15 +1375,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Mail tools
       case "mail_senders":
         {
-          const indexing = stillIndexingMessage();
-          if (indexing) {
-            result = indexing;
+          const blocked = await requireIndex("emails");
+          if (blocked) {
+            result = blocked;
             break;
           }
-        }
-        if (!(await isIndexReady("emails"))) {
-          result = indexUnavailableMessage("emails");
-          break;
         }
         result = formatSendersResults(await getFrequentSenders(
           validateLimit(args?.limit, 30),
@@ -1482,15 +1455,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "mail_thread":
         {
-          const indexing = stillIndexingMessage();
-          if (indexing) {
-            result = indexing;
+          const blocked = await requireIndex("emails");
+          if (blocked) {
+            result = blocked;
             break;
           }
-        }
-        if (!(await isIndexReady("emails"))) {
-          result = indexUnavailableMessage("emails");
-          break;
         }
         result = formatEmailThreadResults(await getEmailThread(args.file_path, validateLimit(args?.limit, 30)));
         break;
