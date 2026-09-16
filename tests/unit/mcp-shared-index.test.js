@@ -226,6 +226,90 @@ describe('createLanceTableCache / isIndexReady (on-disk readiness, not local cyc
     shouldFail = false
     expect(await cache.isIndexReady('emails')).toBe(true)
   })
+
+  it('serializes reconnect so parallel isIndexReady cannot close each other\'s connection', async () => {
+    let connects = 0
+    const cache = createLanceTableCache({
+      indexDir: '/idx',
+      mkdirSync: () => {},
+      existsSync: (p) =>
+        INDEX_TABLE_NAMES.some((n) => p.endsWith(`${n}.lance`)),
+      log: () => {},
+      connect: async () => {
+        connects += 1
+        const id = connects
+        const names = id === 1 ? [] : [...INDEX_TABLE_NAMES]
+        const conn = {
+          id,
+          closed: false,
+          tableNames: async () => {
+            if (conn.closed) {
+              throw new Error(`use after close #${id}`)
+            }
+            await new Promise((resolve) => setTimeout(resolve, 15))
+            if (conn.closed) {
+              throw new Error(`use after close #${id}`)
+            }
+            return names
+          },
+          openTable: async (name) => {
+            if (conn.closed) {
+              throw new Error(`use after close #${id}`)
+            }
+            return { name }
+          },
+          close() {
+            conn.closed = true
+          }
+        }
+        return conn
+      }
+    })
+
+    const results = await Promise.all([
+      cache.isIndexReady('emails'),
+      cache.isIndexReady('messages'),
+      cache.isIndexReady('calendar')
+    ])
+    expect(results).toEqual([true, true, true])
+    expect(cache.db.closed).toBe(false)
+    expect(connects).toBe(2)
+  })
+
+  it('does not assign a connection that completed after reset', async () => {
+    let finishFirst
+    let firstConn
+    let connects = 0
+    const cache = createLanceTableCache({
+      indexDir: '/idx',
+      mkdirSync: () => {},
+      existsSync: () => false,
+      connect: () => {
+        connects += 1
+        if (connects === 1) {
+          return new Promise((resolve) => {
+            firstConn = mockConnection(() => ['emails'])
+            firstConn.closed = false
+            firstConn.close = () => {
+              firstConn.closed = true
+            }
+            finishFirst = () => resolve(firstConn)
+          })
+        }
+        return Promise.resolve(mockConnection(() => ['emails']))
+      }
+    })
+
+    const pending = cache.initDB()
+    cache.reset()
+    finishFirst()
+    await pending
+
+    expect(firstConn.closed).toBe(true)
+    expect(cache.db).not.toBe(firstConn)
+    expect(await cache.isIndexReady('emails')).toBe(true)
+    expect(cache.db).not.toBe(firstConn)
+  })
 })
 
 describe('AC: readiness with daemon holding the lock', () => {
