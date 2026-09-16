@@ -1,12 +1,8 @@
-import * as lancedb from "@lancedb/lancedb";
 import * as chrono from "chrono-node";
 import { safeOsascript } from "./lib/shell.js";
 import { safeMatch, validateSearchQuery, toUnixMillis } from "./lib/validators.js";
-import { embed, INDEX_DIR, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
+import { embed, getOpenTable, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
-
-let db = null;
-let tables = {};
 
 // ============ CACHING ============
 
@@ -458,19 +454,9 @@ async function searchWithRetry(_searchFn, tbl, query, options, keyField) {
 }
 
 async function getTable(type) {
-  if (tables[type]) return tables[type];
-
-  if (!db) {
-    db = await lancedb.connect(INDEX_DIR);
-  }
-
-  const tableNames = await db.tableNames();
-  if (!tableNames.includes(type)) {
-    return null;
-  }
-
-  tables[type] = await db.openTable(type);
-  return tables[type];
+  // Share indexer.js's connection so a first empty catalog is refreshed the
+  // same way isIndexReady() is — not a second handle that can stay empty.
+  return getOpenTable(type);
 }
 
 // Pre-warm all tables to eliminate first-query latency
