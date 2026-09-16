@@ -310,6 +310,39 @@ describe('createLanceTableCache / isIndexReady (on-disk readiness, not local cyc
     expect(await cache.isIndexReady('emails')).toBe(true)
     expect(cache.db).not.toBe(firstConn)
   })
+
+  it('failed connect rejects to the caller without an unhandledRejection', async () => {
+    const unhandled = []
+    const onUnhandled = (reason) => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      let connects = 0
+      const cache = createLanceTableCache({
+        indexDir: '/idx',
+        mkdirSync: () => {},
+        existsSync: () => false,
+        connect: async () => {
+          connects += 1
+          if (connects === 1) {
+            throw new Error('connect failed')
+          }
+          return mockConnection(() => ['emails'])
+        }
+      })
+
+      await expect(cache.isIndexReady('emails')).rejects.toThrow('connect failed')
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(unhandled).toEqual([])
+
+      expect(await cache.isIndexReady('emails')).toBe(true)
+      expect(connects).toBe(2)
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
 })
 
 describe('AC: readiness with daemon holding the lock', () => {
