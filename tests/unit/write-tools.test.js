@@ -654,16 +654,30 @@ describe('write tool definitions', () => {
 describe('write smoke script (QA prove-out helpers)', () => {
   it('defaults to a dry run and opts in with --apply', async () => {
     const { parseSmokeArgs } = await import('../../scripts/smoke-writes.js')
-    expect(parseSmokeArgs([])).toEqual({ apply: false, keep: false })
-    expect(parseSmokeArgs(['--apply'])).toEqual({ apply: true, keep: false })
-    expect(parseSmokeArgs(['--apply', '--keep'])).toEqual({ apply: true, keep: true })
+    expect(parseSmokeArgs([])).toEqual({ apply: false, keep: false, calendar: null })
+    expect(parseSmokeArgs(['--apply'])).toEqual({ apply: true, keep: false, calendar: null })
+    expect(parseSmokeArgs(['--apply', '--keep'])).toEqual({ apply: true, keep: true, calendar: null })
+    expect(parseSmokeArgs(['--apply', '--calendar=Work']).calendar).toBe('Work')
   })
 
-  it('reads the new contact id back out of a success message', async () => {
-    const { extractContactId } = await import('../../scripts/smoke-writes.js')
-    const message = 'contacts_add: contact created. contact_id: ABCD-1234:ABPerson name: Ada'
-    expect(extractContactId(message)).toBe('ABCD-1234:ABPerson')
+  it('reads the new ids back out of success messages', async () => {
+    const { extractContactId, extractEventId } = await import('../../scripts/smoke-writes.js')
+    expect(extractContactId('contacts_add: contact created. contact_id: ABCD-1234:ABPerson name: Ada'))
+      .toBe('ABCD-1234:ABPerson')
     expect(extractContactId('contacts_add failed — ...')).toBeNull()
+    expect(extractEventId('calendar_add: event created. event_id: EVT-UID-1 calendar: Work'))
+      .toBe('EVT-UID-1')
+    expect(extractEventId('calendar_add failed — ...')).toBeNull()
+  })
+
+  it('schedules the smoke event far enough out to miss real appointments', async () => {
+    const { smokeEventWindow } = await import('../../scripts/smoke-writes.js')
+    const now = new Date(2026, 8, 20, 12, 0, 0)
+    const window = smokeEventWindow(now)
+
+    expect(window.start).toMatch(/^\d{4}-\d{2}-\d{2} 03:00$/)
+    expect(window.end).toMatch(/^\d{4}-\d{2}-\d{2} 04:00$/)
+    expect(new Date(window.start).getTime() - now.getTime()).toBeGreaterThan(300 * 24 * 60 * 60 * 1000)
   })
 })
 
@@ -679,13 +693,14 @@ describe('contacts write denial names the host entitlement limit', () => {
     expect(result.message).toContain('reads')
   })
 
-  it('keeps the calendar denial specific to Calendars', () => {
+  it('keeps the calendar denial specific to the calendars entitlement', () => {
     osascript.mockImplementation(() => {
       throw new Error('execution error: Calendar got an error: Operation not permitted')
     })
     const result = calendarRemove({ event_id: 'EVT-1', confirm: true })
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('Calendar automation is attributed')
+    expect(result.message).toContain('com.apple.security.personal-information.calendars')
+    expect(result.message).toContain('apple-tools-indexer')
     expect(result.message).not.toContain('addressbook')
   })
 })
