@@ -30,26 +30,60 @@ const MAX_EMAILS_PER_CONTACT = 10;  // Maximum email addresses per contact
 const MAX_PHONES_PER_CONTACT = 10;  // Maximum phone numbers per contact
 
 /**
+ * True when a failure looks like macOS refusing the file itself.
+ *
+ * Contacts *reads* go straight at the AddressBook sqlite file, so they depend
+ * on Full Disk Access for the process macOS holds responsible - not on the
+ * AddressBook entitlement that gates Contacts.app / CNContactStore *writes*.
+ * Reporting the difference keeps a plain FDA problem from being mistaken for
+ * the host entitlement gap.
+ */
+export function isAddressBookPermissionError(message) {
+  const text = String(message || "").toLowerCase();
+  return text.includes("eperm") ||
+    text.includes("operation not permitted") ||
+    text.includes("unable to open database") ||
+    text.includes("authorization denied");
+}
+
+export const ADDRESSBOOK_FDA_HINT =
+  "Contacts reads need Full Disk Access for the process macOS holds responsible for this server " +
+  "(the app that launched it over stdio, or node itself when launchd starts the indexer daemon). " +
+  "This is a Full Disk Access / attribution issue, not the AddressBook entitlement that gates Contacts writes.";
+
+/**
  * Find the contacts database file (handles iCloud sync location)
  */
 function findContactsDatabase() {
+  let permissionDenied = false;
+
   // First check Sources directory for iCloud-synced contacts
-  if (fs.existsSync(SOURCES_DIR)) {
-    const sources = fs.readdirSync(SOURCES_DIR);
-    for (const source of sources) {
-      const dbPath = path.join(SOURCES_DIR, source, "AddressBook-v22.abcddb");
-      if (fs.existsSync(dbPath)) {
-        // Check if it has actual data (not empty)
-        try {
-          const result = safeSqlite3(dbPath, "SELECT COUNT(*) FROM ZABCDRECORD", { json: false, timeout: 5000 });
-          const count = parseInt(result.trim());
-          if (count > 0) {
-            return dbPath;
-          }
-        } catch (e) {
-          // Continue to next source
-        }
+  let sources = [];
+  try {
+    if (fs.existsSync(SOURCES_DIR)) {
+      sources = fs.readdirSync(SOURCES_DIR);
+    }
+  } catch (e) {
+    if (isAddressBookPermissionError(e.message) || e.code === "EPERM" || e.code === "EACCES") {
+      permissionDenied = true;
+    }
+  }
+
+  for (const source of sources) {
+    const dbPath = path.join(SOURCES_DIR, source, "AddressBook-v22.abcddb");
+    if (!fs.existsSync(dbPath)) continue;
+    // Check if it has actual data (not empty)
+    try {
+      const result = safeSqlite3(dbPath, "SELECT COUNT(*) FROM ZABCDRECORD", { json: false, timeout: 5000 });
+      const count = parseInt(result.trim());
+      if (count > 0) {
+        return dbPath;
       }
+    } catch (e) {
+      if (isAddressBookPermissionError(e.message)) {
+        permissionDenied = true;
+      }
+      // Continue to next source
     }
   }
 
@@ -57,6 +91,10 @@ function findContactsDatabase() {
   const mainDb = path.join(ADDRESSBOOK_DIR, "AddressBook-v22.abcddb");
   if (fs.existsSync(mainDb)) {
     return mainDb;
+  }
+
+  if (permissionDenied) {
+    console.error(`Contacts: AddressBook database exists but could not be read. ${ADDRESSBOOK_FDA_HINT}`);
   }
 
   return null;
@@ -254,7 +292,11 @@ export function loadContacts() {
 
     return contacts;
   } catch (e) {
-    console.error("Error loading contacts:", e.message);
+    if (isAddressBookPermissionError(e.message)) {
+      console.error(`Error loading contacts: ${e.message}. ${ADDRESSBOOK_FDA_HINT}`);
+    } else {
+      console.error("Error loading contacts:", e.message);
+    }
     return [];
   }
 }
