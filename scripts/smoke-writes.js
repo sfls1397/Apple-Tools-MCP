@@ -292,7 +292,9 @@ async function main() {
       console.log("shipping path, where writes execute under launchd-owned node.");
     } else {
       console.log("These writes ran inside the indexer daemon, so this is a real gate failure:");
-      console.log("grant the daemon's node binary Full Disk Access plus Contacts/Calendars access.");
+      console.log("grant the daemon's node binary Full Disk Access (reads) and Allow node in");
+      console.log("System Settings > Privacy & Security > Automation for Contacts.app and");
+      console.log("Calendar.app. Do not add node via + in the Contacts or Calendars privacy lists.");
     }
     process.exitCode = 1;
   } else if (apply) {
