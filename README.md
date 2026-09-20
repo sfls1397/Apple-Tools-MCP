@@ -203,7 +203,7 @@ The smoke test drives writes through **the same dispatcher the MCP tools use**, 
    node scripts/smoke-writes.js --apply --keep           # leave the test items behind
    ```
 
-The header prints the write path it chose (`indexer daemon via write bridge` or `in this process`), and the read path (sqlite + FDA) is reported separately from the write paths (Mail.app compose, Contacts.app, Calendar.app), so a failure tells you which mechanism refused. A Mail hang or timeout is **TCC / Automation denied**, not “app not available”.
+The header prints the write path it chose (`indexer daemon via write bridge` or `in this process`), and the read path (sqlite + FDA) is reported separately from the write paths (Mail.app compose, Contacts.app, Calendar.app), so a failure tells you which mechanism refused. A Mail **compose-probe** hang is **TCC / Automation denied**, not “app not available”. A `mail_send` / `mail_reply` / `mail_forward` hang after `send` is a **timeout** (`ETIMEDOUT` / `-1712`) unless Mail reports `-1743` / `-10004`; check Sent before retrying.
 
 **The parent process matters.** With `--apply` and **no bridge listening**, the smoke test **refuses to run** rather than executing in-process and calling the result a package failure. Running it from an embedded agent shell, an IDE terminal, or a host app's subprocess is *not* the ship-gate context on its own, because macOS attributes the Apple events to that parent. Either start the LaunchAgent (preferred, and what production clients use), or run it from **Terminal.app**, where node is the responsible process, and pass `--allow-local` to acknowledge that:
 
@@ -454,6 +454,8 @@ Two arguments are available on **every** write tool:
 `body_format: "html"` sets Mail's `html content` and keeps a tag-stripped plain-text alternative in `content`; the default is plain text. HTML support is whatever Mail.app offers — if a Mail version rejects the property, the message still goes out as plain text.
 
 Emails are addressed by their RFC822 **Message-ID**. Pass `message_id`, or pass the `file_path` from `mail_search` / `mail_recent` and the server reads the Message-ID out of the `.emlx` headers for you. `mail_archive` moves the message to its account's Archive (or All Mail) mailbox; `mail_trash` moves it to that account's Trash.
+
+**Send timeout vs TCC — check Sent before retrying.** `mail_send` / `mail_reply` / `mail_forward` can hang after Mail has already put the message in Sent. That hang is a **timeout** (`ETIMEDOUT` / `-1712` / AppleEvent timed out), not a TCC deny. Real Mail Automation denials report **`-1743`**, **`-10004`**, or “not authorized to send Apple events”. After a send hang the tool looks in Sent (and Outbox) and returns **success** if the message is there — never label a delivered send as TCC fail or timeout. If Sent-verify misses, the error tells you it was a hang and to check Sent. **Clients must Sent-check before retrying a timed-out send**; retrying a message that already landed sends a second copy. This is not a silent TCC grant. Drafts and the Mail Automation probe still treat a compose hang as a missing Allow.
 
 ### Messages write tool
 

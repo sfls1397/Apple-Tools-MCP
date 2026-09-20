@@ -27,7 +27,12 @@ import {
   mailTrash,
   resolveMailMessageId,
   probeMailAutomation,
-  buildMailAutomationProbeScript
+  buildMailAutomationProbeScript,
+  buildFindSentByInReplyToScript,
+  buildFindSentBySubjectScript,
+  recoverIfInSent,
+  isMailHardTcc,
+  isMailSendTimeout
 } from '../../lib/mailWrite.js'
 import { messagesSend, validateAttachmentPath, lookupChat, probeMessagesAutomation, buildMessagesAutomationProbeScript } from '../../lib/messagesWrite.js'
 import {
@@ -187,15 +192,49 @@ describe('mail_send', () => {
     expect(result.message).toContain('mail_send failed')
   })
 
-  it('reports a hung compose timeout as TCC / Automation denied, not app unavailable', () => {
+  it('treats a hung send as a timeout, verifies Sent, and does not label it TCC', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'NOT_FOUND')
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('find/reply/send hang')
+    expect(result.message).toContain('Check Sent')
+    expect(result.message).toContain('before retrying')
+    expect(result.message).not.toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('could not be reached')
+    expect(osascript).toHaveBeenCalledTimes(2)
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('subject is "Hi"')
+    expect(verifyScript).toContain('sent mailbox')
+  })
+
+  it('returns success when a hung send is already in Sent', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'FOUND')
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(true)
+    expect(result.recovered).toBe(true)
+    expect(result.message).toContain('mail_send: sent')
+    expect(result.message).toContain('verified in Sent')
+    expect(result.message).not.toContain('TCC')
+    expect(result.message).not.toContain('timed out')
+  })
+
+  it('labels a hard Mail deny as TCC and does not Sent-check', () => {
     osascript.mockImplementation(() => {
-      throw new Error('spawnSync osascript ETIMEDOUT')
+      throw new Error('Not authorized to send Apple events to Mail. (-1743)')
     })
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('TCC / Automation deny')
-    expect(result.message).toContain('dry_run never talks to Mail')
-    expect(result.message).not.toContain('could not be reached')
+    expect(result.message).not.toContain('find/reply/send hang')
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -317,6 +356,19 @@ describe('mail_draft', () => {
     expect(script).toContain('save newMessage')
     expect(script).not.toContain('send newMessage')
   })
+
+  it('maps a hung draft compose to TCC and does not Sent-check', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailCompose(
+      { to: ['a@example.com'], subject: 'Hi', body: 'Hello' },
+      { draft: true }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('mail_reply and mail_forward', () => {
@@ -342,12 +394,117 @@ describe('mail_reply and mail_forward', () => {
     expect(result.message).toContain('message_id is required')
   })
 
+  it('returns success when a hung reply is already in Sent', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'FOUND')
+    const result = mailReply({ message_id: '<abc@example.com>', body: 'Thanks' })
+    expect(result.ok).toBe(true)
+    expect(result.recovered).toBe(true)
+    expect(result.message).toContain('mail_reply: reply sent')
+    expect(result.message).toContain('verified in Sent')
+    expect(result.message).not.toContain('TCC')
+    expect(result.message).not.toContain('timed out')
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('In-Reply-To:')
+    expect(verifyScript).toContain('abc@example.com')
+    expect(verifyScript).toContain('sent mailbox')
+    expect(verifyScript).toContain('outgoing mailbox')
+  })
+
+  it('does not label a missed Sent-verify hang as TCC and tells clients to Sent-check', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
+      })
+      .mockImplementationOnce(() => 'NOT_FOUND')
+    const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('mail_reply failed')
+    expect(result.message).toContain('find/reply/send hang')
+    expect(result.message).toContain('-1743')
+    expect(result.message).toContain('-10004')
+    expect(result.message).toContain('Check Sent')
+    expect(result.message).toContain('before retrying')
+    expect(result.message).not.toContain('TCC / Automation deny')
+  })
+
+  it('labels a hard Mail deny on reply as TCC and skips Sent-verify', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Mail. (-10004)')
+    })
+    const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('verified in Sent')
+    expect(result.message).not.toContain('find/reply/send hang')
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a draft-reply hang as compose TCC and does not Sent-check', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks', save_as_draft: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
   it('forwards to a validated recipient', () => {
     const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
     expect(result.ok).toBe(true)
     const script = lastScript()
     expect(script).toContain('forward theMessage without opening window')
     expect(script).toContain('address:"c@example.com"')
+  })
+
+  it('returns success when a hung forward is already in Sent', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'FOUND')
+    const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
+    expect(result.ok).toBe(true)
+    expect(result.recovered).toBe(true)
+    expect(result.message).toContain('mail_forward: forwarded')
+    expect(result.message).toContain('verified in Sent')
+  })
+})
+
+describe('mail Sent verify helpers', () => {
+  it('builds an In-Reply-To Sent scan and a subject Sent scan', () => {
+    const byReply = buildFindSentByInReplyToScript('abc@example.com')
+    expect(byReply).toContain('In-Reply-To:')
+    expect(byReply).toContain('<abc@example.com>')
+    expect(byReply).toContain('sent mailbox')
+    expect(byReply).toContain('outgoing mailbox')
+    expect(byReply).toContain('source of msg')
+
+    const bySubject = buildFindSentBySubjectScript('Status update')
+    expect(bySubject).toContain('subject is "Status update"')
+    expect(bySubject).toContain('sent mailbox')
+  })
+
+  it('treats FOUND as a recovery hit and verify failure as not recovered', () => {
+    osascript.mockImplementationOnce(() => 'FOUND')
+    expect(recoverIfInSent({ inReplyTo: 'abc@example.com' })).toEqual({ found: true })
+
+    osascript.mockImplementationOnce(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    expect(recoverIfInSent({ subject: 'Hi' })).toBeNull()
+  })
+
+  it('distinguishes hard TCC deny codes from send timeouts', () => {
+    expect(isMailHardTcc({ kind: 'tcc', error: 'Not authorized (-1743)' })).toBe(true)
+    expect(isMailHardTcc({ kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT' })).toBe(false)
+    expect(isMailSendTimeout({ kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT' })).toBe(true)
+    expect(isMailSendTimeout({ kind: 'tcc', error: 'Not authorized (-1743)' })).toBe(false)
+    expect(isMailSendTimeout({ kind: 'timeout', error: 'Not authorized (-1743) and ETIMEDOUT' })).toBe(false)
   })
 })
 
