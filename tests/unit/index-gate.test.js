@@ -170,11 +170,11 @@ describe('index.js wiring', () => {
     )
   })
 
-  it('advertises package.json version, not a hardcoded 2.0.0', () => {
+  it('advertises package.json version, not a hardcoded literal', () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8')
     )
-    expect(pkg.version).toBe('1.2.1')
+    expect(pkg.version).toBe('2.0.0')
     expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.0["']/)
     expect(indexSrc).toContain('PACKAGE_VERSION')
     expect(indexSrc).toContain('new URL("./package.json", import.meta.url)')
