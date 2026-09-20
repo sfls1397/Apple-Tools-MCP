@@ -10,8 +10,14 @@
  * to fail under a host app that holds neither entitlement - that is a
  * documented host limitation, not a package failure.
  *
- * Default is a dry run: it reports what each step would do and changes
- * nothing. Pass --apply to perform real create -> edit -> delete round trips.
+ * Default is a dry run: no contact or event is created, edited, or deleted.
+ * It is not a no-op, though: it reads contacts from the AddressBook database
+ * and calls calendar_list_calendars, which is a live Calendar.app query and
+ * therefore a real TCC touch that can prompt or be denied. A dry run treats
+ * that listing as advisory, so a denial does not report a failure for a run
+ * that changed nothing.
+ *
+ * Pass --apply to perform real create -> edit -> delete round trips.
  *
  * Usage:
  *   node scripts/smoke-writes.js                       # dry run, no changes
@@ -87,6 +93,18 @@ export function extractEventId(message) {
 }
 
 /**
+ * Listing calendars is a live Calendar.app call even during a dry run, so a
+ * refusal there says something about this host - but it is not a failure of
+ * a run that created nothing. Only --apply, which must actually write,
+ * treats it as fatal.
+ *
+ * @returns {"error"|"warning"}
+ */
+export function calendarListSeverity(apply) {
+  return apply ? "error" : "warning";
+}
+
+/**
  * A start/end pair well in the future, so a smoke event never collides with
  * anything real on the calendar.
  */
@@ -110,8 +128,9 @@ function line(label, value) {
   console.log(`${label.padEnd(22)} ${value}`);
 }
 
-function step(name, result) {
-  const status = result.ok === false ? "FAIL" : result.planned ? "PLANNED" : "OK";
+function step(name, result, severity = "error") {
+  const failed = result.ok === false;
+  const status = failed ? (severity === "warning" ? "WARN" : "FAIL") : result.planned ? "PLANNED" : "OK";
   console.log(`\n[${status}] ${name}`);
   console.log(`  ${result.message}`);
   return result;
@@ -126,7 +145,9 @@ async function main() {
 
   console.log("apple-tools-mcp write smoke test");
   console.log("=".repeat(60));
-  line("Mode:", apply ? "APPLY (will change Contacts and Calendar)" : "DRY RUN (no changes)");
+  line("Mode:", apply
+    ? "APPLY (will change Contacts and Calendar)"
+    : "DRY RUN (no creates, edits, or deletes)");
   line("Process:", indexerMode ? "indexer daemon" : "plain node / stdio");
   line("Write bridge:", bridgeUp ? `listening at ${socketPath}` : `not listening (${socketPath})`);
   line("Write path:", route.path === "daemon" ? "indexer daemon via write bridge" : "in this process");
@@ -139,10 +160,17 @@ async function main() {
 
   console.log(
     "\nTCC note: macOS attributes this work to the process responsible for it.\n" +
-    "Reads below use sqlite + Full Disk Access; the CRUD steps use Contacts.app\n" +
+    "Contact reads use sqlite + Full Disk Access; the CRUD steps use Contacts.app\n" +
     "and Calendar.app, gated by the AddressBook and calendars privacy classes.\n" +
     `Writes take the same route production MCP clients take: ${route.reason}.`
   );
+  if (!apply) {
+    console.log(
+      "Dry run: nothing is created, edited, or deleted. calendar_list_calendars\n" +
+      "still runs for real - it is a live Calendar.app query and a TCC touch -\n" +
+      "so a denial there is reported as a warning, not a failure."
+    );
+  }
 
   // Every write goes through the production dispatcher, so the smoke test
   // proves the path clients actually use rather than a private shortcut.
@@ -200,8 +228,16 @@ async function main() {
 
   // ---- Calendar: the other entitlement-gated write path ----
   console.log("\n--- Calendar CRUD (Calendar.app / calendars privacy class) ---");
-  const calendars = step("calendar_list_calendars", await run("calendar_list_calendars", {}));
-  results.push(calendars);
+  if (!apply) {
+    console.log("  (live Calendar.app query even on a dry run)");
+  }
+  const listSeverity = calendarListSeverity(apply);
+  const calendars = step("calendar_list_calendars", await run("calendar_list_calendars", {}), listSeverity);
+  if (calendars.ok === false && listSeverity === "warning") {
+    console.log("  Warning only: the dry run changed nothing, so a refused listing is not a failure.");
+  } else {
+    results.push(calendars);
+  }
 
   const writable = (calendars.calendars || []).filter((c) => c.writable);
   const targetCalendar = calendar || (writable[0] && writable[0].name) || "Calendar";

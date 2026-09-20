@@ -143,7 +143,7 @@ The smoke test drives writes through **the same dispatcher the MCP tools use**, 
 
 2. **Check out the tip / unpack the tarball** you are gating, in a short-lived directory. The global install stays untouched.
 
-3. **Dry run first** — it changes nothing:
+3. **Dry run first.** It creates, edits, and deletes nothing — but it is not a no-op: it reads your contacts from the AddressBook database and calls `calendar_list_calendars`, which is a **live Calendar.app query and therefore a real TCC touch** that can raise an Automation prompt or be denied. Because the run changes nothing, a refused listing is reported as `WARN` rather than failing the run.
 
    ```bash
    npm run smoke:writes
@@ -429,6 +429,8 @@ Supported identifiers:
 | `calendar_rsvp` | `event_id` (required), `response` (`accept` \| `decline` \| `tentative`), `attendee_email` | none |
 
 Events are addressed by their **iCalendar UID**, reported as `Event ID` by `calendar_date` and returned by `calendar_add`. Run `calendar_list_calendars` first so new events land on the intended calendar instead of the default one.
+
+Like Contacts, calendar writes go through Calendar.app rather than writing `Calendar.sqlitedb` directly. Reads query that database for speed, but edits must go through the app so iCloud sync, invitations, and alarms behave correctly.
 
 **Supported recurrence patterns.** Either pass structured arguments or a raw `recurrence` RRULE:
 
