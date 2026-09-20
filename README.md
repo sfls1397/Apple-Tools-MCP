@@ -328,13 +328,15 @@ Two arguments are available on **every** write tool:
 
 | Tool | Arguments | Confirm rule |
 |------|-----------|--------------|
-| `mail_send` | `to[]` (required), `cc[]`, `bcc[]`, `subject` (required), `body` (required) | `confirm` when total recipients > 1 |
-| `mail_draft` | `to[]` (required), `cc[]`, `bcc[]`, `subject`, `body` | none (saved to Drafts, not sent) |
+| `mail_send` | `to[]` (required), `cc[]`, `bcc[]`, `subject` (required), `body` (required), `body_format` (`plain` \| `html`) | `confirm` when total recipients > 1 |
+| `mail_draft` | `to[]` (required), `cc[]`, `bcc[]`, `subject`, `body`, `body_format` | none (saved to Drafts, not sent) |
 | `mail_reply` | `message_id` or `file_path`, `body` (required), `reply_all`, `save_as_draft` | `confirm` when `reply_all: true` |
 | `mail_forward` | `message_id` or `file_path`, `to[]` (required), `body`, `save_as_draft` | `confirm` when recipients > 1 |
 | `mail_mark` | `message_id` or `file_path`, `status` (`read` \| `unread`, default `read`) | none |
 | `mail_archive` | `message_id` or `file_path` | none |
 | `mail_trash` | `message_id` or `file_path` | **`confirm` required** |
+
+`body_format: "html"` sets Mail's `html content` and keeps a tag-stripped plain-text alternative in `content`; the default is plain text. HTML support is whatever Mail.app offers — if a Mail version rejects the property, the message still goes out as plain text.
 
 Emails are addressed by their RFC822 **Message-ID**. Pass `message_id`, or pass the `file_path` from `mail_search` / `mail_recent` and the server reads the Message-ID out of the `.emlx` headers for you. `mail_archive` moves the message to its account's Archive (or All Mail) mailbox; `mail_trash` moves it to that account's Trash.
 
