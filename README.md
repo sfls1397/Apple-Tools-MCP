@@ -83,15 +83,15 @@ This is the first-run flow for Contacts and Calendar **writes** on the Mac Mini.
 2. Run write prove-out with the **indexer LaunchAgent** owning `node` (`~/.apple-tools-mcp/writer.sock` / launchd). Against the tip, with the LaunchAgent up:
 
    ```bash
-   npm run smoke:writes --apply
+   npm run smoke:writes -- --apply
    ```
 
    That is the ship-gate context. An embedded agent shell, IDE terminal, or MCP host app subprocess is **not** the ship-gate host unless the write bridge is up and the work executes inside launchd-owned `node`.
-3. When prompts appear, click **Allow** for **`node`** — on this Mini that is `/Users/petercoates/.local/node/bin/node` — to control **Contacts** and **Calendar**. Do **not** approve the MCP client / host app that launched a short-lived stdio server. Other machines use whatever path the LaunchAgent plist / `which node` reports.
+3. When prompts appear, click **Allow** for **`node`** to control **Contacts** and **Calendar**. Use whatever path the LaunchAgent plist / `which node` reports — `/Users/petercoates/.local/node/bin/node` is a Mini *example* only, not a universal path. Do **not** approve the MCP client / host app that launched a short-lived stdio server.
 4. **Full Disk Access** on `node` is a separate grant and covers **reads** (Mail / Messages / Calendar / AddressBook databases). Contacts and Calendar **writes** need the Automation / Apple Events grants to Contacts.app and Calendar.app.
 5. npm Trusted Publisher / publish tokens are unrelated to TCC. Do not confuse them with this setup.
 
-If you dismissed a prompt, re-open **Automation** and turn the **node → Contacts** / **node → Calendar** toggles back on. `tccutil reset AppleEvents` re-arms Automation prompts. Do not use `tccutil reset AddressBook` / `tccutil reset Calendar` as a substitute for adding `node` to those privacy lists — that is not how this ship gate is granted.
+If you dismissed a prompt, re-open **Automation** and turn the **node → Contacts** / **node → Calendar** toggles back on. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Do not use `tccutil reset AddressBook` / `tccutil reset Calendar`, and do not add `node` via Settings **+** into the Contacts or Calendars privacy lists — those panes often have no Add button, and that is not how this ship gate is granted.
 
 #### Which process macOS is actually asking about
 
@@ -279,9 +279,10 @@ LaunchAgent should invoke **node + `--mode=indexer`** on the **global** package 
 
 ```bash
 which node
-# This Mini (ship-gate host): /Users/petercoates/.local/node/bin/node
-# Apple Silicon Homebrew example: /opt/homebrew/bin/node
-# Intel Homebrew / usr/local example: /usr/local/bin/node
+# Use this path (and the LaunchAgent plist). Examples only — not universal:
+#   Mini ship-gate host: /Users/petercoates/.local/node/bin/node
+#   Apple Silicon Homebrew: /opt/homebrew/bin/node
+#   Intel Homebrew / usr/local: /usr/local/bin/node
 
 npm root -g
 # Example: /opt/homebrew/lib/node_modules
@@ -526,7 +527,7 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 The message names which process macOS was actually asking about. Work through it in this order:
 
 1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Contacts and Calendar writes (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)).
-2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary; on this Mini `/Users/petercoates/.local/node/bin/node`) is allowed to control Contacts and Calendar. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms Automation prompts. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
+2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary — whatever path the plist / `which node` reports; `/Users/petercoates/.local/node/bin/node` is a Mini *example* only) is allowed to control Contacts and Calendar. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
 4. **Is it actually the write path?** Contacts or Calendar *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts or Calendar *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#reads-and-writes-are-different-mechanisms): Claude.app carries neither the addressbook nor the calendars entitlement. Start the daemon and the write succeeds through the bridge.
 5. **"Contacts.app / Calendar.app could not be reached"** with the app clearly installed is an **Automation / responsible-process** failure, not a missing app — macOS reports a refused Apple event as `-1728` / "can't get application". The tool says so and points at the bridge. Start the LaunchAgent, or run from Terminal.app and approve the Automation prompt.
@@ -611,8 +612,11 @@ npx vitest run --coverage --reporter=verbose
 # Run audit to check index health
 npm run audit
 
-# Prove the write path on this host (dry run; add --apply for real CRUD)
+# Prove the write path on this host (dry run)
 npm run smoke:writes
+
+# Real CRUD — the extra -- is required so npm forwards --apply
+npm run smoke:writes -- --apply
 ```
 
 ## Contributing
