@@ -30,6 +30,7 @@ import {
   buildMailAutomationProbeScript,
   buildFindSentByInReplyToScript,
   buildFindSentBySubjectScript,
+  buildFindSentForwardScript,
   recoverIfInSent,
   isMailHardTcc,
   isMailSendTimeout
@@ -411,6 +412,8 @@ describe('mail_reply and mail_forward', () => {
     const verifyScript = osascript.mock.calls[1][0]
     expect(verifyScript).toContain('In-Reply-To:')
     expect(verifyScript).toContain('abc@example.com')
+    expect(verifyScript).toContain('"Re: "')
+    expect(verifyScript).toContain('atmFindMessage')
     expect(verifyScript).toContain('sent mailbox')
     expect(verifyScript).toContain('outgoing mailbox')
   })
@@ -474,26 +477,47 @@ describe('mail_reply and mail_forward', () => {
     expect(result.recovered).toBe(true)
     expect(result.message).toContain('mail_forward: forwarded')
     expect(result.message).toContain('verified in Sent')
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('Fwd:')
+    expect(verifyScript).toContain('Begin forwarded message')
+    expect(verifyScript).toContain('c@example.com')
+    expect(verifyScript).toContain('A reply to the original is not this forward')
   })
 })
 
 describe('mail Sent verify helpers', () => {
-  it('builds an In-Reply-To Sent scan and a subject Sent scan', () => {
+  it('builds an In-Reply-To Sent scan, a Re: fallback scan, and a subject Sent scan', () => {
     const byReply = buildFindSentByInReplyToScript('abc@example.com')
     expect(byReply).toContain('In-Reply-To:')
     expect(byReply).toContain('<abc@example.com>')
+    expect(byReply).toContain('"Re: "')
+    expect(byReply).toContain('atmFindMessage')
     expect(byReply).toContain('sent mailbox')
     expect(byReply).toContain('outgoing mailbox')
     expect(byReply).toContain('source of msg')
+    expect(byReply).not.toContain('Begin forwarded message')
 
     const bySubject = buildFindSentBySubjectScript('Status update')
     expect(bySubject).toContain('subject is "Status update"')
     expect(bySubject).toContain('sent mailbox')
   })
 
+  it('builds a forward Sent scan that skips reply headers', () => {
+    const byForward = buildFindSentForwardScript('abc@example.com', ['c@example.com'])
+    expect(byForward).toContain('Fwd:')
+    expect(byForward).toContain('Begin forwarded message')
+    expect(byForward).toContain('c@example.com')
+    expect(byForward).toContain('A reply to the original is not this forward')
+    expect(byForward).toContain('atmFindMessage')
+  })
+
   it('treats FOUND as a recovery hit and verify failure as not recovered', () => {
     osascript.mockImplementationOnce(() => 'FOUND')
     expect(recoverIfInSent({ inReplyTo: 'abc@example.com' })).toEqual({ found: true })
+
+    osascript.mockImplementationOnce(() => 'FOUND')
+    expect(recoverIfInSent({ inReplyTo: 'abc@example.com', forwardTo: ['c@example.com'] })).toEqual({ found: true })
+    expect(osascript.mock.calls[osascript.mock.calls.length - 1][0]).toContain('Begin forwarded message')
 
     osascript.mockImplementationOnce(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
