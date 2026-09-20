@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { MAIL_TCC_GUIDANCE, MAIL_SEND_TIMEOUT_GUIDANCE } from '../../lib/appleScript.js'
 
 const osascript = vi.hoisted(() => vi.fn(() => ''))
 
@@ -201,6 +202,8 @@ describe('mail_send', () => {
       .mockImplementationOnce(() => 'NOT_FOUND')
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).toContain('find/reply/send hang')
     expect(result.message).toContain('not a TCC / Automation deny')
     expect(result.message).toContain('Check Sent')
@@ -234,6 +237,8 @@ describe('mail_send', () => {
     })
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('find/reply/send hang')
     expect(osascript).toHaveBeenCalledTimes(1)
@@ -253,7 +258,7 @@ describe('mail_automation_probe', () => {
     expect(result.message).toContain('nothing was sent')
   })
 
-  it('maps a compose hang to Mail Automation denied', () => {
+  it('maps a compose hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
@@ -261,7 +266,8 @@ describe('mail_automation_probe', () => {
     expect(result.ok).toBe(false)
     expect(result.kind).toBe('timeout')
     expect(result.message).toContain('mail_automation_probe failed')
-    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain('could not be reached')
   })
 })
@@ -359,7 +365,7 @@ describe('mail_draft', () => {
     expect(script).not.toContain('send newMessage')
   })
 
-  it('maps a hung draft compose to TCC and does not Sent-check', () => {
+  it('maps a hung draft compose to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
@@ -368,7 +374,8 @@ describe('mail_draft', () => {
       { draft: true }
     )
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(osascript).toHaveBeenCalledTimes(1)
   })
 })
@@ -427,6 +434,8 @@ describe('mail_reply and mail_forward', () => {
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('mail_reply failed')
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).toContain('find/reply/send hang')
     expect(result.message).toContain('-1743')
     expect(result.message).toContain('-10004')
@@ -442,19 +451,23 @@ describe('mail_reply and mail_forward', () => {
     })
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
     expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('verified in Sent')
     expect(result.message).not.toContain('find/reply/send hang')
     expect(osascript).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps a draft-reply hang as compose TCC and does not Sent-check', () => {
+  it('maps a pre-send find/reply hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks', save_as_draft: true })
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).toContain('find/reply/open before send')
     expect(osascript).toHaveBeenCalledTimes(1)
   })
 
@@ -482,6 +495,22 @@ describe('mail_reply and mail_forward', () => {
     expect(verifyScript).toContain('Begin forwarded message')
     expect(verifyScript).toContain('c@example.com')
     expect(verifyScript).toContain('A reply to the original is not this forward')
+  })
+
+  it('maps a pre-send forward/open hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
+    })
+    const result = mailForward({
+      message_id: 'abc@example.com',
+      to: ['c@example.com'],
+      body: 'FYI',
+      save_as_draft: true
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -555,6 +584,16 @@ describe('mail_mark, mail_archive, mail_trash', () => {
     const result = mailMark({ message_id: 'abc@example.com', status: 'starred' })
     expect(result.ok).toBe(false)
     expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('maps a find/open hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailMark({ message_id: 'abc@example.com' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
   })
 
   it('moves to Archive', () => {
