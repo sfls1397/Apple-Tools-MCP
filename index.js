@@ -22,6 +22,13 @@ import {
   waitForIndexerLock,
   beginOwnedIndexing
 } from "./lib/indexerRuntime.js";
+import {
+  WRITE_TOOL_DEFINITIONS,
+  isWriteTool,
+  dispatchWriteTool,
+  executeWriteToolLocally
+} from "./lib/writeTools.js";
+import { startWriteBridgeServer, defaultSocketPath } from "./lib/writeBridge.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -70,9 +77,37 @@ function stopLockHeartbeat() {
   indexerLock.stopHeartbeat();
 }
 
+// Daemon-only: serves writes for stdio clients whose host app cannot be
+// granted Contacts/Calendar automation (see lib/writeBridge.js).
+const WRITE_SOCKET_PATH = defaultSocketPath();
+let writeBridge = null;
+
+function stopWriteBridge() {
+  if (!writeBridge) return;
+  try {
+    writeBridge.close();
+  } catch (e) {
+    console.error("Error closing write bridge:", e.message);
+  }
+  writeBridge = null;
+}
+
+async function startWriteBridge() {
+  try {
+    writeBridge = await startWriteBridgeServer({
+      socketPath: WRITE_SOCKET_PATH,
+      handler: (tool, args) => executeWriteToolLocally(tool, args),
+      log: (msg) => console.error(msg)
+    });
+  } catch (e) {
+    console.error(`Write bridge unavailable: ${e.message}. Writes will run in each MCP process.`);
+  }
+}
+
 function shutdownIndexing(exitCode) {
   stopBackgroundIndexing();
   stopLockHeartbeat();
+  stopWriteBridge();
   releaseLock();
   if (exitCode !== undefined) {
     process.exit(exitCode);
@@ -83,6 +118,7 @@ function shutdownIndexing(exitCode) {
 process.on("exit", () => {
   stopBackgroundIndexing();
   stopLockHeartbeat();
+  stopWriteBridge();
   releaseLock();
 });
 process.on("SIGINT", () => {
@@ -356,6 +392,9 @@ async function initializeIndexing() {
     console.error(`Apple Tools MCP indexer running (v${PACKAGE_VERSION})`);
     logResolvedInterval(resolvedIndexInterval);
     loggedIndexInterval = true;
+    // launchd started this process, so node owns its TCC prompts. Offer the
+    // write bridge to stdio clients whose host app cannot get those grants.
+    await startWriteBridge();
     waitForLockAndStartDaemon();
     return;
   }
@@ -750,6 +789,7 @@ function formatContactsSearchResults(contacts) {
     output += `• ${c.displayName}`;
     if (c.organization) output += ` (${c.organization})`;
     output += "\n";
+    if (c.uniqueId) output += `  Contact ID: ${c.uniqueId}\n`;
     if (c.emails.length > 0) {
       output += `  Emails: ${c.emails.map(e => e.email).join(", ")}\n`;
     }
@@ -769,6 +809,7 @@ function formatContactLookupResult(contact) {
   let output = `Contact: ${contact.displayName}\n`;
   output += "─".repeat(40) + "\n";
 
+  if (contact.uniqueId) output += `Contact ID: ${contact.uniqueId}\n`;
   if (contact.organization) output += `Organization: ${contact.organization}\n`;
   if (contact.department) output += `Department: ${contact.department}\n`;
   if (contact.jobTitle) output += `Job Title: ${contact.jobTitle}\n`;
@@ -1270,6 +1311,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["name"],
       },
     },
+
+    // ============ WRITE TOOLS (2.0.0) ============
+    // Mail / Messages / Calendar / Contacts writes with dry_run + confirm.
+    ...WRITE_TOOL_DEFINITIONS,
   ],
 }));
 
@@ -1279,6 +1324,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     let result;
+
+    // Writes never wait on the vector index: they talk to Mail / Messages /
+    // Calendar / Contacts directly and must keep working while the indexer
+    // daemon holds the lock.
+    if (isWriteTool(name)) {
+      const writeResult = await dispatchWriteTool(name, args || {}, {
+        indexerMode: INDEXER_MODE,
+        socketPath: WRITE_SOCKET_PATH,
+        log: (msg) => console.error(msg)
+      });
+      return {
+        content: [{ type: "text", text: writeResult.message }],
+        ...(writeResult.ok === false ? { isError: true } : {})
+      };
+    }
 
     switch (name) {
       // Smart search (agentic)
