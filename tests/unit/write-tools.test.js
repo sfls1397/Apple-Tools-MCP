@@ -699,6 +699,23 @@ describe('write smoke script routing (ship gate)', () => {
     expect(resolveSmokePath({ apply: false, bridgeUp: false, allowLocal: false, indexerMode: false }).proceed).toBe(true)
   })
 
+  it('treats the live calendar listing as advisory during a dry run', async () => {
+    const { calendarListSeverity } = await import('../../scripts/smoke-writes.js')
+    // calendar_list_calendars is a real Calendar.app query even on a dry
+    // run, so a denial must not fail a run that changed nothing.
+    expect(calendarListSeverity(false)).toBe('warning')
+    expect(calendarListSeverity(true)).toBe('error')
+  })
+
+  it('does not claim a dry run changes nothing at all', async () => {
+    const source = fs.readFileSync(path.join(root, 'scripts/smoke-writes.js'), 'utf8')
+    const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+
+    expect(source).toContain('no creates, edits, or deletes')
+    expect(source).toContain('live Calendar.app query')
+    expect(readme).toContain('live Calendar.app query')
+  })
+
   it('dispatches through the production write path, not the write modules directly', () => {
     const source = fs.readFileSync(path.join(root, 'scripts/smoke-writes.js'), 'utf8')
 
