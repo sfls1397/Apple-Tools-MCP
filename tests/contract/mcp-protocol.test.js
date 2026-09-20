@@ -195,6 +195,34 @@ describe('Contract: Input Schema Validation', () => {
   })
 })
 
+describe('Contract: Write Tool Compliance', () => {
+  it('write tools satisfy the same required fields as read tools', async () => {
+    const { WRITE_TOOL_DEFINITIONS } = await import('../../lib/writeTools.js')
+
+    expect(WRITE_TOOL_DEFINITIONS.length).toBeGreaterThan(0)
+    for (const tool of WRITE_TOOL_DEFINITIONS) {
+      for (const field of REQUIRED_TOOL_FIELDS) {
+        expect(tool).toHaveProperty(field)
+      }
+      for (const field of REQUIRED_SCHEMA_FIELDS) {
+        expect(tool.inputSchema).toHaveProperty(field)
+      }
+      expect(tool.inputSchema.type).toBe('object')
+      expect(tool.name).toMatch(/^[a-z][a-z0-9_]*$/)
+    }
+  })
+
+  it('does not collide with read tool names', async () => {
+    const { WRITE_TOOL_DEFINITIONS } = await import('../../lib/writeTools.js')
+    const writeNames = WRITE_TOOL_DEFINITIONS.map((t) => t.name)
+
+    expect(new Set(writeNames).size).toBe(writeNames.length)
+    for (const name of writeNames) {
+      expect(EXPECTED_TOOLS).not.toContain(name)
+    }
+  })
+})
+
 describe('Contract: Response Format Compliance', () => {
   it('should return content array with type and text', async () => {
     // Mock a successful response structure
