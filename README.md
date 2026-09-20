@@ -302,6 +302,8 @@ On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tool
 
 The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Mail / Messages / Contacts / Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)). When macOS prompts, Allow **`node`** (the LaunchAgent binary) to control Mail.app, Messages.app, Contacts.app, and Calendar.app. Do not approve the MCP client / host app that launched a short-lived stdio server, and do not try to add `node` via **+** in the Contacts or Calendars privacy lists.
 
+Indexer / LaunchAgent mode is **quiet by default**: it logs to stderr (the plist redirects that to a file) and does **not** post Notification Center / banner toasts such as “indexer is running”. That is separate from the [permissions command](#2b-grant-automation-for-write-tools-first-run--ship-gate), which still needs Allow dialogs. To opt in to indexer toasts: `APPLE_TOOLS_NOTIFY=1` or `--notify`.
+
 The bridge is created before the daemon touches the vector index, so writes stay available even when the index is missing, locked, or mid-rebuild. Confirm it after an upgrade with `ls -l ~/.apple-tools-mcp/writer.sock` (it should be a `srw-------` socket); the daemon removes it on shutdown.
 
 **Entrypoint:** `node index.js --mode=indexer`  
@@ -341,6 +343,8 @@ Example `~/Library/LaunchAgents/com.apple-tools-mcp.indexer.plist`:
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

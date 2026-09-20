@@ -12,6 +12,7 @@ import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, v
 import { cycleEndFlags, indexUnavailableMessage, indexQueryGate } from "./lib/indexGate.js";
 import { isIndexerMode, isPermissionsMode } from "./lib/processMode.js";
 import { runPermissionsCommand } from "./lib/permissions.js";
+import { maybeNotifyIndexerRunning } from "./lib/userNotify.js";
 import { loadResolvedIndexInterval, logResolvedInterval } from "./lib/config.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
 import {
@@ -395,6 +396,9 @@ function waitForLockAndStartDaemon() {
 async function initializeIndexing() {
   if (INDEXER_MODE) {
     console.error(`Apple Tools MCP indexer running (v${PACKAGE_VERSION})`);
+    // stderr only by default. Notification Center toasts are opt-in
+    // (APPLE_TOOLS_NOTIFY=1 / --notify). LaunchAgent must stay quiet.
+    maybeNotifyIndexerRunning({ version: PACKAGE_VERSION });
     logResolvedInterval(resolvedIndexInterval);
     loggedIndexInterval = true;
     // launchd started this process, so node owns its TCC prompts. Offer the
