@@ -1,10 +1,12 @@
 # apple-tools-mcp
 
-An MCP (Model Context Protocol) server that provides semantic search across Apple Mail, Messages, Calendar, and Contacts on macOS. Use natural language to search your emails, iMessages, calendar events, and contacts from any compatible MCP client over stdio.
+An MCP (Model Context Protocol) server for Apple Mail, Messages, Calendar, and Contacts on macOS. Search them with natural language, and — as of 2.0.0 — write to them: send mail and messages, manage calendar events, and manage contacts. Works with any compatible MCP client over stdio.
 
 ## Features
 
 - **Semantic Search**: Find emails, messages, and events using natural language queries
+- **Write Tools (2.0.0)**: Send/reply/forward/draft mail, mark read, archive, trash; send iMessage/SMS; create, edit, remove, and RSVP to calendar events; create, edit, and remove contacts
+- **Safe by Default**: Deletes and multi-recipient sends never run without `confirm`, and every write supports `dry_run`
 - **Vector Indexing**: Uses LanceDB for fast similarity search with local embeddings
 - **Privacy-First**: All processing happens locally on your Mac - no data leaves your machine
 - **Smart Deduplication**: Handles IMAP duplicates, prioritizing INBOX over Junk/Trash
@@ -64,6 +66,43 @@ The MCP server needs access to read your Mail, Messages, and Calendar databases.
 6. Select the `node` file and click **Open**
 
 7. Ensure the toggle for Node.js is enabled
+
+Full Disk Access covers the **read** tools. Write tools need the automation permissions below.
+
+### 2b. Grant automation permissions for write tools (first run)
+
+The write tools drive Mail, Messages, Calendar, and Contacts through AppleScript, which macOS gates behind TCC (Privacy & Security) rather than plain file permissions. The first write of each kind raises a prompt — approve it once:
+
+| Prompt | Grants | Shown in System Settings under |
+|--------|--------|--------------------------------|
+| "…would like to control Mail / Messages / Calendar / Contacts" | Automation | Privacy & Security → **Automation** |
+| "…would like to access your calendars" | Calendars | Privacy & Security → **Calendars** |
+| "…would like to access your contacts" | Contacts | Privacy & Security → **Contacts** |
+
+If you dismissed a prompt, re-enable the toggle in those panes. `tccutil reset AddressBook` / `tccutil reset Calendar` makes macOS ask again.
+
+#### Which process macOS is actually asking about
+
+This is the part that decides whether writes work on your setup. macOS attributes an Apple event to the **responsible process**, not to whichever binary sent it. When an MCP client launches this server over stdio, the *client app* is responsible for everything node does — so the grant that matters belongs to the host app, not to node.
+
+That has one consequence worth stating plainly: **a host app that cannot be granted Contacts or Calendars access blocks those writes no matter what node is allowed to do.** Claude Desktop is a documented example — it is not built with the AddressBook entitlement (`com.apple.security.personal-information.addressbook`), so Contacts writes attempted under Claude.app are denied by macOS. That is a property of the host application. It is not a Full Disk Access problem, not a `tccutil` problem, and not something this package can patch: third-party apps cannot add entitlements to another vendor's signed app.
+
+#### The fix: let the indexer daemon own the writes
+
+The **indexer daemon** is started by launchd, so node is the responsible process for its Apple events and macOS grants Contacts/Calendar access to node directly.
+
+From 2.0.0, the daemon therefore doubles as a **write bridge**. When it is running, any MCP stdio process hands privacy-gated writes to it over a user-only unix socket at `~/.apple-tools-mcp/writer.sock` (mode 0600, inside your 0700 app directory — local only, nothing on the network). The daemon performs the write under its own TCC identity and returns what happened.
+
+So the supported configuration for writes is: **run the indexer daemon** ([LaunchAgent setup below](#always-on-indexer-mac-mini-launchagent)) on the Mac that owns the data. Then:
+
+| Host | Reads | Mail / Messages writes | Calendar / Contacts writes |
+|------|-------|------------------------|----------------------------|
+| Indexer daemon (launchd, e.g. Mac Mini) | Yes | Yes | Yes — node is the responsible process |
+| Any stdio client **with the daemon running** | Yes | Yes (via the bridge) | Yes (via the bridge) |
+| Stdio client launched from a terminal, no daemon | Yes | Yes, once you approve the Automation prompt for your terminal | Yes, once you approve the Contacts/Calendars prompts |
+| Claude Desktop, **no daemon running** | Yes | Yes, if Claude is granted Automation for Mail/Messages | **No** — Claude.app cannot be granted Contacts access; start the daemon |
+
+If a write is denied and no daemon is listening, the tool says so and tells you to start `apple-tools-indexer`, rather than failing with a bare AppleScript error.
 
 ### 3. Configure your MCP client
 
@@ -151,6 +190,8 @@ Missing `config.json` is fine — env then the 5-minute default apply.
 ## Always-on indexer (Mac Mini LaunchAgent)
 
 On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tools-mcp`. Grok Bot, Claude Desktop, and other clients still attach via short-lived stdio MCP (`npx -y apple-tools-mcp` or the global `apple-tools-mcp` bin).
+
+The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Contacts/Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-permissions-for-write-tools-first-run)). Approve the Automation / Contacts / Calendars prompts once for the daemon's node binary.
 
 **Entrypoint:** `node index.js --mode=indexer`  
 **Convenience bin:** `apple-tools-indexer` (same file; npm global install provides it)  
@@ -264,6 +305,114 @@ Once configured, your MCP client can use these tools:
 | `rebuild_index` | Rebuild search index for one or all sources |
 | `audit_index` | Audit index health and coverage |
 
+## Write Tools (2.0.0)
+
+Write tools change your data. They do not use the vector index, so they keep working while the indexer daemon holds the lock.
+
+Two arguments are available on **every** write tool:
+
+| Argument | Type | Meaning |
+|----------|------|---------|
+| `dry_run` | boolean | Preview only. Reports what *would* happen and changes nothing. Always wins, even together with `confirm`. |
+| `confirm` | boolean | Approves an action that is otherwise blocked (deletes, multi-recipient sends). |
+
+### Confirm / dry-run rules
+
+- **Deletes always need `confirm: true`** — `mail_trash`, `calendar_remove`, `contacts_remove`, and `contacts_edit` when it clears every email or phone. Without it the call returns a `CONFIRMATION REQUIRED` preview and changes nothing. There is no bulk delete tool and no silent mass delete: one id per call.
+- **Multi-recipient sends always need `confirm: true`** — `mail_send` / `mail_forward` when `to` + `cc` + `bcc` total more than one address, `mail_reply` with `reply_all: true`, and `messages_send` to multiple handles or to a group chat. A single-recipient send runs on the first call.
+- **`mail_draft` is exempt from the recipient rule** because a draft is never delivered.
+- Responses name what happened (tool, ids, recipients, titles) and never echo message bodies — including on the error path.
+- Writes never invent data. A missing or malformed `message_id`, `event_id`, `contact_id`, `chat_id`, or recipient is refused with a message saying so. Calendar times must be explicit local datetimes (`YYYY-MM-DD HH:MM`); natural language such as "next Tuesday" is rejected for writes.
+
+### Mail write tools
+
+| Tool | Arguments | Confirm rule |
+|------|-----------|--------------|
+| `mail_send` | `to[]` (required), `cc[]`, `bcc[]`, `subject` (required), `body` (required) | `confirm` when total recipients > 1 |
+| `mail_draft` | `to[]` (required), `cc[]`, `bcc[]`, `subject`, `body` | none (saved to Drafts, not sent) |
+| `mail_reply` | `message_id` or `file_path`, `body` (required), `reply_all`, `save_as_draft` | `confirm` when `reply_all: true` |
+| `mail_forward` | `message_id` or `file_path`, `to[]` (required), `body`, `save_as_draft` | `confirm` when recipients > 1 |
+| `mail_mark` | `message_id` or `file_path`, `status` (`read` \| `unread`, default `read`) | none |
+| `mail_archive` | `message_id` or `file_path` | none |
+| `mail_trash` | `message_id` or `file_path` | **`confirm` required** |
+
+Emails are addressed by their RFC822 **Message-ID**. Pass `message_id`, or pass the `file_path` from `mail_search` / `mail_recent` and the server reads the Message-ID out of the `.emlx` headers for you. `mail_archive` moves the message to its account's Archive (or All Mail) mailbox; `mail_trash` moves it to that account's Trash.
+
+### Messages write tool
+
+| Tool | Arguments | Confirm rule |
+|------|-----------|--------------|
+| `messages_send` | `to[]` or `chat_id`, `text`, `attachment_path`, `service` (`auto` \| `imessage` \| `sms`) | `confirm` for multiple handles or a group chat |
+
+Supported identifiers:
+
+- **`to`** — phone numbers in E.164 form (`+15551234567`) or Apple ID email addresses. These map to a Messages `participant` on the iMessage (or SMS relay) service.
+- **`chat_id`** — the chat GUID of an existing conversation, for example `iMessage;-;+15551234567` (1:1) or `iMessage;+;chat123456789` (group). The GUID is checked against `~/Library/Messages/chat.db` before anything is sent, so an unknown chat id is refused rather than delivered somewhere unexpected. The same lookup counts participants, which is how group chats are detected for the confirm rule.
+- **`service`** — `auto` (default) tries iMessage and falls back to the SMS relay; `imessage` and `sms` pin the service.
+- **`attachment_path`** — an absolute path to a file that already exists on this Mac. Text and attachment can be sent together.
+
+### Calendar write tools
+
+| Tool | Arguments | Confirm rule |
+|------|-----------|--------------|
+| `calendar_list_calendars` | none | none (read-only helper) |
+| `calendar_add` | `calendar_name` (required), `title` (required), `start` (required), `end`, `all_day`, `location`, `notes`, recurrence args, `alerts_minutes_before[]` | none |
+| `calendar_edit` | `event_id` (required) plus any of `title`, `start`, `end`, `location`, `notes`, recurrence args, `alerts_minutes_before[]`, `replace_alerts` | none |
+| `calendar_remove` | `event_id` (required) | **`confirm` required** |
+| `calendar_rsvp` | `event_id` (required), `response` (`accept` \| `decline` \| `tentative`), `attendee_email` | none |
+
+Events are addressed by their **iCalendar UID**, reported as `Event ID` by `calendar_date` and returned by `calendar_add`. Run `calendar_list_calendars` first so new events land on the intended calendar instead of the default one.
+
+**Supported recurrence patterns.** Either pass structured arguments or a raw `recurrence` RRULE:
+
+| Argument | Values |
+|----------|--------|
+| `frequency` | `daily`, `weekly`, `monthly`, `yearly` |
+| `interval` | 1-366 (e.g. `2` with `weekly` = every other week) |
+| `count` | 1-1000 occurrences (cannot be combined with `until`) |
+| `until` | explicit local datetime; emitted as a UTC `UNTIL` |
+| `by_day` | `MO TU WE TH FR SA SU` (weekly patterns) |
+| `recurrence` | raw RRULE instead of the above, e.g. `FREQ=WEEKLY;INTERVAL=1;COUNT=10` |
+
+`{ frequency: "weekly", interval: 2, by_day: ["MO","WE"], count: 10 }` becomes `FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;COUNT=10`. Anything outside this grammar is refused.
+
+**Alerts.** `alerts_minutes_before` takes up to 5 whole minute values (0 to 40320, i.e. four weeks) and creates display alarms. On `calendar_edit`, supplying alerts replaces the event's existing alarms; `replace_alerts: true` removes them without adding new ones.
+
+**RSVP.** `calendar_rsvp` sets your attendee participation status on the invitation. Some macOS versions refuse to write that property from AppleScript; when that happens the tool says so explicitly (and asks you to answer in Calendar) rather than reporting a silent success.
+
+### Contacts write tools
+
+| Tool | Arguments | Confirm rule |
+|------|-----------|--------------|
+| `contacts_add` | `first_name`, `last_name`, `organization`, `job_title`, `emails[]`, `email_label`, `phones[]`, `phone_label` | none |
+| `contacts_edit` | `contact_id` (required), any of the above, `replace_emails`, `replace_phones` | **`confirm` required** when replacing with an empty list |
+| `contacts_remove` | `contact_id` (required) | **`confirm` required** |
+
+Contacts are addressed by their Contacts.app person id (for example `ABCD1234-...:ABPerson`), reported as `Contact ID` by `contacts_search` and `contacts_lookup` and returned by `contacts_add`. At least one of `first_name`, `last_name`, or `organization` is required to create a contact. Writes go through Contacts.app, never by writing the AddressBook database directly (that breaks iCloud sync).
+
+### Example write calls
+
+```jsonc
+// Preview first - nothing is sent
+{ "name": "mail_send", "arguments": { "to": ["a@example.com"], "subject": "Status", "body": "All good", "dry_run": true } }
+
+// Single recipient: sends on the first call
+{ "name": "mail_send", "arguments": { "to": ["a@example.com"], "subject": "Status", "body": "All good" } }
+
+// Two recipients: blocked until confirmed
+{ "name": "mail_send", "arguments": { "to": ["a@example.com", "b@example.com"], "subject": "Status", "body": "All good", "confirm": true } }
+
+// Recurring event with an alert
+{ "name": "calendar_add", "arguments": { "calendar_name": "Work", "title": "Standup", "start": "2026-09-21 09:00", "end": "2026-09-21 09:15", "frequency": "weekly", "by_day": ["MO","TU","WE","TH","FR"], "alerts_minutes_before": [10] } }
+
+// Delete: preview, then confirm
+{ "name": "calendar_remove", "arguments": { "event_id": "EVT-UID", "confirm": true } }
+```
+
+### Not included
+
+No Apple **Reminders** tools ship in this package, by design. Notes, FaceTime, and Files automation are also out of scope.
+
 ## Example Queries
 
 Ask your MCP client things like:
@@ -279,8 +428,9 @@ Ask your MCP client things like:
 ## Privacy & Security
 
 - **Local Processing**: All embeddings are generated locally using Xenova/Transformers
-- **No Cloud Services**: No data is sent to external servers
-- **Read-Only**: The server only reads data, never modifies your Mail/Messages/Calendar
+- **No Cloud Services**: No data is sent to external servers; the write bridge is a local unix socket, never a network port
+- **Reads are read-only**: Search and lookup tools never modify your data. The [write tools](#write-tools-200) are the only ones that change anything, and they are opt-in per call, with `confirm` required for deletes and multi-recipient sends
+- **No credentials**: The server holds no tokens or passwords. It uses the Mail, Messages, Calendar, and Contacts apps you are already signed into
 - **Your Data**: The vector index is stored locally in your home directory
 
 ## Troubleshooting
@@ -288,6 +438,19 @@ Ask your MCP client things like:
 ### "Authorization denied" errors
 
 Ensure Node.js has Full Disk Access (see Installation step 2).
+
+### A write tool reports that macOS denied the automation
+
+The message names which process macOS was actually asking about. Work through it in this order:
+
+1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Contacts and Calendar writes (see [step 2b](#2b-grant-automation-permissions-for-write-tools-first-run)).
+2. **Did you approve the prompts?** Check Privacy & Security → Automation, Contacts, and Calendars for the node binary that runs the daemon. `tccutil reset AddressBook` and `tccutil reset Calendar` re-arm the prompts.
+3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
+4. **Contacts writes under Claude Desktop with no daemon running will keep failing.** Claude.app is not built with the AddressBook entitlement, so macOS denies Contacts access to anything it is responsible for. Start the daemon and the write succeeds through the bridge.
+
+### A write returned "CONFIRMATION REQUIRED"
+
+That is the safety gate, not a failure. Deletes and multi-recipient sends need `confirm: true`; the message states exactly what would have happened. Use `dry_run: true` for a preview.
 
 ### Empty search results
 
