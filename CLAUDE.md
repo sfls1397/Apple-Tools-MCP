@@ -64,7 +64,7 @@ Builds escaped AppleScript literals (`asString`/`asInteger`/`dateCall`), parses 
 
 ### lib/mailWrite.js, messagesWrite.js, calendarWrite.js, contactsWrite.js -- Write implementations
 
-One module per data source. Each exports pure `build*Script()` builders (unit-tested without macOS) plus the tool functions. Mail addresses messages by RFC822 Message-ID (resolvable from an `.emlx` `file_path`); Messages verifies a `chat_id` against `chat.db` before sending and counts participants to detect group chats; Calendar addresses events by iCal UID and builds RRULEs from an allowlisted grammar; Contacts addresses people by Contacts.app person id and never writes the AddressBook database directly.
+One module per data source. Each exports pure `build*Script()` builders (unit-tested without macOS) plus the tool functions. Mail addresses messages by RFC822 Message-ID (resolvable from an `.emlx` `file_path`); Messages verifies a `chat_id` against `chat.db` before sending and counts participants to detect group chats; Calendar addresses events by iCal UID and builds RRULEs from an allowlisted grammar; `calendar_remove` uses Calendar.app `delete` (no `remove` / `move to trash`) by AppleScript event id, then EventKit `removeEvent` on timeout, and always prints `osascript kind=/error=`; Contacts addresses people by Contacts.app person id and never writes the AddressBook database directly.
 
 ### lib/writeBridge.js + lib/writeRouting.js -- TCC attribution
 

@@ -447,10 +447,12 @@ Supported identifiers:
 | `calendar_list_calendars` | none | none (read-only helper) |
 | `calendar_add` | `calendar_name` (required), `title` (required), `start` (required), `end`, `all_day`, `location`, `notes`, recurrence args, `alerts_minutes_before[]` | none |
 | `calendar_edit` | `event_id` (required) plus any of `title`, `start`, `end`, `location`, `notes`, recurrence args, `alerts_minutes_before[]`, `replace_alerts` | none |
-| `calendar_remove` | `event_id` (required) | **`confirm` required** |
+| `calendar_remove` | `event_id` (required), optional `calendar_name` | **`confirm` required** |
 | `calendar_rsvp` | `event_id` (required), `response` (`accept` \| `decline` \| `tentative`), `attendee_email` | none |
 
 Events are addressed by their **iCalendar UID**, reported as `Event ID` by `calendar_date` and returned by `calendar_add`. Run `calendar_list_calendars` first so new events land on the intended calendar instead of the default one.
+
+`calendar_add`, `calendar_edit`, and `calendar_remove` share the same write-bridge RPC (`{ tool, args }` into launchd-owned node). They do not use a different socket or calendar account. Calendar.app’s dictionary has **`delete` only** — there is no `remove` or `move to trash`. `calendar_remove` deletes by AppleScript event `id` inside the owning calendar (20s AppleScript timeout), then falls back to EventKit `calendarItemsWithExternalIdentifier` + `removeEvent` if Calendar.app hangs. A timeout on delete is **not** a TCC / Automation deny when add/edit just succeeded (typical iCloud/CalDAV hang or a Calendar confirmation dialog). Failures always print `osascript kind=… error=… codes=…` so smoke `--apply` shows the real AppleEvent / spawn code instead of “macOS denied Calendar access”.
 
 Like Contacts, calendar writes go through Calendar.app rather than writing `Calendar.sqlitedb` directly. Reads query that database for speed, but edits must go through the app so iCloud sync, invitations, and alarms behave correctly.
 
@@ -539,7 +541,8 @@ The message names which process macOS was actually asking about. Work through it
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
 4. **Is it actually the write path?** Contacts or Calendar *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts or Calendar *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#reads-and-writes-are-different-mechanisms): Claude.app carries neither the addressbook nor the calendars entitlement. Start the daemon and the write succeeds through the bridge.
 5. **"Contacts.app / Calendar.app could not be reached"** with the app clearly installed is an **Automation / responsible-process** failure, not a missing app — macOS reports a refused Apple event as `-1728` / "can't get application". The tool says so and points at the bridge. Start the LaunchAgent, or run from Terminal.app and approve the Automation prompt.
-6. **Prove the host itself works** with `node scripts/smoke-writes.js --apply` on the Node host with the LaunchAgent running; it routes through the bridge and separates the read and write mechanisms for you.
+6. **`calendar_remove` FAIL after add/edit PASS** is a delete-path failure, not missing Calendar Automation. Same write-bridge RPC. Read the `osascript kind=/error=` line: `ETIMEDOUT` / `-1712` is an iCloud/CalDAV hang or Calendar confirmation dialog; `-1743` / `-10004` is a real Automation deny. Calendar.app has no `remove` / `move to trash`. Paste that line if the leftover event is still there after EventKit fallback.
+7. **Prove the host itself works** with `node scripts/smoke-writes.js --apply` on the Node host with the LaunchAgent running; it routes through the bridge and separates the read and write mechanisms for you.
 
 ### A write returned "CONFIRMATION REQUIRED"
 

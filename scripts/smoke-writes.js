@@ -394,6 +394,14 @@ async function main() {
         if (apply && removed.ok === false) {
           console.log(`  Created ${eventId} on ${targetCalendar} but could not delete it.`);
           console.log("  add/edit succeeded, so this is a delete-path failure, not missing Calendar Automation.");
+          console.log("  Same write-bridge RPC as add/edit; Calendar.app has no remove/move-to-trash (delete + EventKit fallback).");
+          if (removed.diagnostics) {
+            console.log(`  ${removed.diagnostics}`);
+          } else {
+            const rawLine = String(removed.message || "").match(/osascript kind=\S+ error=.*/);
+            if (rawLine) console.log(`  ${rawLine[0]}`);
+          }
+          console.log("  Paste the osascript kind=/error= line if asking for another tip.");
           console.log("  Remove the leftover event in Calendar.app.");
         }
       }

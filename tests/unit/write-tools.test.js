@@ -37,6 +37,10 @@ import {
   calendarRsvp,
   calendarListCalendars,
   buildRecurrenceRule,
+  buildRemoveEventScript,
+  buildEventKitRemoveScript,
+  shouldTryEventKitRemove,
+  describeCalendarRemoveFailure,
   validateAlerts,
   defaultEndParts
 } from '../../lib/calendarWrite.js'
@@ -565,17 +569,21 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(confirmed.ok).toBe(true)
     expect(confirmed.message).toContain('Standup')
     const script = lastScript()
-    expect(script).toContain('delete (every event whose uid is "EVT-UID-1")')
-    expect(script).toContain('tell cal')
+    expect(script).toContain('delete (event id evId of cal)')
+    expect(script).toContain('with timeout of 20 seconds')
+    expect(script).toContain('delete theEvent')
+    expect(script).not.toContain('delete (every event whose uid')
     expect(script).not.toContain('atmFindEvent')
-    expect(script).not.toContain('delete theEvent')
+    expect(script).not.toContain('move to trash')
+    expect(script).not.toMatch(/\bremove\b/)
   })
 
   it('scopes calendar_remove to calendar_name when given', () => {
     calendarRemove({ event_id: 'EVT-UID-1', calendar_name: 'Work', confirm: true })
     const script = lastScript()
     expect(script).toContain('if (name of cal) is "Work"')
-    expect(script).toContain('delete (every event whose uid is "EVT-UID-1")')
+    expect(script).toContain('delete (event id evId of cal)')
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 
   it('does not report a failed Calendar delete as Calendar.app unreachable', () => {
@@ -585,8 +593,71 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('No event with that id was found')
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('-1728')
     expect(result.message).not.toContain('could not be reached')
     expect(result.message).not.toContain('denied Calendar access')
+    expect(result.suppressTccAdvice).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript.mock.calls[1][1]).toMatchObject({ language: 'JavaScript' })
+  })
+
+  it('falls back to EventKit when Calendar.app delete times out', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('calendarItemsWithExternalIdentifier')) return '1'
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('EventKit')
+    expect(result.message).toContain('EVT-UID-1')
+    expect(osascript).toHaveBeenCalledTimes(2)
+  })
+
+  it('surfaces raw osascript codes on calendar_remove timeout instead of TCC deny', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('ETIMEDOUT')
+    expect(result.message).toContain('not a TCC / Automation deny')
+    expect(result.message).not.toContain('denied Calendar access')
+    expect(result.suppressTccAdvice).toBe(true)
+    expect(result.diagnostics).toContain('AppleScript')
+    expect(result.diagnostics).toContain('EventKit')
+  })
+
+  it('keeps a hard Automation deny as TCC and still prints the AppleEvent code', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Calendar. (-1743)')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('denied Calendar access')
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('-1743')
+    expect(result.suppressTccAdvice).toBe(false)
+  })
+
+  it('builds an EventKit JXA delete by iCal UID and skips fallback on CALENDAR_NOT_FOUND', () => {
+    const script = buildEventKitRemoveScript('DC4AC0EF-5BF1-448C-8492-E48A95FCB492')
+    expect(script).toContain('calendarItemsWithExternalIdentifier')
+    expect(script).toContain('removeEventSpanCommitError')
+    expect(script).toContain('DC4AC0EF-5BF1-448C-8492-E48A95FCB492')
+    expect(shouldTryEventKitRemove({ ok: false, error: 'CALENDAR_NOT_FOUND' })).toBe(false)
+    expect(shouldTryEventKitRemove({ ok: false, error: 'spawnSync osascript ETIMEDOUT' })).toBe(true)
+    expect(buildRemoveEventScript('EVT-1')).toContain('DELETE_TIMEOUT')
+    const described = describeCalendarRemoveFailure(
+      'calendar_remove',
+      'delete calendar event EVT-1',
+      { ok: false, error: 'spawnSync osascript ETIMEDOUT', kind: 'tcc' },
+      { ok: false, error: 'EVENTKIT_NOT_FOUND status=3', kind: 'unknown' }
+    )
+    expect(described.message).toContain('osascript kind=tcc error=spawnSync osascript ETIMEDOUT')
+    expect(described.message).toContain('EVENTKIT_NOT_FOUND')
+    expect(described.suppressTccAdvice).toBe(true)
   })
 
   it('RSVPs with a validated response', () => {
@@ -867,6 +938,8 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('Watch the host — Allow **`node`**')
     expect(readme).toContain('not “Mail.app could not be reached”')
     expect(readme).toContain('fails closed if Mail, Messages, Contacts, or Calendar')
+    expect(readme).toContain('osascript kind=')
+    expect(readme).toContain('Calendar.app’s dictionary has **`delete` only**')
 
     // Fail-path copy must not send QA back to the privacy-list + button.
     expect(smoke).toContain('Privacy & Security > Automation')
@@ -881,6 +954,8 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('probeMailAutomation')
     expect(smoke).toContain('never touches Messages')
     expect(smoke).toContain('delete-path failure')
+    expect(smoke).toContain('osascript kind=')
+    expect(smoke).toContain('EventKit fallback')
     expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
     expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
   })
@@ -1034,5 +1109,21 @@ describe('dispatchWriteTool routing', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain('No indexer daemon is running')
     expect(result.message).toContain('apple-tools-indexer')
+  })
+
+  it('does not append TCC fallback advice when calendar_remove suppresses it', async () => {
+    const result = await dispatchWriteTool('calendar_remove', { event_id: 'x', confirm: true }, {
+      indexerMode: false,
+      probe: async () => false,
+      runLocally: () => ({
+        ok: false,
+        suppressTccAdvice: true,
+        message: 'calendar_remove failed — Calendar.app delete timed out. osascript kind=tcc error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT'
+      })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('osascript kind=tcc')
+    expect(result.message).not.toContain('No indexer daemon is running')
+    expect(result.message).not.toContain('apple-tools-indexer')
   })
 })
