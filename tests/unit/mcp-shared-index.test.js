@@ -501,9 +501,9 @@ describe('AC: regression / packaging / security', () => {
     expect(indexSrc).toContain('requireIndex("calendar")')
   })
 
-  it('package version is 1.2.1 and dependencies are unchanged', () => {
-    expect(pkg.version).toBe('1.2.1')
-    expect(lock.version).toBe('1.2.1')
+  it('package version is 2.0.0 and dependencies are unchanged', () => {
+    expect(pkg.version).toBe('2.0.0')
+    expect(lock.version).toBe('2.0.0')
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
       '@lancedb/lancedb',
       '@modelcontextprotocol/sdk',

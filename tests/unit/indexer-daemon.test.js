@@ -26,14 +26,15 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
 const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
 
-describe('package version 1.2.1', () => {
-  it('is 1.2.1 in package.json, lockfile, and startup logs', () => {
-    expect(pkg.version).toBe('1.2.1')
-    expect(lock.version).toBe('1.2.1')
-    expect(lock.packages[''].version).toBe('1.2.1')
+describe('package version 2.0.0', () => {
+  it('is 2.0.0 in package.json, lockfile, and startup logs', () => {
+    expect(pkg.version).toBe('2.0.0')
+    expect(lock.version).toBe('2.0.0')
+    expect(lock.packages[''].version).toBe('2.0.0')
     expect(indexSrc).toContain('PACKAGE_VERSION')
     expect(indexSrc).toContain('Apple Tools MCP server running (v${PACKAGE_VERSION})')
     expect(indexSrc).toContain('Apple Tools MCP indexer running (v${PACKAGE_VERSION})')
+    // The advertised version still comes from package.json, never a literal.
     expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.0["']/)
   })
 

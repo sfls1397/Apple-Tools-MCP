@@ -1,7 +1,7 @@
 {
   "name": "apple-tools-mcp",
-  "version": "1.2.1",
-  "description": "MCP server for semantic search across Apple Mail, Messages, and Calendar",
+  "version": "2.0.0",
+  "description": "MCP server for semantic search and write actions across Apple Mail, Messages, Calendar, and Contacts",
   "type": "module",
   "main": "index.js",
   "bin": {
@@ -46,6 +46,7 @@
     "contacts.js",
     "lib/",
     "scripts/audit-index.js",
+    "scripts/smoke-writes.js",
     "README.md",
     "LICENSE"
   ],
@@ -54,6 +55,7 @@
     "indexer": "node index.js --mode=indexer",
     "build-index": "node -e \"import('./indexer.js').then(i=>i.rebuildIndex()).catch(e=>{console.error(e.message);process.exit(1)})\"",
     "audit": "node scripts/audit-index.js",
+    "smoke:writes": "node scripts/smoke-writes.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
