@@ -25,9 +25,11 @@ import {
   mailMark,
   mailArchive,
   mailTrash,
-  resolveMailMessageId
+  resolveMailMessageId,
+  probeMailAutomation,
+  buildMailAutomationProbeScript
 } from '../../lib/mailWrite.js'
-import { messagesSend, validateAttachmentPath, lookupChat } from '../../lib/messagesWrite.js'
+import { messagesSend, validateAttachmentPath, lookupChat, probeMessagesAutomation, buildMessagesAutomationProbeScript } from '../../lib/messagesWrite.js'
 import {
   calendarAdd,
   calendarEdit,
@@ -35,13 +37,24 @@ import {
   calendarRsvp,
   calendarListCalendars,
   buildRecurrenceRule,
+  buildRemoveEventScript,
+  buildEventKitRemoveScript,
+  buildEventKitAddScript,
+  parseEventKitAddOutput,
+  eventKitLookupIds,
+  parseEventKitCalendarList,
+  mergeCalendarSources,
+  describeCalendarRemoveFailure,
   validateAlerts,
   defaultEndParts
 } from '../../lib/calendarWrite.js'
+import { setEventKitSession } from '../../lib/eventKitSession.js'
 import { contactsAdd, contactsEdit, contactsRemove } from '../../lib/contactsWrite.js'
 import {
   WRITE_TOOL_DEFINITIONS,
   WRITE_TOOL_NAMES,
+  WRITE_TOOL_HANDLERS,
+  SMOKE_ONLY_AUTOMATION_PROBES,
   isWriteTool,
   executeWriteToolLocally,
   dispatchWriteTool
@@ -52,6 +65,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 beforeEach(() => {
   osascript.mockReset()
   osascript.mockReturnValue('')
+  setEventKitSession(null)
 })
 
 function lastScript() {
@@ -163,6 +177,67 @@ describe('mail_send', () => {
     expect(result.message).not.toContain('secret body text here')
     expect(result.message).toContain('mail_send failed')
   })
+
+  it('reports a hung compose timeout as TCC / Automation denied, not app unavailable', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).toContain('dry_run never talks to Mail')
+    expect(result.message).not.toContain('could not be reached')
+  })
+})
+
+describe('mail_automation_probe', () => {
+  it('composes then deletes and never sends', () => {
+    const script = buildMailAutomationProbeScript()
+    expect(script).toContain('make new outgoing message')
+    expect(script).toContain('delete probe')
+    expect(script).not.toContain('send ')
+
+    const result = probeMailAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('nothing was sent')
+  })
+
+  it('maps a compose hang to Mail Automation denied', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeMailAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('mail_automation_probe failed')
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('could not be reached')
+  })
+})
+
+describe('messages_automation_probe', () => {
+  it('enumerates accounts and never sends', () => {
+    const script = buildMessagesAutomationProbeScript()
+    expect(script).toContain('tell application "Messages"')
+    expect(script).toContain('service type of acc')
+    expect(script).not.toContain('send ')
+
+    const result = probeMessagesAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('nothing was sent')
+  })
+
+  it('maps a hang to Messages Automation denied', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeMessagesAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('messages_automation_probe failed')
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('could not be reached')
+  })
 })
 
 describe('mail_draft', () => {
@@ -270,6 +345,17 @@ describe('messages_send', () => {
     expect(script).toContain('participant "+15551234567"')
     expect(script).toContain('send "On my way" to theTarget')
     expect(result.message).toContain('+15551234567')
+  })
+
+  it('reports a hung send timeout as TCC / Automation denied, not app unavailable', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = messagesSend({ to: ['+15551234567'], text: 'On my way' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).toContain('node → Messages')
+    expect(result.message).not.toContain('could not be reached')
   })
 
   it('refuses an invalid handle rather than guessing', () => {
@@ -431,12 +517,80 @@ describe('calendar_add', () => {
   })
 
   it('defaults an all-day event to the end of that day', () => {
-    osascript.mockReturnValue('EVT-ALLDAY')
+    osascript.mockReturnValue('EVT-ALLDAY<<>>EK-LOCAL-1')
     const result = calendarAdd({ calendar_name: 'Work', title: 'Offsite', start: '2026-09-21' })
     expect(result.ok).toBe(true)
+    expect(result.message).toContain('EVT-ALLDAY')
+    expect(result.message).toContain('eventkit_id: EK-LOCAL-1')
+    expect(result.message).toContain('EventKit')
     const script = lastScript()
-    expect(script).toContain('allday event:true')
-    expect(script).toContain('set endDate to atmMakeDate(2026, 9, 21, 23, 59)')
+    expect(script).toContain('saveEventSpanCommitError')
+    expect(script).toContain('var allDay = true')
+    expect(script).toContain('event.allDay = allDay')
+  })
+
+  it('creates a non-recurring event through EventKit so remove can use the same ids', () => {
+    osascript.mockReturnValue('75984151-1160-40A9-895E-D63B6C8808A8<<>>EK-SMOKE-1')
+    const result = calendarAdd({
+      calendar_name: 'Work',
+      title: 'ATM smoke',
+      start: '2026-09-21 09:00',
+      end: '2026-09-21 10:00'
+    })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('75984151-1160-40A9-895E-D63B6C8808A8')
+    expect(result.message).toContain('eventkit_id: EK-SMOKE-1')
+    expect(lastScript()).toContain('saveEventSpanCommitError')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    const addScript = buildEventKitAddScript({
+      calendarName: 'Work',
+      title: 'ATM smoke',
+      start: { year: 2026, month: 9, day: 21, hour: 9, minute: 0 },
+      end: { year: 2026, month: 9, day: 21, hour: 10, minute: 0 },
+      allDay: false,
+      location: '',
+      notes: '',
+      alerts: [10]
+    })
+    expect(addScript).toContain('calendarItemExternalIdentifier')
+    expect(addScript).toContain('eventIdentifier')
+    expect(addScript).toContain('calendarItemIdentifier')
+    expect(addScript).not.toContain('EVENTKIT_LOOKUP_FAILED')
+    expect(addScript).toContain('defaultCalendarForNewEvents')
+    expect(addScript).toContain('ObjC.unwrap')
+    expect(addScript).toContain('calendarIdentifier')
+    expect(addScript).toContain('writables.length === 1')
+    expect(addScript).toContain('function jsString')
+    expect(parseEventKitAddOutput('UID<<>>LOCAL<<>>Calendar')).toEqual({
+      eventId: 'UID',
+      eventKitId: 'LOCAL',
+      calendar: 'Calendar'
+    })
+    expect(parseEventKitAddOutput('UID<<>>CAL:EVT<<>>Calendar<<>>ITEM')).toEqual({
+      eventId: 'UID',
+      eventKitId: 'CAL:EVT',
+      calendar: 'Calendar'
+    })
+  })
+
+  it('does not fall back to Calendar.app when EventKit create fails', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('EVENTKIT_SAVE_FAILED: boom')
+    })
+    const result = calendarAdd({
+      calendar_name: 'Work',
+      title: 'x',
+      start: '2026-09-21 09:00',
+      end: '2026-09-21 10:00'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('does not fall back to Calendar.app')
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('EVENTKIT_SAVE_FAILED')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    expect(osascript.mock.calls[0][0]).not.toContain('make new event')
   })
 
   it('requires a calendar name so events do not land on the default', () => {
@@ -478,17 +632,232 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(result.message).toContain('event_id is required')
   })
 
+  it('creates, edits, and removes through the EventKit session without re-query', () => {
+    const calls = []
+    setEventKitSession({
+      request(cmd) {
+        calls.push(cmd)
+        if (cmd.op === 'create') return { ok: true, output: '0801367E-5F98-477D-873D-C6ED8CD662D8<<>>9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8<<>>Calendar<<>>368D05E6-2D88-4800-8AE7-C40248D231AC' }
+        return { ok: true, output: '1' }
+      },
+      close() {}
+    })
+    const added = calendarAdd({
+      calendar_name: 'Calendar',
+      title: 'ATM smoke',
+      start: '2026-09-21 09:00',
+      end: '2026-09-21 10:00'
+    })
+    expect(added.ok).toBe(true)
+    expect(added.message).toContain('via: EventKit')
+    expect(added.message).toContain('eventkit_id: 9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8')
+    expect(osascript).not.toHaveBeenCalled()
+
+    const edited = calendarEdit({
+      event_id: '0801367E-5F98-477D-873D-C6ED8CD662D8',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8',
+      title: 'Edited'
+    })
+    expect(edited.ok).toBe(true)
+    expect(edited.message).toContain('EventKit')
+    expect(osascript).not.toHaveBeenCalled()
+
+    const removed = calendarRemove({
+      event_id: '0801367E-5F98-477D-873D-C6ED8CD662D8',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8',
+      confirm: true
+    })
+    expect(removed.ok).toBe(true)
+    expect(removed.message).toContain('EventKit')
+    expect(osascript).not.toHaveBeenCalled()
+    expect(calls.map((c) => c.op)).toEqual(['create', 'update', 'remove'])
+    expect(calls[1].ids).toContain('9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8')
+    expect(calls[2].ids).toContain('0801367E-5F98-477D-873D-C6ED8CD662D8')
+  })
+
+  it('edits via EventKit when eventkit_id is present', () => {
+    osascript.mockReturnValue('1')
+    const result = calendarEdit({
+      event_id: '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      title: 'Edited'
+    })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('EventKit')
+    expect(lastScript()).toContain('findEventByIds')
+    expect(lastScript()).toContain('9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B')
+    expect(lastScript()).toContain('7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    expect(eventKitLookupIds(
+      '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B'
+    )).toEqual([
+      '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B'
+    ])
+  })
+
+  it('does not hang in Calendar.app when eventkit_id edit fails', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('EVENTKIT_NOT_FOUND status=4 writeOnly tried=9B7A:7F95')
+    })
+    const result = calendarEdit({
+      event_id: '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      title: 'Edited'
+    })
+    expect(result.ok).toBe(false)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    expect(result.message).toContain('skipped')
+    expect(result.message).not.toContain('denied Calendar access')
+    expect(result.message).not.toContain('atmFindEvent')
+  })
+
+  it('does not hang in Calendar.app when eventkit_id remove fails', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('EVENTKIT_NOT_FOUND status=4 writeOnly tried=9B7A:7F95')
+    })
+    const result = calendarRemove({
+      event_id: '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      confirm: true
+    })
+    expect(result.ok).toBe(false)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('skipped')
+    expect(result.message).not.toContain('denied Calendar access')
+  })
+
   it('never removes an event without confirm', () => {
     const blocked = calendarRemove({ event_id: 'EVT-UID-1' })
     expect(blocked.planned).toBe(true)
     expect(blocked.message).toContain('CONFIRMATION REQUIRED')
     expect(osascript).not.toHaveBeenCalled()
 
-    osascript.mockReturnValue('Standup')
-    const confirmed = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    osascript.mockReturnValue('1')
+    const confirmed = calendarRemove({ event_id: 'EVT-UID-1', eventkit_id: 'EK-1', confirm: true })
     expect(confirmed.ok).toBe(true)
-    expect(confirmed.message).toContain('Standup')
-    expect(lastScript()).toContain('delete theEvent')
+    expect(confirmed.message).toContain('EventKit')
+    const script = lastScript()
+    expect(script).toContain('eventWithIdentifier')
+    expect(script).toContain('calendarItemWithIdentifier')
+    expect(script).toContain('calendarItemsWithExternalIdentifier')
+    expect(script).toContain('removeEventSpanCommitError')
+    expect(script).toContain('EK-1')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+  })
+
+  it('falls back to Calendar.app delete when EventKit cannot see the event', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('calendarItemsWithExternalIdentifier')) {
+        throw new Error('execution error: Error: Error: EVENTKIT_NOT_FOUND status=4 (-2700)')
+      }
+      return 'Standup'
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', calendar_name: 'Work', confirm: true })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('Standup')
+    expect(osascript).toHaveBeenCalledTimes(2)
+    const script = osascript.mock.calls[1][0]
+    expect(script).toContain('if (name of cal) is "Work"')
+    expect(script).toContain('delete (event id evId of cal)')
+    expect(script).toContain('with timeout of 20 seconds')
+    expect(script).not.toContain('delete (every event whose uid')
+    expect(script).not.toContain('move to trash')
+  })
+
+  it('does not report a failed Calendar delete as Calendar.app unreachable', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Calendar got an error: Can\'t get event id "EVT-UID-1" of calendar "Work". (-1728)')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('No event with that id was found')
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('-1728')
+    expect(result.message).not.toContain('could not be reached')
+    expect(result.message).not.toContain('denied Calendar access')
+    expect(result.suppressTccAdvice).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+  })
+
+  it('removes via EventKit first so an iCloud Calendar.app hang is skipped', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('calendarItemsWithExternalIdentifier')) return '1'
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('EventKit')
+    expect(result.message).toContain('EVT-UID-1')
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces raw osascript codes on calendar_remove timeout instead of TCC deny', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('calendarItemsWithExternalIdentifier')) {
+        throw new Error('execution error: Error: Error: EVENTKIT_NOT_FOUND status=4 (-2700)')
+      }
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('osascript kind=timeout')
+    expect(result.message).toContain('ETIMEDOUT')
+    expect(result.message).toContain('EVENTKIT_NOT_FOUND')
+    expect(result.message).toContain('-2700')
+    expect(result.message).toContain('not a TCC / Automation deny')
+    expect(result.message).not.toContain('denied Calendar access')
+    expect(result.suppressTccAdvice).toBe(true)
+    expect(result.diagnostics).toContain('AppleScript')
+    expect(result.diagnostics).toContain('EventKit')
+  })
+
+  it('keeps a hard Automation deny as TCC and still prints the AppleEvent code', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Calendar. (-1743)')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('denied Calendar access')
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('-1743')
+    expect(result.suppressTccAdvice).toBe(false)
+  })
+
+  it('looks up EventKit by eventIdentifier and externalIdentifier', () => {
+    const script = buildEventKitRemoveScript('DC4AC0EF-5BF1-448C-8492-E48A95FCB492', { eventKitId: 'EK-LOCAL' })
+    expect(script).toContain('calendarItemsWithExternalIdentifier')
+    expect(script).toContain('eventWithIdentifier')
+    expect(script).toContain('calendarItemWithIdentifier')
+    expect(script).toContain('findEventByIds')
+    expect(script).toContain('removeEventSpanCommitError')
+    expect(script).toContain('DC4AC0EF-5BF1-448C-8492-E48A95FCB492')
+    expect(script).toContain('EK-LOCAL')
+    expect(script).toContain('writeOnly')
+    expect(buildRemoveEventScript('EVT-1')).toContain('DELETE_TIMEOUT')
+    const described = describeCalendarRemoveFailure(
+      'calendar_remove',
+      'delete calendar event EVT-1',
+      { ok: false, error: 'spawnSync osascript ETIMEDOUT', kind: 'timeout' },
+      { ok: false, error: 'EVENTKIT_NOT_FOUND status=4 writeOnly (-2700)', kind: 'not_found' }
+    )
+    expect(described.message).toContain('osascript kind=timeout error=spawnSync osascript ETIMEDOUT')
+    expect(described.message).toContain('EVENTKIT_NOT_FOUND')
+    expect(described.message).not.toContain('denied Calendar access')
+    expect(described.suppressTccAdvice).toBe(true)
+    expect(parseEventKitCalendarList('Home<<>>yes<<>>yes<<>>0<<>>On My Mac')).toEqual([
+      { name: 'Home', writable: true, local: true, sourceType: 0, source: 'On My Mac' }
+    ])
+    expect(mergeCalendarSources(
+      [{ name: 'Home', writable: true }],
+      [{ name: 'Home', writable: true, local: true, sourceType: 0, source: 'On My Mac' }]
+    )[0].local).toBe(true)
   })
 
   it('RSVPs with a validated response', () => {
@@ -596,6 +965,14 @@ describe('write tool definitions', () => {
     const definedNames = WRITE_TOOL_DEFINITIONS.map((t) => t.name)
     expect(definedNames.sort()).toEqual([...WRITE_TOOL_NAMES].sort())
     expect(definedNames.some((n) => n.includes('reminder'))).toBe(false)
+    expect(definedNames).not.toContain('mail_automation_probe')
+    expect(definedNames).not.toContain('messages_automation_probe')
+    expect(SMOKE_ONLY_AUTOMATION_PROBES).toContain('mail_automation_probe')
+    expect(SMOKE_ONLY_AUTOMATION_PROBES).toContain('messages_automation_probe')
+    expect(isWriteTool('mail_automation_probe')).toBe(false)
+    expect(isWriteTool('messages_automation_probe')).toBe(false)
+    expect(Object.keys(WRITE_TOOL_HANDLERS)).not.toContain('mail_automation_probe')
+    expect(Object.keys(WRITE_TOOL_HANDLERS)).not.toContain('messages_automation_probe')
   })
 
   it('uses snake_case names and object schemas', () => {
@@ -621,6 +998,19 @@ describe('write tool definitions', () => {
     expect(isWriteTool('mail_send')).toBe(true)
     expect(isWriteTool('mail_search')).toBe(false)
     expect(executeWriteToolLocally('reminders_add', {}).ok).toBe(false)
+  })
+
+  it('keeps Automation probes off the MCP CallTool write surface', async () => {
+    expect(isWriteTool('mail_automation_probe')).toBe(false)
+    expect(isWriteTool('messages_automation_probe')).toBe(false)
+    expect(executeWriteToolLocally('mail_automation_probe', {}).message).toContain('Unknown write tool')
+    expect(executeWriteToolLocally('messages_automation_probe', {}).unsupported).toBe(true)
+    const mail = await dispatchWriteTool('mail_automation_probe', {})
+    const messages = await dispatchWriteTool('messages_automation_probe', {})
+    expect(mail.ok).toBe(false)
+    expect(mail.message).toContain('Unknown write tool')
+    expect(messages.ok).toBe(false)
+    expect(messages.message).toContain('Unknown write tool')
   })
 
   it('never ships a Reminders tool', () => {
@@ -713,7 +1103,9 @@ describe('write smoke script routing (ship gate)', () => {
 
     expect(source).toContain('no creates, edits, or deletes')
     expect(source).toContain('live Calendar.app query')
+    expect(source).toContain('make new outgoing message')
     expect(readme).toContain('live Calendar.app query')
+    expect(readme).toContain('make new outgoing message')
   })
 
   it('documents Mini Automation grants in the README, not a Contacts/Calendars + button', () => {
@@ -736,9 +1128,75 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('re-arms the Automation prompt so you can Allow **`node`** again')
     expect(readme).not.toMatch(/Grok|anysphere|\bsand\b/i)
 
+    // Mail + Messages are the same first-run Automation pass as Contacts/Calendar.
+    expect(readme).toContain('One-pass first-run')
+    expect(readme).toContain('control **Mail**, **Messages**, **Contacts**, and **Calendar**')
+    expect(readme).toContain('node → Mail')
+    expect(readme).toContain('node → Messages')
+    expect(readme).toContain('dry_run never talks to Mail')
+    expect(readme).toContain('Automation denied')
+    expect(readme).toContain('Watch the host — Allow **`node`**')
+    expect(readme).toContain('not “Mail.app could not be reached”')
+    expect(readme).toContain('fails closed if Mail, Messages, Contacts, or Calendar')
+    expect(readme).toContain('osascript kind=')
+    expect(readme).toContain('Calendar.app’s dictionary has **`delete` only**')
+
     // Fail-path copy must not send QA back to the privacy-list + button.
     expect(smoke).toContain('Privacy & Security > Automation')
     expect(smoke).toContain('Do not add node via +')
+    expect(smoke).toContain('Mail.app')
+    expect(smoke).toContain('Messages.app')
+    expect(smoke).toContain('TCC / Automation denied')
+    expect(smoke).toContain('make new outgoing message')
+    expect(smoke).toContain('mail_send')
+    expect(smoke).toContain('never touches Mail')
+    expect(smoke).toContain('probeMessagesAutomation')
+    expect(smoke).toContain('probeMailAutomation')
+    expect(smoke).toContain('never touches Messages')
+    expect(smoke).toContain('delete-path failure')
+    expect(smoke).toContain('osascript kind=')
+    expect(smoke).toContain('EventKit fallback')
+    expect(smoke).toContain('createdViaEventKit')
+    expect(smoke).toContain('via: EventKit')
+    expect(smoke).toContain('eventkit_id: eventKitId')
+    expect(smoke).toMatch(/run\("calendar_edit"[\s\S]*eventkit_id:/)
+    expect(smoke).toMatch(/run\("calendar_remove"[\s\S]*eventkit_id:/)
+    expect(readme).toContain('optional `eventkit_id` from add')
+    expect(readme).toContain('cannot re-query')
+    expect(readme).toContain('long-lived EventKit osascript session')
+    expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
+    expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
+  })
+
+  it('plans a live Mail compose so a TCC deny fails setup, not production', async () => {
+    const {
+      mailProbeSeverity,
+      messagesProbeSeverity,
+      planMailSmokeTouch,
+      planMessagesSmokeTouch,
+      mailDraftSmokeArgs
+    } = await import('../../scripts/smoke-writes.js')
+
+    expect(mailProbeSeverity(false)).toBe('warning')
+    expect(mailProbeSeverity(true)).toBe('error')
+
+    expect(planMailSmokeTouch({ apply: false, daemonPath: false })).toMatchObject({
+      useLocalHelper: true,
+      useMailDraft: false
+    })
+    expect(planMailSmokeTouch({ apply: true, daemonPath: true })).toMatchObject({
+      useLocalHelper: true,
+      useMailDraft: true
+    })
+    expect(planMailSmokeTouch({ apply: false, daemonPath: false }).reason).toContain('dry_run never touches Mail')
+
+    expect(messagesProbeSeverity(true)).toBe('error')
+    expect(planMessagesSmokeTouch().useLocalHelper).toBe(true)
+    expect(planMessagesSmokeTouch().reason).toContain('never touches Messages')
+
+    const draft = mailDraftSmokeArgs('20260920143000')
+    expect(draft.subject).toContain('ATM Mail Automation probe')
+    expect(draft.to[0]).toContain('atm-mail-probe-')
   })
 
   it('dispatches through the production write path, not the write modules directly', () => {
@@ -770,6 +1228,19 @@ describe('write smoke script (QA prove-out helpers)', () => {
     expect(extractEventId('calendar_add: event created. event_id: EVT-UID-1 calendar: Work'))
       .toBe('EVT-UID-1')
     expect(extractEventId('calendar_add failed — ...')).toBeNull()
+    const { extractEventKitId, pickSmokeCalendar } = await import('../../scripts/smoke-writes.js')
+    expect(extractEventKitId('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit'))
+      .toBe('EK-1')
+    expect(extractEventKitId('eventkit_id: 9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B calendar: Calendar'))
+      .toBe('9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B')
+    const { createdViaEventKit } = await import('../../scripts/smoke-writes.js')
+    expect(createdViaEventKit('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit')).toBe(true)
+    expect(createdViaEventKit('calendar_add: event created. event_id: EVT-1 calendar: Calendar')).toBe(false)
+    expect(pickSmokeCalendar([
+      { name: 'iCloud', writable: true, local: false },
+      { name: 'Home', writable: true, local: true }
+    ], null)).toEqual({ name: 'Home', reason: 'On My Mac (EventKit sourceType local)' })
+    expect(pickSmokeCalendar([{ name: 'Work', writable: true }], 'Work').name).toBe('Work')
   })
 
   it('schedules the smoke event far enough out to miss real appointments', async () => {
@@ -859,5 +1330,21 @@ describe('dispatchWriteTool routing', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain('No indexer daemon is running')
     expect(result.message).toContain('apple-tools-indexer')
+  })
+
+  it('does not append TCC fallback advice when calendar_remove suppresses it', async () => {
+    const result = await dispatchWriteTool('calendar_remove', { event_id: 'x', confirm: true }, {
+      indexerMode: false,
+      probe: async () => false,
+      runLocally: () => ({
+        ok: false,
+        suppressTccAdvice: true,
+        message: 'calendar_remove failed — Calendar.app delete timed out. osascript kind=timeout error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT'
+      })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('osascript kind=timeout')
+    expect(result.message).not.toContain('No indexer daemon is running')
+    expect(result.message).not.toContain('apple-tools-indexer')
   })
 })

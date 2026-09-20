@@ -30,6 +30,9 @@ import {
 import {
   classifyAppleScriptError,
   isTccDenial,
+  isHardTccDenial,
+  formatOsascriptDiagnostic,
+  extractAppleEventCodes,
   parseWriteDateTime,
   asString,
   asInteger,
@@ -37,6 +40,8 @@ import {
   appBundleInstalled,
   CONTACTS_TCC_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
+  MAIL_TCC_GUIDANCE,
+  MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE,
   TCC_GUIDANCE
 } from '../../lib/appleScript.js'
@@ -181,6 +186,9 @@ describe('write routing policy', () => {
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Full Disk Access')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Automation')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Do not add node via +')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Mail.app')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Messages.app')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('TCC / Automation denied')
   })
 })
 
@@ -196,6 +204,15 @@ describe('AppleScript error classification', () => {
     expect(classifyAppleScriptError('script error: EVENT_NOT_FOUND')).toBe('not_found')
     expect(classifyAppleScriptError("Mail got an error: Application isn't running. (-600)")).toBe('app_unavailable')
     expect(classifyAppleScriptError('weird failure')).toBe('unknown')
+    // Detached Calendar delete specifier — not a missing Calendar.app.
+    expect(classifyAppleScriptError(
+      'Calendar got an error: Can\'t get event id "EVT-1" of calendar "Work". (-1728)',
+      { appInstalled: true }
+    )).toBe('not_found')
+    expect(classifyAppleScriptError(
+      'Contacts got an error: Can\'t get application "Contacts". (-1728)',
+      { appInstalled: true }
+    )).toBe('attribution')
   })
 })
 
@@ -221,7 +238,38 @@ describe('TCC guidance separates reads from writes', () => {
   it('points Contacts and Calendar denials at the daemon', () => {
     expect(CONTACTS_TCC_GUIDANCE).toContain('apple-tools-indexer')
     expect(CALENDAR_TCC_GUIDANCE).toContain('apple-tools-indexer')
-    expect(tccGuidanceFor('mail')).toBe(TCC_GUIDANCE)
+    expect(tccGuidanceFor('mail')).toBe(MAIL_TCC_GUIDANCE)
+    expect(tccGuidanceFor('messages')).toBe(MESSAGES_TCC_GUIDANCE)
+    expect(tccGuidanceFor('other')).toBe(TCC_GUIDANCE)
+  })
+
+  it('treats a hung Mail compose timeout as TCC / Automation denied, not a missing app', () => {
+    // Mini: make new outgoing message blocks until spawnSync times out when
+    // node → Mail Automation is denied. The error string contains
+    // "spawnSync osascript" but must not be classified as ENOENT.
+    expect(classifyAppleScriptError('spawnSync osascript ETIMEDOUT')).toBe('timeout')
+    expect(classifyAppleScriptError('Error: spawnSync osascript ETIMEDOUT')).toBe('timeout')
+    expect(classifyAppleScriptError('Mail got an error: AppleEvent timed out. (-1712)')).toBe('timeout')
+    expect(isTccDenial('spawnSync osascript ETIMEDOUT')).toBe(false)
+    expect(isTccDenial('AppleEvent timed out. (-1712)')).toBe(false)
+    expect(MAIL_TCC_GUIDANCE).toContain('hang or timeout')
+    expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
+    expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
+    expect(MESSAGES_TCC_GUIDANCE).toContain('node → Messages')
+  })
+
+  it('does not treat a Calendar delete timeout as a hard TCC deny', () => {
+    expect(isHardTccDenial('spawnSync osascript ETIMEDOUT')).toBe(false)
+    expect(isHardTccDenial('AppleEvent timed out. (-1712)')).toBe(false)
+    expect(isHardTccDenial('Not authorized to send Apple events to Calendar. (-1743)')).toBe(true)
+    expect(extractAppleEventCodes('spawnSync osascript ETIMEDOUT; osascript stderr: -1712')).toEqual([
+      '-1712',
+      'ETIMEDOUT'
+    ])
+    expect(formatOsascriptDiagnostic({
+      kind: 'timeout',
+      error: 'spawnSync osascript ETIMEDOUT'
+    })).toBe('osascript kind=timeout error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT')
   })
 
   it('treats a missing osascript as an unavailable app, not a privacy denial', () => {

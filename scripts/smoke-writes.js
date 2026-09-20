@@ -2,13 +2,21 @@
 /**
  * Write-tool smoke test for QA prove-out on a Node host (Mac Mini / LaunchAgent).
  *
- * Covers both privacy classes that gate this package's writes:
+ * Covers the Automation / privacy classes that gate this package's writes:
+ * - Mail compose (Automation → Mail.app). dry_run never talks to Mail, so
+ *   this step runs a real `make new outgoing message` (then discards it).
+ *   A hang or timeout is TCC / Automation denied, not "Mail.app missing".
+ * - Messages account/service lookup (Automation → Messages.app). Nothing
+ *   is sent. A deny fails --apply the same way Mail does.
  * - Contacts CRUD (AddressBook class, via Contacts.app)
  * - Calendar CRUD (calendars class, via Calendar.app)
  *
- * Both must pass on the Node host, which is the ship gate. Both are expected
- * to fail under a host app that holds neither entitlement - that is a
- * documented host limitation, not a package failure.
+ * Mail, Messages, Contacts, and Calendar must all pass on the Node host —
+ * that is the ship gate. A missing grant for any one of those four apps
+ * fails --apply. Contacts and Calendar CRUD are expected to fail under a
+ * host app that holds neither entitlement - that is a documented host
+ * limitation, not a package failure. Mail and Messages are separate Apple
+ * Events targets: a Contacts/Calendar grant does not include them.
  *
  * Default is a dry run: no contact or event is created, edited, or deleted.
  * It is not a no-op, though: it reads contacts from the AddressBook database
@@ -32,6 +40,8 @@
 import { loadContacts, getContactStats } from "../contacts.js";
 import { probeSocket, defaultSocketPath } from "../lib/writeBridge.js";
 import { dispatchWriteTool } from "../lib/writeTools.js";
+import { probeMailAutomation } from "../lib/mailWrite.js";
+import { probeMessagesAutomation } from "../lib/messagesWrite.js";
 import { isIndexerMode } from "../lib/processMode.js";
 
 export function parseSmokeArgs(argv = []) {
@@ -92,6 +102,37 @@ export function extractEventId(message) {
   return match ? match[1] : null;
 }
 
+export function extractEventKitId(message) {
+  const match = String(message || "").match(/eventkit_id:\s*(\S+)/);
+  if (!match) return null;
+  return match[1].replace(/[.,;]+$/, "");
+}
+
+export function createdViaEventKit(message) {
+  const text = String(message || "");
+  return /via:\s*EventKit\b/i.test(text) && Boolean(extractEventKitId(text));
+}
+
+/**
+ * Prefer an On My Mac calendar so Calendar.app delete is reliable if EventKit
+ * remove still misses. EventKit add/remove is the primary path on iCloud
+ * (writeOnly can delete events it created). An explicit --calendar= wins.
+ */
+export function pickSmokeCalendar(calendars, explicitName) {
+  if (explicitName) {
+    return { name: explicitName, reason: `--calendar=${explicitName}` };
+  }
+  const writable = (calendars || []).filter((c) => c.writable);
+  const local = writable.filter((c) => c.local);
+  if (local[0]) {
+    return { name: local[0].name, reason: "On My Mac (EventKit sourceType local)" };
+  }
+  if (writable[0]) {
+    return { name: writable[0].name, reason: "first writable calendar (no local calendar listed)" };
+  }
+  return { name: "Calendar", reason: "fallback name Calendar" };
+}
+
 /**
  * Listing calendars is a live Calendar.app call even during a dry run, so a
  * refusal there says something about this host - but it is not a failure of
@@ -102,6 +143,67 @@ export function extractEventId(message) {
  */
 export function calendarListSeverity(apply) {
   return apply ? "error" : "warning";
+}
+
+/**
+ * Mail compose is a live Apple Events call (dry_run of mail_send never
+ * touches Mail). On --apply a deny fails the ship gate. On a dry run it is
+ * advisory, like calendar_list_calendars, so a refused prompt is WARN.
+ *
+ * @returns {"error"|"warning"}
+ */
+export function mailProbeSeverity(apply) {
+  return apply ? "error" : "warning";
+}
+
+export function messagesProbeSeverity(apply) {
+  return mailProbeSeverity(apply);
+}
+
+/**
+ * How smoke exercises Mail Apple Events.
+ *
+ * The compose-and-discard helper is smoke-script-only — not an MCP write
+ * tool. On --apply with the write bridge up, also run public mail_draft so
+ * launchd-owned node is fail-closed for Mail (same make new outgoing message
+ * verb; nothing is sent).
+ *
+ * @returns {{ useLocalHelper: boolean, useMailDraft: boolean, reason: string }}
+ */
+export function planMailSmokeTouch({ apply, daemonPath }) {
+  if (apply && daemonPath) {
+    return {
+      useLocalHelper: true,
+      useMailDraft: true,
+      reason: "local compose-and-discard helper plus mail_draft via the write bridge (live Mail Apple Events; nothing is sent)"
+    };
+  }
+  return {
+    useLocalHelper: true,
+    useMailDraft: false,
+    reason: "smoke-script compose-and-discard helper (live Mail Apple Events; nothing is sent). mail_send dry_run never touches Mail."
+  };
+}
+
+/**
+ * How smoke exercises Messages Apple Events.
+ * Smoke-script-only helper; this gate never sends and is not an MCP tool.
+ *
+ * @returns {{ useLocalHelper: boolean, reason: string }}
+ */
+export function planMessagesSmokeTouch() {
+  return {
+    useLocalHelper: true,
+    reason: "smoke-script Messages account lookup (live Apple Events; nothing is sent). messages_send dry_run never touches Messages."
+  };
+}
+
+export function mailDraftSmokeArgs(stamp) {
+  return {
+    to: [`atm-mail-probe-${stamp}@example.com`],
+    subject: `ATM Mail Automation probe ${stamp}`,
+    body: "Created by apple-tools-mcp smoke test; safe to delete from Drafts."
+  };
 }
 
 /**
@@ -146,7 +248,7 @@ async function main() {
   console.log("apple-tools-mcp write smoke test");
   console.log("=".repeat(60));
   line("Mode:", apply
-    ? "APPLY (will change Contacts and Calendar)"
+    ? "APPLY (will change Contacts and Calendar; Mail compose is live, nothing is sent)"
     : "DRY RUN (no creates, edits, or deletes)");
   line("Process:", indexerMode ? "indexer daemon" : "plain node / stdio");
   line("Write bridge:", bridgeUp ? `listening at ${socketPath}` : `not listening (${socketPath})`);
@@ -162,13 +264,18 @@ async function main() {
     "\nTCC note: macOS attributes this work to the process responsible for it.\n" +
     "Contact reads use sqlite + Full Disk Access; the CRUD steps use Contacts.app\n" +
     "and Calendar.app, gated by the AddressBook and calendars privacy classes.\n" +
+    "Mail compose is a separate Automation target (node → Mail.app). A hang or\n" +
+    "timeout there is TCC / Automation denied, not Mail.app missing.\n" +
     `Writes take the same route production MCP clients take: ${route.reason}.`
   );
   if (!apply) {
     console.log(
-      "Dry run: nothing is created, edited, or deleted. calendar_list_calendars\n" +
+      "Dry run: no creates, edits, or deletes for Contacts/Calendar. calendar_list_calendars\n" +
       "still runs for real - it is a live Calendar.app query and a TCC touch -\n" +
-      "so a denial there is reported as a warning, not a failure."
+      "so a denial there is reported as a warning, not a failure.\n" +
+      "The Mail step also runs for real (make new outgoing message) because mail_send\n" +
+      "dry_run never touches Mail. A Mail deny is TCC / Automation denied; on a dry\n" +
+      "run it is a warning, on --apply it fails the ship gate."
     );
   }
 
@@ -191,6 +298,42 @@ async function main() {
   const stamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
   const common = apply ? { confirm: true } : { dry_run: true };
   const results = [];
+
+  // Mail first so first-run Allow includes Mail in the same pass as Contacts/Calendar.
+  // Helpers are smoke-script-only — not MCP write tools. mail_send dry_run never talks to Mail.
+  console.log("\n--- Mail Automation (Mail.app compose / Apple Events) ---");
+  if (!apply) {
+    console.log("  (live make new outgoing message even on a dry run; mail_send dry_run never touches Mail)");
+  }
+
+  const mailPlan = planMailSmokeTouch({ apply, daemonPath: route.path === "daemon" });
+  const mailSeverity = mailProbeSeverity(apply);
+  const mailHelperResult = probeMailAutomation();
+  if (mailHelperResult.ok === false && mailSeverity === "warning") {
+    step("mail Automation compose", mailHelperResult, "warning");
+    console.log("  Warning only: mail_send dry_run never touches Mail. --apply fails closed if Mail Automation is still denied.");
+  } else {
+    results.push(step("mail Automation compose", mailHelperResult, mailSeverity));
+  }
+  if (mailPlan.useMailDraft) {
+    console.log(`  ${mailPlan.reason}`);
+    results.push(step("mail_draft (daemon Mail Automation)", await run("mail_draft", mailDraftSmokeArgs(stamp))));
+  }
+
+  console.log("\n--- Messages Automation (Messages.app accounts / Apple Events) ---");
+  if (!apply) {
+    console.log("  (live Messages account lookup even on a dry run; messages_send dry_run never touches Messages; nothing is sent)");
+  }
+
+  const messagesSeverity = messagesProbeSeverity(apply);
+  const messagesResult = probeMessagesAutomation();
+
+  if (messagesResult.ok === false && messagesSeverity === "warning") {
+    step("messages Automation lookup", messagesResult, "warning");
+    console.log("  Warning only: messages_send dry_run never touches Messages. --apply fails closed if Messages Automation is still denied.");
+  } else {
+    results.push(step("messages Automation lookup", messagesResult, messagesSeverity));
+  }
 
   console.log("\n--- Contacts CRUD (Contacts.app / AddressBook privacy class) ---");
   const created = step("contacts_add", await run("contacts_add", {
@@ -240,11 +383,12 @@ async function main() {
   }
 
   const writable = (calendars.calendars || []).filter((c) => c.writable);
-  const targetCalendar = calendar || (writable[0] && writable[0].name) || "Calendar";
+  const picked = pickSmokeCalendar(calendars.calendars || [], calendar);
+  const targetCalendar = picked.name;
   if (calendar && writable.length > 0 && !writable.some((c) => c.name === calendar)) {
     console.log(`  Warning: --calendar=${calendar} is not in the writable list; trying it anyway.`);
   }
-  line("  Target calendar:", targetCalendar);
+  line("  Target calendar:", `${targetCalendar} (${picked.reason})`);
 
   const window = smokeEventWindow();
   const eventCreated = step("calendar_add", await run("calendar_add", {
@@ -260,12 +404,19 @@ async function main() {
 
   if (eventCreated.ok !== false) {
     const eventId = apply ? extractEventId(eventCreated.message) : "ATM-SMOKE-EVENT-UID";
-    if (apply && !eventId) {
+    const extractedKitId = apply ? extractEventKitId(eventCreated.message) : "EK-SMOKE";
+    const eventKitId = extractedKitId || (eventId && eventId.includes(":") ? eventId : null);
+    if (apply && !createdViaEventKit(eventCreated.message)) {
+      console.log("  calendar_add did not print via: EventKit and eventkit_id.");
+      console.log("  Ship-gate refuses a Calendar.app-only create: writeOnly EventKit cannot delete those events, and Calendar.app delete hangs.");
+      results.push({ ok: false, message: "calendar_add ship-gate requires via: EventKit and eventkit_id" });
+    } else if (apply && !eventId) {
       console.log("  calendar_add reported success but returned no event id; skipping edit/delete.");
       results.push({ ok: false });
     } else {
       results.push(step("calendar_edit", await run("calendar_edit", {
         event_id: eventId,
+        eventkit_id: eventKitId || undefined,
         title: `ATM smoke test ${stamp} (edited)`,
         ...common
       })));
@@ -273,10 +424,25 @@ async function main() {
       if (apply && keep) {
         console.log(`  Left event ${eventId} in place (--keep). Delete it when you are done.`);
       } else {
-        const removed = step("calendar_remove", await run("calendar_remove", { event_id: eventId, ...common }));
+        const removed = step("calendar_remove", await run("calendar_remove", {
+          event_id: eventId,
+          eventkit_id: eventKitId || undefined,
+          calendar_name: targetCalendar,
+          ...common
+        }));
         results.push(removed);
         if (apply && removed.ok === false) {
-          console.log(`  Created ${eventId} but could not delete it. Remove it in Calendar.app.`);
+          console.log(`  Created ${eventId} on ${targetCalendar} but could not delete it.`);
+          console.log("  add/edit succeeded, so this is a delete-path failure, not missing Calendar Automation.");
+          console.log("  Same write-bridge RPC as add/edit; Calendar.app has no remove/move-to-trash (delete + EventKit fallback).");
+          if (removed.diagnostics) {
+            console.log(`  ${removed.diagnostics}`);
+          } else {
+            const rawLine = String(removed.message || "").match(/osascript kind=\S+ error=.*/);
+            if (rawLine) console.log(`  ${rawLine[0]}`);
+          }
+          console.log("  Paste the osascript kind=/error= line if asking for another tip.");
+          console.log("  Remove the leftover event in Calendar.app.");
         }
       }
     }
@@ -293,14 +459,16 @@ async function main() {
     } else {
       console.log("These writes ran inside the indexer daemon, so this is a real gate failure:");
       console.log("grant the daemon's node binary Full Disk Access (reads) and Allow node in");
-      console.log("System Settings > Privacy & Security > Automation for Contacts.app and");
-      console.log("Calendar.app. Do not add node via + in the Contacts or Calendars privacy lists.");
+      console.log("System Settings > Privacy & Security > Automation for Mail.app, Messages.app,");
+      console.log("Contacts.app, and Calendar.app. A hang or timeout on Mail compose is TCC /");
+      console.log("Automation denied, not Mail.app missing. Do not add node via + in the");
+      console.log("Contacts or Calendars privacy lists.");
     }
     process.exitCode = 1;
   } else if (apply) {
-    console.log(`Result: PASS - Contacts and Calendar CRUD both work (${route.path === "daemon" ? "via the write bridge" : "in this process"}).`);
+    console.log(`Result: PASS - Mail, Messages, Contacts, and Calendar Automation all work (${route.path === "daemon" ? "via the write bridge" : "in this process"}).`);
   } else {
-    console.log("Result: PASS - dry run only. Re-run with --apply to prove real CRUD.");
+    console.log("Result: PASS - dry run only. Re-run with --apply to prove real CRUD and fail-closed Mail/Messages/Contacts/Calendar Automation.");
   }
 }
 
