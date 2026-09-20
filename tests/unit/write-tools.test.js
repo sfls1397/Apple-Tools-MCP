@@ -491,10 +491,13 @@ describe('mail Sent verify helpers', () => {
     expect(byReply).toContain('In-Reply-To:')
     expect(byReply).toContain('<abc@example.com>')
     expect(byReply).toContain('"Re: "')
+    expect(byReply).toContain('subj is ("Re: " & origSubject)')
+    expect(byReply).toContain('The original, not the reply we just sent')
     expect(byReply).toContain('atmFindMessage')
     expect(byReply).toContain('sent mailbox')
     expect(byReply).toContain('outgoing mailbox')
     expect(byReply).toContain('source of msg')
+    expect(byReply).not.toContain('subj contains origSubject')
     expect(byReply).not.toContain('Begin forwarded message')
 
     const bySubject = buildFindSentBySubjectScript('Status update')
@@ -508,7 +511,12 @@ describe('mail Sent verify helpers', () => {
     expect(byForward).toContain('Begin forwarded message')
     expect(byForward).toContain('c@example.com')
     expect(byForward).toContain('A reply to the original is not this forward')
+    expect(byForward).toContain('The original, not the forward we just sent')
+    expect(byForward).toContain('if exactFwd then return')
+    expect(byForward).toContain('if looksForward and mentionsOrigId then return')
     expect(byForward).toContain('atmFindMessage')
+    expect(byForward).not.toContain('subj contains origSubject')
+    expect(byForward).not.toContain('looksForward and (mentionsOrig or hitTo)')
   })
 
   it('treats FOUND as a recovery hit and verify failure as not recovered', () => {
