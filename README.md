@@ -454,9 +454,11 @@ Events are addressed by their **iCalendar UID**, reported as `Event ID` by `cale
 
 `calendar_add`, `calendar_edit`, and `calendar_remove` share the same write-bridge RPC (`{ tool, args }` into launchd-owned node). They do not use a different socket or calendar account. Calendar.app’s dictionary has **`delete` only** — there is no `remove` or `move to trash`.
 
-Non-recurring `calendar_add` creates through **EventKit** and returns both `event_id` (calendarItemExternalIdentifier / iCal UID) and `eventkit_id` (eventIdentifier). `calendar_remove` uses those same ids with EventKit **first** (`eventWithIdentifier` + `calendarItemsWithExternalIdentifier`). Mini live: EventKit **writeOnly (status=4)** cannot query an event Calendar.app created via AppleScript — that was `EVENTKIT_NOT_FOUND status=4`. Creating and deleting through EventKit is how writeOnly can remove the smoke event on iCloud. Calendar.app `delete` is the fallback; `ETIMEDOUT` / `-1712` is classified as **timeout**, never TCC. Failures always print `osascript kind=… error=… codes=…`.
+Non-recurring `calendar_add` **must** create through **EventKit** and print `via: EventKit` plus `eventkit_id`. Mini `8be6cd5`: EventKit add failed (writeOnly often cannot `calendarsForEntityType`; we now use `defaultCalendarForNewEvents`) and silently fell through to Calendar.app — remove then `EVENTKIT_NOT_FOUND status=4` and Calendar.app `delete` `ETIMEDOUT`. There is **no AppleScript fallback** for non-recurring add. Recurring add still uses Calendar.app (RRULE).
 
-`--apply` prefers an **On My Mac** calendar when EventKit lists one (Calendar.app delete is reliable there). `--calendar=` still wins. Without a local calendar, the first writable (often iCloud) is used and EventKit add/remove is the delete path.
+`calendar_remove` is EventKit-first with those ids. Calendar.app `delete` is fallback only. `ETIMEDOUT` / `-1712` is **`timeout`**, never TCC. Failures print `osascript kind=… error=… codes=…`. `--apply` fails closed unless add printed `via: EventKit` and `eventkit_id`.
+
+`--apply` prefers an **On My Mac** calendar when EventKit lists one. `--calendar=` still wins. The Mini host’s first writable calendar named **Calendar** (no On My Mac / iCloud label) is fine if EventKit create actually runs.
 
 Like Contacts, calendar writes go through Calendar.app rather than writing `Calendar.sqlitedb` directly. Reads query that database for speed, but edits must go through the app so iCloud sync, invitations, and alarms behave correctly.
 
