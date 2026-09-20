@@ -85,24 +85,56 @@ If you dismissed a prompt, re-enable the toggle in those panes. `tccutil reset A
 
 This is the part that decides whether writes work on your setup. macOS attributes an Apple event to the **responsible process**, not to whichever binary sent it. When an MCP client launches this server over stdio, the *client app* is responsible for everything node does — so the grant that matters belongs to the host app, not to node.
 
-That has one consequence worth stating plainly: **a host app that cannot be granted Contacts or Calendars access blocks those writes no matter what node is allowed to do.** Claude Desktop is a documented example — it is not built with the AddressBook entitlement (`com.apple.security.personal-information.addressbook`), so Contacts writes attempted under Claude.app are denied by macOS. That is a property of the host application. It is not a Full Disk Access problem, not a `tccutil` problem, and not something this package can patch: third-party apps cannot add entitlements to another vendor's signed app.
+#### Contacts reads and Contacts writes are different mechanisms
+
+Worth separating, because they fail for different reasons and have different fixes:
+
+| | Contacts **reads** (`contacts_search`, `contacts_lookup`, contact enrichment) | Contacts **writes** (`contacts_add`, `contacts_edit`, `contacts_remove`) |
+|---|---|---|
+| How | sqlite query straight against `AddressBook-v22.abcddb` | Contacts.app / `CNContactStore` |
+| Gated by | **Full Disk Access** on the responsible process | The **AddressBook privacy class**, which requires the host to hold `com.apple.security.personal-information.addressbook` |
+| Typical failure | `EPERM` / "unable to open database" | denial with **no prompt at all** |
+| Fix | grant FDA to the responsible process | run the write where node is the responsible process |
+
+So an `EPERM` reading `~/Library/Application Support/AddressBook/Sources/…` is almost always a Full Disk Access or attribution problem — **not** evidence of the entitlement gap. The server labels it that way in its logs so the two do not get conflated.
+
+The entitlement gap bites on the **write** path: **a host app that cannot be granted Contacts access blocks Contacts CRUD no matter what node is allowed to do.** Claude Desktop is the documented example — it is not built with the AddressBook entitlement, so under hardened runtime macOS denies AddressBook access to anything Claude.app is responsible for, silently and without a prompt. That is a property of the host application: not a Full Disk Access problem, not a `tccutil` problem, and not something this package can patch, since one vendor cannot add entitlements to another vendor's signed app. **Claude Desktop Contacts CRUD is therefore unsupported** — a host limitation, not a package defect and not a ship gate.
 
 #### The fix: let the indexer daemon own the writes
 
-The **indexer daemon** is started by launchd, so node is the responsible process for its Apple events and macOS grants Contacts/Calendar access to node directly.
+The **indexer daemon** is started by launchd, so node is the responsible process for its Apple events and macOS can grant AddressBook and Calendars access to node directly.
 
 From 2.0.0, the daemon therefore doubles as a **write bridge**. When it is running, any MCP stdio process hands privacy-gated writes to it over a user-only unix socket at `~/.apple-tools-mcp/writer.sock` (mode 0600, inside your 0700 app directory — local only, nothing on the network). The daemon performs the write under its own TCC identity and returns what happened.
 
 So the supported configuration for writes is: **run the indexer daemon** ([LaunchAgent setup below](#always-on-indexer-mac-mini-launchagent)) on the Mac that owns the data. Then:
 
-| Host | Reads | Mail / Messages writes | Calendar / Contacts writes |
-|------|-------|------------------------|----------------------------|
-| Indexer daemon (launchd, e.g. Mac Mini) | Yes | Yes | Yes — node is the responsible process |
-| Any stdio client **with the daemon running** | Yes | Yes (via the bridge) | Yes (via the bridge) |
-| Stdio client launched from a terminal, no daemon | Yes | Yes, once you approve the Automation prompt for your terminal | Yes, once you approve the Contacts/Calendars prompts |
-| Claude Desktop, **no daemon running** | Yes | Yes, if Claude is granted Automation for Mail/Messages | **No** — Claude.app cannot be granted Contacts access; start the daemon |
+| Host | Reads (incl. Contacts) | Mail / Messages writes | Calendar writes | Contacts CRUD |
+|------|------------------------|------------------------|-----------------|----------------|
+| Node host: indexer daemon or `node index.js` from a terminal | Yes (FDA on node) | Yes | Yes | **Yes — supported prove-out host** |
+| Any stdio client **with the daemon running** | Yes | Yes (via the bridge) | Yes (via the bridge) | Yes (via the bridge) |
+| Claude Desktop, **no daemon running** | Yes — reads are sqlite + FDA, unaffected by the entitlement | Yes, if Claude is granted Automation for Mail/Messages | Only if Claude can be granted Calendars | **No — host limitation.** Start the daemon |
 
-If a write is denied and no daemon is listening, the tool says so and tells you to start `apple-tools-indexer`, rather than failing with a bare AppleScript error.
+If a write is denied and no daemon is listening, the tool says so and tells you to start `apple-tools-indexer`, rather than failing with a bare AppleScript error. Contacts denials say specifically that the AddressBook class is involved and that reads are unaffected.
+
+#### Verifying Contacts CRUD on a Node host
+
+Run the bundled smoke test on the Mac that owns the data (the Mini). Dry run first — it changes nothing:
+
+```bash
+# from a clone
+npm run smoke:writes
+
+# from the global install
+node "$(npm root -g)/apple-tools-mcp/scripts/smoke-writes.js"
+```
+
+Then prove real CRUD. This creates a clearly-named test contact, edits it, and deletes it again:
+
+```bash
+node scripts/smoke-writes.js --apply
+```
+
+It reports the read path (sqlite + FDA) and the write path (Contacts.app) separately, so a failure tells you which of the two mechanisms is at fault. Expected results: **PASS on the Node host**; on Claude Desktop with no daemon running, Contacts CRUD is expected to fail and is a documented host limitation rather than a regression.
 
 ### 3. Configure your MCP client
 
@@ -448,7 +480,8 @@ The message names which process macOS was actually asking about. Work through it
 1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Contacts and Calendar writes (see [step 2b](#2b-grant-automation-permissions-for-write-tools-first-run)).
 2. **Did you approve the prompts?** Check Privacy & Security → Automation, Contacts, and Calendars for the node binary that runs the daemon. `tccutil reset AddressBook` and `tccutil reset Calendar` re-arm the prompts.
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
-4. **Contacts writes under Claude Desktop with no daemon running will keep failing.** Claude.app is not built with the AddressBook entitlement, so macOS denies Contacts access to anything it is responsible for. Start the daemon and the write succeeds through the bridge.
+4. **Is it actually the write path?** Contacts *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#contacts-reads-and-contacts-writes-are-different-mechanisms): Claude.app is not built with the AddressBook entitlement. Start the daemon and the write succeeds through the bridge.
+5. **Prove the host itself works** with `node scripts/smoke-writes.js --apply` on the Node host; it separates the read and write mechanisms for you.
 
 ### A write returned "CONFIRMATION REQUIRED"
 
@@ -528,6 +561,9 @@ npx vitest run --coverage --reporter=verbose
 
 # Run audit to check index health
 npm run audit
+
+# Prove the write path on this host (dry run; add --apply for real CRUD)
+npm run smoke:writes
 ```
 
 ## Contributing

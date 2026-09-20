@@ -46,6 +46,7 @@
     "contacts.js",
     "lib/",
     "scripts/audit-index.js",
+    "scripts/smoke-writes.js",
     "README.md",
     "LICENSE"
   ],
@@ -54,6 +55,7 @@
     "indexer": "node index.js --mode=indexer",
     "build-index": "node -e \"import('./indexer.js').then(i=>i.rebuildIndex()).catch(e=>{console.error(e.message);process.exit(1)})\"",
     "audit": "node scripts/audit-index.js",
+    "smoke:writes": "node scripts/smoke-writes.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",

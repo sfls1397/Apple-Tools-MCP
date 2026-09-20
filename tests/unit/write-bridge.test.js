@@ -27,7 +27,18 @@ import {
   isTccSensitiveWrite,
   tccFallbackAdvice
 } from '../../lib/writeRouting.js'
-import { classifyAppleScriptError, isTccDenial, parseWriteDateTime, asString, asInteger } from '../../lib/appleScript.js'
+import {
+  classifyAppleScriptError,
+  isTccDenial,
+  parseWriteDateTime,
+  asString,
+  asInteger,
+  tccGuidanceFor,
+  CONTACTS_TCC_GUIDANCE,
+  CALENDAR_TCC_GUIDANCE,
+  TCC_GUIDANCE
+} from '../../lib/appleScript.js'
+import { isAddressBookPermissionError, ADDRESSBOOK_FDA_HINT } from '../../contacts.js'
 
 const started = []
 
@@ -181,6 +192,35 @@ describe('AppleScript error classification', () => {
     expect(classifyAppleScriptError('script error: EVENT_NOT_FOUND')).toBe('not_found')
     expect(classifyAppleScriptError("Mail got an error: Application isn't running. (-600)")).toBe('app_unavailable')
     expect(classifyAppleScriptError('weird failure')).toBe('unknown')
+  })
+})
+
+describe('TCC guidance separates reads from writes', () => {
+  it('explains that the AddressBook entitlement gates Contacts writes, not reads', () => {
+    expect(tccGuidanceFor('contacts')).toBe(CONTACTS_TCC_GUIDANCE)
+    expect(CONTACTS_TCC_GUIDANCE).toContain('CNContactStore')
+    expect(CONTACTS_TCC_GUIDANCE).toContain('com.apple.security.personal-information.addressbook')
+    expect(CONTACTS_TCC_GUIDANCE).toContain('reads')
+    expect(CONTACTS_TCC_GUIDANCE).toContain('Full Disk Access')
+    // Never tell the user to fix a missing entitlement with tccutil or FDA.
+    expect(CONTACTS_TCC_GUIDANCE).toContain('cannot be fixed with Full Disk Access or tccutil')
+  })
+
+  it('points Contacts and Calendar denials at the daemon', () => {
+    expect(CONTACTS_TCC_GUIDANCE).toContain('apple-tools-indexer')
+    expect(CALENDAR_TCC_GUIDANCE).toContain('apple-tools-indexer')
+    expect(tccGuidanceFor('calendar')).toBe(CALENDAR_TCC_GUIDANCE)
+    expect(tccGuidanceFor('mail')).toBe(TCC_GUIDANCE)
+  })
+
+  it('classifies an AddressBook read failure as Full Disk Access, not the entitlement gap', () => {
+    expect(isAddressBookPermissionError('EPERM: operation not permitted')).toBe(true)
+    expect(isAddressBookPermissionError('unable to open database file')).toBe(true)
+    expect(isAddressBookPermissionError('Authorization denied')).toBe(true)
+    expect(isAddressBookPermissionError('no such table: ZABCDRECORD')).toBe(false)
+
+    expect(ADDRESSBOOK_FDA_HINT).toContain('Full Disk Access')
+    expect(ADDRESSBOOK_FDA_HINT).toContain('not the AddressBook entitlement')
   })
 })
 

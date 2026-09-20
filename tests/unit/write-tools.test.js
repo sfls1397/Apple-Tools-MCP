@@ -651,6 +651,45 @@ describe('write tool definitions', () => {
   })
 })
 
+describe('write smoke script (QA prove-out helpers)', () => {
+  it('defaults to a dry run and opts in with --apply', async () => {
+    const { parseSmokeArgs } = await import('../../scripts/smoke-writes.js')
+    expect(parseSmokeArgs([])).toEqual({ apply: false, keep: false })
+    expect(parseSmokeArgs(['--apply'])).toEqual({ apply: true, keep: false })
+    expect(parseSmokeArgs(['--apply', '--keep'])).toEqual({ apply: true, keep: true })
+  })
+
+  it('reads the new contact id back out of a success message', async () => {
+    const { extractContactId } = await import('../../scripts/smoke-writes.js')
+    const message = 'contacts_add: contact created. contact_id: ABCD-1234:ABPerson name: Ada'
+    expect(extractContactId(message)).toBe('ABCD-1234:ABPerson')
+    expect(extractContactId('contacts_add failed — ...')).toBeNull()
+  })
+})
+
+describe('contacts write denial names the host entitlement limit', () => {
+  it('reports the AddressBook gate rather than a bare AppleScript error', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('execution error: Not authorized to send Apple events to Contacts. (-1743)')
+    })
+    const result = contactsAdd({ first_name: 'Ada', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('com.apple.security.personal-information.addressbook')
+    expect(result.message).toContain('apple-tools-indexer')
+    expect(result.message).toContain('reads')
+  })
+
+  it('keeps the calendar denial specific to Calendars', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('execution error: Calendar got an error: Operation not permitted')
+    })
+    const result = calendarRemove({ event_id: 'EVT-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('Calendar automation is attributed')
+    expect(result.message).not.toContain('addressbook')
+  })
+})
+
 describe('dispatchWriteTool routing', () => {
   it('runs locally in the indexer daemon without probing the bridge', async () => {
     const probe = vi.fn()
