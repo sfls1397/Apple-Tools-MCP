@@ -150,7 +150,7 @@ describe('probe binary and Full Disk Access advisory', () => {
   })
 
   it('reports FDA as advisory and never as a required grant', () => {
-    expect(probeFullDiskAccess({ home: undefined }).status).toBe('skipped')
+    expect(probeFullDiskAccess({ home: '' }).status).toBe('skipped')
     expect(probeFullDiskAccess({
       home: '/no/such/home',
       accessFn: () => { const err = new Error('missing'); err.code = 'ENOENT'; throw err }
