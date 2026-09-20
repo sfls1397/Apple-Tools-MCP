@@ -99,7 +99,7 @@ If you dismissed a prompt, re-open **Automation** and turn the **node → Mail**
 
 `mail_send` / `mail_draft` / `mail_reply` / `mail_forward` with `dry_run=true` return immediately and **never send Apple events to Mail**. A TCC deny for **node → Mail** is therefore invisible until a real compose (`make new outgoing message`). The hang is **Automation denied**, not “Mail.app could not be reached” / “app not available”.
 
-`tell application "Mail" to get name` can succeed while compose still hangs. The smoke test’s Mail step runs that real compose (then discards the outgoing message, or on an older daemon saves a clearly named Draft) so the deny fails **setup**, not a later production `mail_send`. The same Allow-via-prompt applies to **Messages** for `messages_send`; `messages_send` with `dry_run=true` likewise never talks to Messages.app.
+`tell application "Mail" to get name` can succeed while compose still hangs. The smoke test’s Mail step runs that real compose (then discards the outgoing message, or on an older daemon saves a clearly named Draft) so the deny fails **setup**, not a later production `mail_send`. The same Allow-via-prompt applies to **Messages** for `messages_send`; `messages_send` with `dry_run=true` likewise never talks to Messages.app. Smoke also live-enumerates Messages accounts (nothing is sent). **`--apply` fails closed if Mail, Messages, Contacts, or Calendar Automation is missing.**
 
 #### Which process macOS is actually asking about
 
@@ -163,7 +163,7 @@ The smoke test drives writes through **the same dispatcher the MCP tools use**, 
 
 2. **Check out the tip / unpack the tarball** you are gating, in a short-lived directory. The global install stays untouched.
 
-3. **Dry run first.** It creates, edits, and deletes nothing on Contacts/Calendar — but it is not a no-op: it reads your contacts from the AddressBook database, calls `calendar_list_calendars` (a **live Calendar.app query and therefore a real TCC touch**), and runs a **live Mail compose** (`make new outgoing message`) because `mail_send` `dry_run` never touches Mail. A refused Calendar listing or Mail compose is `WARN` on a dry run. `--apply` fails closed if Mail Automation is still denied.
+3. **Dry run first.** It creates, edits, and deletes nothing on Contacts/Calendar — but it is not a no-op: it reads your contacts from the AddressBook database, calls `calendar_list_calendars` (a **live Calendar.app query and therefore a real TCC touch**), runs a **live Mail compose** (`make new outgoing message`) because `mail_send` `dry_run` never touches Mail, and live-enumerates **Messages** accounts because `messages_send` `dry_run` never touches Messages. A refused Calendar listing, Mail compose, or Messages lookup is `WARN` on a dry run. `--apply` fails closed if **Mail, Messages, Contacts, or Calendar** Automation is still denied.
 
    ```bash
    npm run smoke:writes
@@ -185,7 +185,7 @@ The header prints the write path it chose (`indexer daemon via write bridge` or 
 node scripts/smoke-writes.js --apply --allow-local   # only from Terminal.app / launchd
 ```
 
-Expected results: **PASS on the Node host with the bridge up — this is the ship gate for Mail Automation plus Contacts and Calendar writes.** On Claude Desktop with no daemon running, Contacts and Calendar CRUD are both expected to fail; that is the documented host limitation above, not a regression. Mail still needs **node → Mail** (or the host app → Mail) Automation; a Contacts/Calendar grant does not cover it.
+Expected results: **PASS on the Node host with the bridge up — this is the ship gate for Mail, Messages, Contacts, and Calendar writes.** `--apply` fails closed if any of those four Automation grants is missing. On Claude Desktop with no daemon running, Contacts and Calendar CRUD are both expected to fail; that is the documented host limitation above, not a regression. Mail and Messages still need their own **node → Mail** / **node → Messages** grants; a Contacts/Calendar grant does not cover them.
 
 ### 3. Configure your MCP client
 

@@ -29,7 +29,7 @@ import {
   probeMailAutomation,
   buildMailAutomationProbeScript
 } from '../../lib/mailWrite.js'
-import { messagesSend, validateAttachmentPath, lookupChat } from '../../lib/messagesWrite.js'
+import { messagesSend, validateAttachmentPath, lookupChat, probeMessagesAutomation, buildMessagesAutomationProbeScript } from '../../lib/messagesWrite.js'
 import {
   calendarAdd,
   calendarEdit,
@@ -199,6 +199,31 @@ describe('mail_automation_probe', () => {
     const result = probeMailAutomation()
     expect(result.ok).toBe(false)
     expect(result.message).toContain('mail_automation_probe failed')
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('could not be reached')
+  })
+})
+
+describe('messages_automation_probe', () => {
+  it('enumerates accounts and never sends', () => {
+    const script = buildMessagesAutomationProbeScript()
+    expect(script).toContain('tell application "Messages"')
+    expect(script).toContain('service type of acc')
+    expect(script).not.toContain('send ')
+
+    const result = probeMessagesAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('nothing was sent')
+  })
+
+  it('maps a hang to Messages Automation denied', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeMessagesAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('messages_automation_probe failed')
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('could not be reached')
   })
@@ -647,8 +672,11 @@ describe('write tool definitions', () => {
     expect(definedNames.sort()).toEqual([...WRITE_TOOL_NAMES].sort())
     expect(definedNames.some((n) => n.includes('reminder'))).toBe(false)
     expect(definedNames).not.toContain('mail_automation_probe')
+    expect(definedNames).not.toContain('messages_automation_probe')
     expect(INTERNAL_WRITE_TOOLS).toContain('mail_automation_probe')
+    expect(INTERNAL_WRITE_TOOLS).toContain('messages_automation_probe')
     expect(isWriteTool('mail_automation_probe')).toBe(true)
+    expect(isWriteTool('messages_automation_probe')).toBe(true)
   })
 
   it('uses snake_case names and object schemas', () => {
@@ -800,6 +828,7 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('Automation denied')
     expect(readme).toContain('Watch the host — Allow **`node`**')
     expect(readme).toContain('not “Mail.app could not be reached”')
+    expect(readme).toContain('fails closed if Mail, Messages, Contacts, or Calendar')
 
     // Fail-path copy must not send QA back to the privacy-list + button.
     expect(smoke).toContain('Privacy & Security > Automation')
@@ -810,12 +839,16 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('make new outgoing message')
     expect(smoke).toContain('mail_send')
     expect(smoke).toContain('never touches Mail')
+    expect(smoke).toContain('messages_automation_probe')
+    expect(smoke).toContain('never touches Messages')
   })
 
   it('plans a live Mail compose so a TCC deny fails setup, not production', async () => {
     const {
       mailProbeSeverity,
+      messagesProbeSeverity,
       planMailSmokeTouch,
+      planMessagesSmokeTouch,
       isUnknownWriteToolResult,
       mailDraftSmokeArgs
     } = await import('../../scripts/smoke-writes.js')
@@ -828,6 +861,11 @@ describe('write smoke script routing (ship gate)', () => {
     expect(planMailSmokeTouch({ apply: true, probeAvailable: false }).tool).toBe('mail_draft')
     expect(planMailSmokeTouch({ apply: false, probeAvailable: false }).tool).toBeNull()
     expect(planMailSmokeTouch({ apply: false, probeAvailable: false }).reason).toContain('dry_run never touches Mail')
+
+    expect(messagesProbeSeverity(true)).toBe('error')
+    expect(planMessagesSmokeTouch({ apply: true, probeAvailable: true }).tool).toBe('messages_automation_probe')
+    expect(planMessagesSmokeTouch({ apply: true, probeAvailable: false }).tool).toBeNull()
+    expect(planMessagesSmokeTouch({ apply: true, probeAvailable: false }).reason).toContain('will not send a real iMessage')
 
     expect(isUnknownWriteToolResult({ unsupported: true })).toBe(true)
     expect(isUnknownWriteToolResult({ message: 'Unknown write tool: mail_automation_probe' })).toBe(true)
