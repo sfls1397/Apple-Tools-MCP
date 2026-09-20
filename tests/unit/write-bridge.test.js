@@ -201,6 +201,15 @@ describe('AppleScript error classification', () => {
     expect(classifyAppleScriptError('script error: EVENT_NOT_FOUND')).toBe('not_found')
     expect(classifyAppleScriptError("Mail got an error: Application isn't running. (-600)")).toBe('app_unavailable')
     expect(classifyAppleScriptError('weird failure')).toBe('unknown')
+    // Detached Calendar delete specifier — not a missing Calendar.app.
+    expect(classifyAppleScriptError(
+      'Calendar got an error: Can\'t get event id "EVT-1" of calendar "Work". (-1728)',
+      { appInstalled: true }
+    )).toBe('not_found')
+    expect(classifyAppleScriptError(
+      'Contacts got an error: Can\'t get application "Contacts". (-1728)',
+      { appInstalled: true }
+    )).toBe('attribution')
   })
 })
 
