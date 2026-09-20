@@ -385,10 +385,16 @@ async function main() {
       if (apply && keep) {
         console.log(`  Left event ${eventId} in place (--keep). Delete it when you are done.`);
       } else {
-        const removed = step("calendar_remove", await run("calendar_remove", { event_id: eventId, ...common }));
+        const removed = step("calendar_remove", await run("calendar_remove", {
+          event_id: eventId,
+          calendar_name: targetCalendar,
+          ...common
+        }));
         results.push(removed);
         if (apply && removed.ok === false) {
-          console.log(`  Created ${eventId} but could not delete it. Remove it in Calendar.app.`);
+          console.log(`  Created ${eventId} on ${targetCalendar} but could not delete it.`);
+          console.log("  add/edit succeeded, so this is a delete-path failure, not missing Calendar Automation.");
+          console.log("  Remove the leftover event in Calendar.app.");
         }
       }
     }

@@ -564,7 +564,29 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     const confirmed = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
     expect(confirmed.ok).toBe(true)
     expect(confirmed.message).toContain('Standup')
-    expect(lastScript()).toContain('delete theEvent')
+    const script = lastScript()
+    expect(script).toContain('delete (every event whose uid is "EVT-UID-1")')
+    expect(script).toContain('tell cal')
+    expect(script).not.toContain('atmFindEvent')
+    expect(script).not.toContain('delete theEvent')
+  })
+
+  it('scopes calendar_remove to calendar_name when given', () => {
+    calendarRemove({ event_id: 'EVT-UID-1', calendar_name: 'Work', confirm: true })
+    const script = lastScript()
+    expect(script).toContain('if (name of cal) is "Work"')
+    expect(script).toContain('delete (every event whose uid is "EVT-UID-1")')
+  })
+
+  it('does not report a failed Calendar delete as Calendar.app unreachable', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Calendar got an error: Can\'t get event id "EVT-UID-1" of calendar "Work". (-1728)')
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('No event with that id was found')
+    expect(result.message).not.toContain('could not be reached')
+    expect(result.message).not.toContain('denied Calendar access')
   })
 
   it('RSVPs with a validated response', () => {
@@ -858,6 +880,7 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('probeMessagesAutomation')
     expect(smoke).toContain('probeMailAutomation')
     expect(smoke).toContain('never touches Messages')
+    expect(smoke).toContain('delete-path failure')
     expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
     expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
   })
