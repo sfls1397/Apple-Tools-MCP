@@ -98,10 +98,13 @@ export function loadContacts() {
   }
 
   try {
-    // Query all contacts with their basic info (with limit for memory safety)
-    const contactQuery = `
+    // Query all contacts with their basic info (with limit for memory safety).
+    // ZUNIQUEID is the Contacts.app person id the write tools address contacts
+    // by; a schema without it must still load contacts for search.
+    const buildContactQuery = (includeUniqueId) => `
       SELECT
         Z_PK as id,
+        ${includeUniqueId ? "ZUNIQUEID as uniqueId," : "'' as uniqueId,"}
         ZFIRSTNAME as firstName,
         ZLASTNAME as lastName,
         ZNICKNAME as nickname,
@@ -113,7 +116,13 @@ export function loadContacts() {
       LIMIT ${MAX_CONTACTS}
     `;
 
-    const rawContacts = safeSqlite3Json(dbPath, contactQuery, { timeout: 10000 });
+    let rawContacts;
+    try {
+      rawContacts = safeSqlite3Json(dbPath, buildContactQuery(true), { timeout: 10000 });
+    } catch (e) {
+      console.error(`Contacts: unique id column unavailable (${e.message}); loading without it`);
+      rawContacts = safeSqlite3Json(dbPath, buildContactQuery(false), { timeout: 10000 });
+    }
 
     if (rawContacts.length >= MAX_CONTACTS) {
       console.error(`Warning: Contact limit reached (${MAX_CONTACTS}). Some contacts may not be searchable.`);
@@ -184,6 +193,7 @@ export function loadContacts() {
     for (const c of rawContacts) {
       const contact = {
         id: c.id,
+        uniqueId: c.uniqueId || "",
         firstName: c.firstName || "",
         lastName: c.lastName || "",
         nickname: c.nickname || "",

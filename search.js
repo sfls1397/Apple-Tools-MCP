@@ -1346,6 +1346,8 @@ export async function getCalendarDateResults(dateStr) {
 
     const formattedResults = events.map((row, idx) => ({
       index: idx + 1,
+      // iCal UID: the id the calendar write tools address events by.
+      eventId: row.uid || "",
       title: row.title || "No title",
       start: formatLocalDate(row.start) || row.start || "Unknown",
       startTimestamp: row.startMac != null ? (Number(row.startMac) + 978307200) * 1000 : null,
@@ -1512,6 +1514,7 @@ export function formatCalendarResults(searchResult) {
     result += `\nEvent: ${r.title}`;
     if (r.isAllDay) result += " (All Day)";
     result += `\nCalendar: ${r.calendar}\nStart: ${r.start}\nEnd: ${r.end}`;
+    if (r.eventId) result += `\nEvent ID: ${r.eventId}`;
     if (r.location) result += `\nLocation: ${r.location}`;
     if (r.attendees && r.attendees.length > 0) {
       const attendeeList = r.attendees.map(a => `${a.name} (${a.status})`).join(", ");
