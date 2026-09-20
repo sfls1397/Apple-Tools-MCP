@@ -321,6 +321,7 @@ function startBackgroundIndexing() {
 
 // Stop background indexing and clean up timers
 function stopBackgroundIndexing() {
+  const wasRunning = Boolean(indexTimer || progressCheckTimer);
   if (indexTimer) {
     clearInterval(indexTimer);
     indexTimer = null;
@@ -329,7 +330,9 @@ function stopBackgroundIndexing() {
     clearInterval(progressCheckTimer);
     progressCheckTimer = null;
   }
-  console.error("Background indexing stopped");
+  if (wasRunning) {
+    console.error("Background indexing stopped");
+  }
 }
 
 // Unblock searches after a cycle ends. Must run on failure as well as success
