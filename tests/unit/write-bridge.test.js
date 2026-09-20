@@ -179,6 +179,8 @@ describe('write routing policy', () => {
   it('advises starting the daemon when none is running', () => {
     expect(tccFallbackAdvice({ bridgeAvailable: false })).toContain('apple-tools-indexer')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Full Disk Access')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Automation')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Do not add node via +')
   })
 })
 

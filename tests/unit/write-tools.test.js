@@ -716,6 +716,25 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('live Calendar.app query')
   })
 
+  it('documents Mini Automation grants in the README, not a Contacts/Calendars + button', () => {
+    const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+    const smoke = fs.readFileSync(path.join(root, 'scripts/smoke-writes.js'), 'utf8')
+
+    // Peter-locked ship-gate setup: Automation pane + LaunchAgent-owned node.
+    expect(readme).toContain('System Settings → Privacy & Security → Automation')
+    expect(readme).toContain('npm run smoke:writes --apply')
+    expect(readme).toContain('/Users/petercoates/.local/node/bin/node')
+    expect(readme).toContain('Do **not** approve Grok Bot (`com.anysphere.sand`)')
+    expect(readme).toContain('Full Disk Access')
+    expect(readme).toContain('npm Trusted Publisher')
+    expect(readme).toContain('Do not add `node` via the + button')
+    expect(readme).toContain('those panes often have **no Add button**')
+
+    // Fail-path copy must not send QA back to the privacy-list + button.
+    expect(smoke).toContain('Privacy & Security > Automation')
+    expect(smoke).toContain('Do not add node via +')
+  })
+
   it('dispatches through the production write path, not the write modules directly', () => {
     const source = fs.readFileSync(path.join(root, 'scripts/smoke-writes.js'), 'utf8')
 
