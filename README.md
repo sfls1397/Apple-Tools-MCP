@@ -73,11 +73,13 @@ Full Disk Access covers the **read** tools. Write tools need the automation perm
 
 Write tools drive Mail, Messages, Calendar, and Contacts through AppleScript. macOS gates those Apple events behind **Automation**, not by adding `node` to the Contacts or Calendars privacy lists.
 
+**One-pass first-run:** Allow **`node`** to control **Mail**, **Messages**, **Contacts**, and **Calendar** in the same Automation pass. Contacts or Calendar being allowed does **not** grant Mail or Messages — they are separate Apple Events targets. A denied Mail grant hangs `mail_send` / `mail_draft` / `mail_reply` / `mail_forward` until the client disconnects; `dry_run` never talks to Mail, so that deny is invisible until a real compose.
+
 **Do not add `node` via the + button in System Settings → Privacy & Security → Contacts or Calendars.** On current macOS those panes often have **no Add button**, and that instruction is not the ship-gate setup — it failed on the Mini.
 
 #### Mini ship-gate host setup
 
-This is the first-run flow for Contacts and Calendar **writes** on the Mac Mini. Do it on the Mini UI (or Screen Sharing to Mini), with the indexer LaunchAgent owning `node`:
+This is the first-run flow for Mail, Messages, Contacts, and Calendar **writes** on the Mac Mini. Do it on the Mini UI (or Screen Sharing to Mini), with the indexer LaunchAgent owning `node`:
 
 1. Open **System Settings → Privacy & Security → Automation**.
 2. Run write prove-out with the **indexer LaunchAgent** owning `node` (`~/.apple-tools-mcp/writer.sock` / launchd). Against the tip, with the LaunchAgent up:
@@ -87,11 +89,17 @@ This is the first-run flow for Contacts and Calendar **writes** on the Mac Mini.
    ```
 
    That is the ship-gate context. An embedded agent shell, IDE terminal, or MCP host app subprocess is **not** the ship-gate host unless the write bridge is up and the work executes inside launchd-owned `node`.
-3. When prompts appear, click **Allow** for **`node`** to control **Contacts** and **Calendar**. Use whatever path the LaunchAgent plist / `which node` reports — `/Users/petercoates/.local/node/bin/node` is a Mini *example* only, not a universal path. Do **not** approve the MCP client / host app that launched a short-lived stdio server.
-4. **Full Disk Access** on `node` is a separate grant and covers **reads** (Mail / Messages / Calendar / AddressBook databases). Contacts and Calendar **writes** need the Automation / Apple Events grants to Contacts.app and Calendar.app.
+3. When prompts appear, click **Allow** for **`node`** to control **Mail**, **Messages**, **Contacts**, and **Calendar**. Watch the host — Allow **`node`** (the LaunchAgent binary), not any other app. Use whatever path the LaunchAgent plist / `which node` reports — `/Users/petercoates/.local/node/bin/node` is a Mini *example* only, not a universal path. Do **not** approve the MCP client / host app that launched a short-lived stdio server.
+4. **Full Disk Access** on `node` is a separate grant and covers **reads** (Mail / Messages / Calendar / AddressBook databases). Write tools need the Automation / Apple Events grants to Mail.app (`mail_send`, `mail_draft`, `mail_reply`, `mail_forward`, and the other mail writes), Messages.app (`messages_send`), Contacts.app, and Calendar.app.
 5. npm Trusted Publisher / publish tokens are unrelated to TCC. Do not confuse them with this setup.
 
-If you dismissed a prompt, re-open **Automation** and turn the **node → Contacts** / **node → Calendar** toggles back on. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Do not use `tccutil reset AddressBook` / `tccutil reset Calendar`, and do not add `node` via Settings **+** into the Contacts or Calendars privacy lists — those panes often have no Add button, and that is not how this ship gate is granted.
+If you dismissed a prompt, re-open **Automation** and turn the **node → Mail** / **node → Messages** / **node → Contacts** / **node → Calendar** toggles back on. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Do not use `tccutil reset AddressBook` / `tccutil reset Calendar`, and do not add `node` via Settings **+** into the Contacts or Calendars privacy lists — those panes often have no Add button, and that is not how this ship gate is granted.
+
+#### `dry_run` does not prove Mail Automation
+
+`mail_send` / `mail_draft` / `mail_reply` / `mail_forward` with `dry_run=true` return immediately and **never send Apple events to Mail**. A TCC deny for **node → Mail** is therefore invisible until a real compose (`make new outgoing message`). The hang is **Automation denied**, not “Mail.app could not be reached” / “app not available”.
+
+`tell application "Mail" to get name` can succeed while compose still hangs. The smoke test’s Mail step runs that real compose (then discards the outgoing message, or on an older daemon saves a clearly named Draft) so the deny fails **setup**, not a later production `mail_send`. The same Allow-via-prompt applies to **Messages** for `messages_send`; `messages_send` with `dry_run=true` likewise never talks to Messages.app.
 
 #### Which process macOS is actually asking about
 
@@ -140,7 +148,7 @@ So the supported configuration for writes is: **run the indexer daemon** ([Launc
 
 If a write is denied and no daemon is listening, the tool says so and tells you to start `apple-tools-indexer`, rather than failing with a bare AppleScript error. Contacts and Calendar denials each name their own privacy class and note that reads are unaffected.
 
-#### Verifying Contacts and Calendar CRUD on a Node host
+#### Verifying Mail Automation plus Contacts and Calendar CRUD on a Node host
 
 The smoke test drives writes through **the same dispatcher the MCP tools use**, so when the write bridge is up the work executes inside the indexer daemon. That matters: the thing being proven is the shipping path, not the Automation rights of whatever shell you happened to type the command into.
 
@@ -155,7 +163,7 @@ The smoke test drives writes through **the same dispatcher the MCP tools use**, 
 
 2. **Check out the tip / unpack the tarball** you are gating, in a short-lived directory. The global install stays untouched.
 
-3. **Dry run first.** It creates, edits, and deletes nothing — but it is not a no-op: it reads your contacts from the AddressBook database and calls `calendar_list_calendars`, which is a **live Calendar.app query and therefore a real TCC touch** that can raise an Automation prompt or be denied. Because the run changes nothing, a refused listing is reported as `WARN` rather than failing the run.
+3. **Dry run first.** It creates, edits, and deletes nothing on Contacts/Calendar — but it is not a no-op: it reads your contacts from the AddressBook database, calls `calendar_list_calendars` (a **live Calendar.app query and therefore a real TCC touch**), and runs a **live Mail compose** (`make new outgoing message`) because `mail_send` `dry_run` never touches Mail. A refused Calendar listing or Mail compose is `WARN` on a dry run. `--apply` fails closed if Mail Automation is still denied.
 
    ```bash
    npm run smoke:writes
@@ -169,7 +177,7 @@ The smoke test drives writes through **the same dispatcher the MCP tools use**, 
    node scripts/smoke-writes.js --apply --keep           # leave the test items behind
    ```
 
-The header prints the write path it chose (`indexer daemon via write bridge` or `in this process`), and the read path (sqlite + FDA) is reported separately from the two write paths (Contacts.app, Calendar.app), so a failure tells you which mechanism refused.
+The header prints the write path it chose (`indexer daemon via write bridge` or `in this process`), and the read path (sqlite + FDA) is reported separately from the write paths (Mail.app compose, Contacts.app, Calendar.app), so a failure tells you which mechanism refused. A Mail hang or timeout is **TCC / Automation denied**, not “app not available”.
 
 **The parent process matters.** With `--apply` and **no bridge listening**, the smoke test **refuses to run** rather than executing in-process and calling the result a package failure. Running it from an embedded agent shell, an IDE terminal, or a host app's subprocess is *not* the ship-gate context on its own, because macOS attributes the Apple events to that parent. Either start the LaunchAgent (preferred, and what production clients use), or run it from **Terminal.app**, where node is the responsible process, and pass `--allow-local` to acknowledge that:
 
@@ -177,7 +185,7 @@ The header prints the write path it chose (`indexer daemon via write bridge` or 
 node scripts/smoke-writes.js --apply --allow-local   # only from Terminal.app / launchd
 ```
 
-Expected results: **PASS on the Node host with the bridge up — this is the ship gate for Contacts and Calendar writes.** On Claude Desktop with no daemon running, Contacts and Calendar CRUD are both expected to fail; that is the documented host limitation above, not a regression.
+Expected results: **PASS on the Node host with the bridge up — this is the ship gate for Mail Automation plus Contacts and Calendar writes.** On Claude Desktop with no daemon running, Contacts and Calendar CRUD are both expected to fail; that is the documented host limitation above, not a regression. Mail still needs **node → Mail** (or the host app → Mail) Automation; a Contacts/Calendar grant does not cover it.
 
 ### 3. Configure your MCP client
 
@@ -266,7 +274,7 @@ Missing `config.json` is fine — env then the 5-minute default apply.
 
 On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tools-mcp`. Claude Desktop and other clients still attach via short-lived stdio MCP (`npx -y apple-tools-mcp` or the global `apple-tools-mcp` bin).
 
-The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Contacts/Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)). When macOS prompts, Allow **`node`** (the LaunchAgent binary) to control Contacts.app and Calendar.app. Do not approve the MCP client / host app that launched a short-lived stdio server, and do not try to add `node` via **+** in the Contacts or Calendars privacy lists.
+The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Mail / Messages / Contacts / Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)). When macOS prompts, Allow **`node`** (the LaunchAgent binary) to control Mail.app, Messages.app, Contacts.app, and Calendar.app. Do not approve the MCP client / host app that launched a short-lived stdio server, and do not try to add `node` via **+** in the Contacts or Calendars privacy lists.
 
 The bridge is created before the daemon touches the vector index, so writes stay available even when the index is missing, locked, or mid-rebuild. Confirm it after an upgrade with `ls -l ~/.apple-tools-mcp/writer.sock` (it should be a `srw-------` socket); the daemon removes it on shutdown.
 
@@ -526,8 +534,8 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 
 The message names which process macOS was actually asking about. Work through it in this order:
 
-1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Contacts and Calendar writes (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)).
-2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary — whatever path the plist / `which node` reports; `/Users/petercoates/.local/node/bin/node` is a Mini *example* only) is allowed to control Contacts and Calendar. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
+1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Mail, Messages, Contacts, and Calendar writes (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)).
+2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary — whatever path the plist / `which node` reports; `/Users/petercoates/.local/node/bin/node` is a Mini *example* only) is allowed to control **Mail**, **Messages**, Contacts, and Calendar. Watch the host — Allow **`node`**, not any other app. Contacts or Calendar being allowed does **not** grant Mail. A `mail_send` hang is **Automation denied**, not “Mail.app could not be reached”; `dry_run` never talks to Mail so it cannot detect this. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
 4. **Is it actually the write path?** Contacts or Calendar *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts or Calendar *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#reads-and-writes-are-different-mechanisms): Claude.app carries neither the addressbook nor the calendars entitlement. Start the daemon and the write succeeds through the bridge.
 5. **"Contacts.app / Calendar.app could not be reached"** with the app clearly installed is an **Automation / responsible-process** failure, not a missing app — macOS reports a refused Apple event as `-1728` / "can't get application". The tool says so and points at the bridge. Start the LaunchAgent, or run from Terminal.app and approve the Automation prompt.
