@@ -6,14 +6,17 @@
  * - Mail compose (Automation → Mail.app). dry_run never talks to Mail, so
  *   this step runs a real `make new outgoing message` (then discards it).
  *   A hang or timeout is TCC / Automation denied, not "Mail.app missing".
+ * - Messages account/service lookup (Automation → Messages.app). Nothing
+ *   is sent. A deny fails --apply the same way Mail does.
  * - Contacts CRUD (AddressBook class, via Contacts.app)
  * - Calendar CRUD (calendars class, via Calendar.app)
  *
- * Mail, Contacts, and Calendar must pass on the Node host, which is the
- * ship gate. Contacts and Calendar CRUD are expected to fail under a host
- * app that holds neither entitlement - that is a documented host limitation,
- * not a package failure. Mail Automation is a separate Apple Events target:
- * Contacts/Calendar grants do not include Mail.
+ * Mail, Messages, Contacts, and Calendar must all pass on the Node host —
+ * that is the ship gate. A missing grant for any one of those four apps
+ * fails --apply. Contacts and Calendar CRUD are expected to fail under a
+ * host app that holds neither entitlement - that is a documented host
+ * limitation, not a package failure. Mail and Messages are separate Apple
+ * Events targets: a Contacts/Calendar grant does not include them.
  *
  * Default is a dry run: no contact or event is created, edited, or deleted.
  * It is not a no-op, though: it reads contacts from the AddressBook database
@@ -120,6 +123,10 @@ export function mailProbeSeverity(apply) {
   return apply ? "error" : "warning";
 }
 
+export function messagesProbeSeverity(apply) {
+  return mailProbeSeverity(apply);
+}
+
 /**
  * True when the daemon (or local dispatcher) does not know the setup-only
  * Mail probe — typically a 2.0.0 daemon that predates this check.
@@ -159,6 +166,31 @@ export function planMailSmokeTouch({ apply, probeAvailable }) {
     tool: null,
     args: {},
     reason: "daemon cannot live-probe Mail yet; --apply uses mail_draft. mail_send dry_run never touches Mail, so it cannot detect a TCC deny."
+  };
+}
+
+/**
+ * How smoke exercises Messages Apple Events.
+ * messages_send dry_run never talks to Messages, and this gate never sends.
+ *
+ * @returns {{ tool: string|null, reason: string }}
+ */
+export function planMessagesSmokeTouch({ apply, probeAvailable }) {
+  if (probeAvailable) {
+    return {
+      tool: "messages_automation_probe",
+      reason: "enumerate Messages accounts (live Apple Events; nothing is sent)"
+    };
+  }
+  if (apply) {
+    return {
+      tool: null,
+      reason: "daemon cannot live-probe Messages yet. Reload the LaunchAgent from this tip so Messages Automation is exercised under launchd-owned node. messages_send dry_run never touches Messages, and this gate will not send a real iMessage."
+    };
+  }
+  return {
+    tool: null,
+    reason: "daemon cannot live-probe Messages yet; --apply fails closed. messages_send dry_run never touches Messages."
   };
 }
 
@@ -308,6 +340,46 @@ async function main() {
     results.push(step("mail Automation compose", mailResult, mailSeverity));
   }
 
+  console.log("\n--- Messages Automation (Messages.app accounts / Apple Events) ---");
+  if (!apply) {
+    console.log("  (live Messages account lookup even on a dry run; messages_send dry_run never touches Messages; nothing is sent)");
+  }
+
+  let messagesProbeAvailable = true;
+  let messagesFromBridge = null;
+  if (route.path === "daemon") {
+    const bridged = await requestWriteViaBridge({
+      socketPath,
+      tool: "messages_automation_probe",
+      args: {}
+    });
+    if (bridged.delivered && bridged.response && !isUnknownWriteToolResult(bridged.response)) {
+      messagesFromBridge = bridged.response;
+      messagesProbeAvailable = true;
+    } else {
+      messagesProbeAvailable = false;
+    }
+  }
+
+  const messagesPlan = planMessagesSmokeTouch({ apply, probeAvailable: messagesProbeAvailable });
+  const messagesSeverity = messagesProbeSeverity(apply);
+  let messagesResult;
+  if (messagesPlan.tool === "messages_automation_probe") {
+    messagesResult = messagesFromBridge || await run("messages_automation_probe", {});
+  } else {
+    messagesResult = {
+      ok: false,
+      message: messagesPlan.reason
+    };
+  }
+
+  if (messagesResult.ok === false && messagesSeverity === "warning") {
+    step("messages Automation lookup", messagesResult, "warning");
+    console.log("  Warning only: messages_send dry_run never touches Messages. --apply fails closed if Messages Automation is still denied.");
+  } else {
+    results.push(step("messages Automation lookup", messagesResult, messagesSeverity));
+  }
+
   console.log("\n--- Contacts CRUD (Contacts.app / AddressBook privacy class) ---");
   const created = step("contacts_add", await run("contacts_add", {
     first_name: "ATM Smoke",
@@ -416,9 +488,9 @@ async function main() {
     }
     process.exitCode = 1;
   } else if (apply) {
-    console.log(`Result: PASS - Mail Automation, Contacts, and Calendar CRUD all work (${route.path === "daemon" ? "via the write bridge" : "in this process"}).`);
+    console.log(`Result: PASS - Mail, Messages, Contacts, and Calendar Automation all work (${route.path === "daemon" ? "via the write bridge" : "in this process"}).`);
   } else {
-    console.log("Result: PASS - dry run only. Re-run with --apply to prove real CRUD and fail-closed Mail Automation.");
+    console.log("Result: PASS - dry run only. Re-run with --apply to prove real CRUD and fail-closed Mail/Messages/Contacts/Calendar Automation.");
   }
 }
 
