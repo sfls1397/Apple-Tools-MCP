@@ -39,6 +39,7 @@ describe('permissions command wiring', () => {
     expect(indexSrc).toContain('PERMISSIONS_MODE')
     expect(indexSrc).toContain('version: PACKAGE_VERSION')
     expect(indexSrc).toContain('!PERMISSIONS_MODE && shouldConnectMcpStdio')
+    expect(indexSrc).toContain('const wasRunning = Boolean(indexTimer || progressCheckTimer)')
     expect(indexSrc).toMatch(/if \(PERMISSIONS_MODE\) \{[\s\S]*runPermissionsCommand/)
     expect(indexSrc).toMatch(/if \(PERMISSIONS_MODE\) \{[\s\S]*initializeIndexing/)
     expect(permSrc).toContain('Apple Tools MCP permissions (v${version})')
@@ -121,6 +122,15 @@ describe('grant classification and fail-closed exit', () => {
     expect(classifyGrantStatus({
       ok: false,
       message: 'mail_automation_probe failed — TCC / Automation deny for node → Mail'
+    })).toBe('missing')
+    expect(classifyGrantStatus({
+      ok: false,
+      kind: 'attribution',
+      message: 'The app is installed, so this is an Automation / responsible-process problem rather than a missing app'
+    })).toBe('missing')
+    expect(classifyGrantStatus({
+      ok: false,
+      message: 'The app is installed, so this is an Automation / responsible-process problem rather than a missing app'
     })).toBe('missing')
     expect(classifyGrantStatus({ ok: false, kind: 'unknown', message: 'disk full' })).toBe('error')
   })
