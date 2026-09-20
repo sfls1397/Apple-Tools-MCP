@@ -1741,7 +1741,9 @@ export function localDayToMacBounds(startMs, endMs) {
 }
 
 // Date-bounded OccurrenceCache query: one row per occurrence, no GROUP BY ci.ROWID
-export function buildEventsOnDateQuery(startMac, endMac) {
+// includeUid adds the iCal UID that the calendar write tools address events by.
+// Older Calendar schemas may lack the column, so callers can retry without it.
+export function buildEventsOnDateQuery(startMac, endMac, { includeUid = true } = {}) {
   const startBound = Math.floor(Number(startMac));
   const endBound = Math.floor(Number(endMac));
   if (!Number.isFinite(startBound) || !Number.isFinite(endBound)) {
@@ -1755,6 +1757,7 @@ export function buildEventsOnDateQuery(startMac, endMac) {
   return `
       SELECT DISTINCT
         ci.ROWID as itemId,
+        ${includeUid ? "ci.unique_identifier as uid," : "'' as uid,"}
         ci.summary as title,
         datetime(CASE WHEN ci.all_day THEN ${allDayStartMac} ELSE ${timedStart} END + 978307200, 'unixepoch', 'localtime') as start,
         datetime(${occEnd} + 978307200, 'unixepoch', 'localtime') as end,
@@ -1821,9 +1824,11 @@ export function getEventsOnDate(startMs, endMs) {
       return { events: [], error: "Calendar database not found" };
     }
     const { startMac, endMac } = localDayToMacBounds(startMs, endMs);
-    const query = buildEventsOnDateQuery(startMac, endMac);
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
+      // Drop the UID column after a failed first attempt: a schema without
+      // unique_identifier must still return events for calendar_date.
+      const query = buildEventsOnDateQuery(startMac, endMac, { includeUid: attempt === 0 });
       try {
         const events = withCalendarCopy((dbPath) => {
           return safeSqlite3Json(dbPath, query, { timeout: 15000 });

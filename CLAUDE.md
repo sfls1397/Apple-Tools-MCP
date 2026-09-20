@@ -1,6 +1,6 @@
 # Project Architecture
 
-Apple Tools MCP is a Model Context Protocol server that provides semantic search across Apple Mail, iMessages, and Calendar on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 22 tools organized by data source.
+Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 38 tools: 22 read/search/admin tools plus the 16 write tools added in 2.0.0. There are no Apple Reminders tools.
 
 A long-lived **indexer daemon** (`--mode=indexer` / `apple-tools-indexer`) owns `~/.apple-tools-mcp/indexer.lock` and refreshes the vector index on an interval from `~/.apple-tools-mcp/config.json` (env `INDEX_INTERVAL_MS` overrides; default 5 minutes, clamped to 15s–6h). MCP stdio clients stay short-lived, exit on stdin close, and index locally only when no daemon holds the lock.
 
@@ -50,6 +50,28 @@ Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals fr
 
 Stdin-exit policy, overlapping-cycle skip, lock retention across daemon cycles, MCP local-fallback startup, and daemon lock retry.
 
+### lib/writeTools.js -- Write tool surface (2.0.0)
+
+Defines the 16 write tools (`mail_send`, `mail_draft`, `mail_reply`, `mail_forward`, `mail_mark`, `mail_archive`, `mail_trash`, `messages_send`, `calendar_list_calendars`, `calendar_add`, `calendar_edit`, `calendar_remove`, `calendar_rsvp`, `contacts_add`, `contacts_edit`, `contacts_remove`), maps them to handlers, and dispatches each call local-or-daemon. `index.js` spreads these definitions into `ListTools` and routes matching calls before the read-tool switch, so writes never wait on the index gate.
+
+### lib/writeGuards.js -- Confirm / dry-run policy
+
+The safety contract shared by every write: `dry_run` previews and never executes; deletes and multi-recipient sends require `confirm`; recipients, ids, bodies, and subjects are validated rather than guessed; success and failure lines name the action and target, and `scrubValues()` keeps caller-supplied bodies out of error text.
+
+### lib/appleScript.js -- Script literals, strict dates, TCC classification
+
+Builds escaped AppleScript literals (`asString`/`asInteger`/`dateCall`), parses writes-only strict local datetimes (no natural language), and classifies osascript failures as `tcc` / `not_found` / `app_unavailable` / `unknown`.
+
+### lib/mailWrite.js, messagesWrite.js, calendarWrite.js, contactsWrite.js -- Write implementations
+
+One module per data source. Each exports pure `build*Script()` builders (unit-tested without macOS) plus the tool functions. Mail addresses messages by RFC822 Message-ID (resolvable from an `.emlx` `file_path`); Messages verifies a `chat_id` against `chat.db` before sending and counts participants to detect group chats; Calendar addresses events by iCal UID and builds RRULEs from an allowlisted grammar; Contacts addresses people by Contacts.app person id and never writes the AddressBook database directly.
+
+### lib/writeBridge.js + lib/writeRouting.js -- TCC attribution
+
+macOS attributes Apple events to the process *responsible* for the sender, which for a stdio server is the host app rather than node. A host that cannot hold Contacts/Calendars access therefore blocks those writes regardless of node's Full Disk Access. The launchd-started indexer daemon does not have that problem, so it listens on a 0600 unix socket (`~/.apple-tools-mcp/writer.sock`) and performs writes for stdio clients; `writeRouting.js` holds the pure local-vs-daemon policy, the fallback-to-local rule, and the TCC advice text.
+
+Reads and writes hit different gates and must not be conflated. Contacts and Calendar **reads** are sqlite against `AddressBook-v22.abcddb` / `Calendar.sqlitedb` and need only Full Disk Access, so an `EPERM` there is an FDA/attribution problem. **Writes** go through Contacts.app (`CNContactStore`) and Calendar.app (EventKit), gated by the AddressBook and calendars privacy classes. Claude.app ships with neither `com.apple.security.personal-information.addressbook` nor `…​.calendars` (verified by codesign; only location and photos-library are present), so Contacts and Calendar CRUD under Claude Desktop are host limitations. The ship gate for both is the Node host with FDA, reached from any client through the bridge. Contacts/Calendar **writes** are granted by Allowing **node** in System Settings → Privacy & Security → **Automation** (Apple Events to Contacts.app / Calendar.app) while the LaunchAgent owns node — not by adding node via + in the Contacts or Calendars privacy lists (those panes often have no Add button). `scripts/smoke-writes.js` proves both paths.
+
 ## Common Commands
 
 - **Start server**: `npm start`
@@ -83,6 +105,7 @@ Stdin-exit policy, overlapping-cycle skip, lock retention across daemon cycles, 
 - **Function naming**: `camelCase` with semantic prefixes -- `get*` (data retrieval), `format*` (output formatting), `search*` (vector search), `validate*` (input validation), `escape*` (injection prevention), `safe*` (secure shell wrappers), `index*` (indexing operations)
 - **Constants**: `SCREAMING_SNAKE_CASE`; millisecond values suffixed with `_MS`
 - **MCP tool names**: `snake_case` (e.g., `mail_search`, `calendar_free_time`, `person_search`)
+- **Write tool pattern**: validate args -> `planWrite()` (dry_run / confirm gate) -> build escaped script -> `runAppleScript()` -> message naming ids and recipients, never bodies
 - **Exports**: Named exports only, never default exports
 - **Branching**: Single `main` branch; no feature branch convention
 - **CI/CD**: GitHub Actions publishes to GitHub Packages on release creation; runs `npm ci` and `npm test` first
