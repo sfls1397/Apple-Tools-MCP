@@ -86,8 +86,8 @@ This is the first-run flow for Contacts and Calendar **writes** on the Mac Mini.
    npm run smoke:writes --apply
    ```
 
-   That is the ship-gate context. Grok Bot Shell as the responsible process is **not** the ship-gate host unless the write bridge is up and the work executes inside launchd-owned `node`.
-3. When prompts appear, click **Allow** for **`node`** — on this Mini that is `/Users/petercoates/.local/node/bin/node` — to control **Contacts** and **Calendar**. Do **not** approve Grok Bot (`com.anysphere.sand`) for this ship gate. Other machines use whatever path the LaunchAgent plist / `which node` reports.
+   That is the ship-gate context. An embedded agent shell, IDE terminal, or MCP host app subprocess is **not** the ship-gate host unless the write bridge is up and the work executes inside launchd-owned `node`.
+3. When prompts appear, click **Allow** for **`node`** — on this Mini that is `/Users/petercoates/.local/node/bin/node` — to control **Contacts** and **Calendar**. Do **not** approve the MCP client / host app that launched a short-lived stdio server. Other machines use whatever path the LaunchAgent plist / `which node` reports.
 4. **Full Disk Access** on `node` is a separate grant and covers **reads** (Mail / Messages / Calendar / AddressBook databases). Contacts and Calendar **writes** need the Automation / Apple Events grants to Contacts.app and Calendar.app.
 5. npm Trusted Publisher / publish tokens are unrelated to TCC. Do not confuse them with this setup.
 
@@ -144,7 +144,7 @@ If a write is denied and no daemon is listening, the tool says so and tells you 
 
 The smoke test drives writes through **the same dispatcher the MCP tools use**, so when the write bridge is up the work executes inside the indexer daemon. That matters: the thing being proven is the shipping path, not the Automation rights of whatever shell you happened to type the command into.
 
-**Ship-gate procedure (Mini):** do this after the [Automation first-run](#2b-grant-automation-for-write-tools-first-run--ship-gate) above. The LaunchAgent must own `node`; Grok Bot Shell alone is not the ship-gate host.
+**Ship-gate procedure (Mini):** do this after the [Automation first-run](#2b-grant-automation-for-write-tools-first-run--ship-gate) above. The LaunchAgent must own `node`; an embedded agent shell, IDE terminal, or MCP host app subprocess is not the ship-gate host.
 
 1. **Make sure the indexer LaunchAgent is running**, so the bridge is listening:
 
@@ -171,7 +171,7 @@ The smoke test drives writes through **the same dispatcher the MCP tools use**, 
 
 The header prints the write path it chose (`indexer daemon via write bridge` or `in this process`), and the read path (sqlite + FDA) is reported separately from the two write paths (Contacts.app, Calendar.app), so a failure tells you which mechanism refused.
 
-**The parent process matters.** With `--apply` and **no bridge listening**, the smoke test **refuses to run** rather than executing in-process and calling the result a package failure. Running it from an embedded agent shell — Grok Bot Shell, an IDE terminal, a host app's subprocess — is *not* the ship-gate context on its own, because macOS attributes the Apple events to that parent. Either start the LaunchAgent (preferred, and what production clients use), or run it from **Terminal.app**, where node is the responsible process, and pass `--allow-local` to acknowledge that:
+**The parent process matters.** With `--apply` and **no bridge listening**, the smoke test **refuses to run** rather than executing in-process and calling the result a package failure. Running it from an embedded agent shell, an IDE terminal, or a host app's subprocess is *not* the ship-gate context on its own, because macOS attributes the Apple events to that parent. Either start the LaunchAgent (preferred, and what production clients use), or run it from **Terminal.app**, where node is the responsible process, and pass `--allow-local` to acknowledge that:
 
 ```bash
 node scripts/smoke-writes.js --apply --allow-local   # only from Terminal.app / launchd
@@ -181,7 +181,7 @@ Expected results: **PASS on the Node host with the bridge up — this is the shi
 
 ### 3. Configure your MCP client
 
-This server speaks MCP over **stdio**. Any compatible client can run it — Claude Desktop is one example, not the only one. Cursor, Grok Bot, and other stdio MCP clients work the same way: register the command below in that client's MCP settings.
+This server speaks MCP over **stdio**. Any compatible client can run it — Claude Desktop is one example, not the only one. Other stdio MCP clients work the same way: register the command below in that client's MCP settings.
 
 **Command**
 
@@ -264,9 +264,9 @@ Missing `config.json` is fine — env then the 5-minute default apply.
 
 ## Always-on indexer (Mac Mini LaunchAgent)
 
-On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tools-mcp`. Grok Bot, Claude Desktop, and other clients still attach via short-lived stdio MCP (`npx -y apple-tools-mcp` or the global `apple-tools-mcp` bin).
+On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tools-mcp`. Claude Desktop and other clients still attach via short-lived stdio MCP (`npx -y apple-tools-mcp` or the global `apple-tools-mcp` bin).
 
-The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Contacts/Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)). When macOS prompts, Allow **`node`** (the LaunchAgent binary) to control Contacts.app and Calendar.app. Do not approve Grok Bot, and do not try to add `node` via **+** in the Contacts or Calendars privacy lists.
+The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Contacts/Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)). When macOS prompts, Allow **`node`** (the LaunchAgent binary) to control Contacts.app and Calendar.app. Do not approve the MCP client / host app that launched a short-lived stdio server, and do not try to add `node` via **+** in the Contacts or Calendars privacy lists.
 
 The bridge is created before the daemon touches the vector index, so writes stay available even when the index is missing, locked, or mid-rebuild. Confirm it after an upgrade with `ls -l ~/.apple-tools-mcp/writer.sock` (it should be a `srw-------` socket); the daemon removes it on shutdown.
 
@@ -526,7 +526,7 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 The message names which process macOS was actually asking about. Work through it in this order:
 
 1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Contacts and Calendar writes (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)).
-2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary; on this Mini `/Users/petercoates/.local/node/bin/node`) is allowed to control Contacts and Calendar. Do **not** approve Grok Bot (`com.anysphere.sand`) for the ship gate, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms Automation prompts. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
+2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary; on this Mini `/Users/petercoates/.local/node/bin/node`) is allowed to control Contacts and Calendar. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms Automation prompts. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
 4. **Is it actually the write path?** Contacts or Calendar *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts or Calendar *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#reads-and-writes-are-different-mechanisms): Claude.app carries neither the addressbook nor the calendars entitlement. Start the daemon and the write succeeds through the bridge.
 5. **"Contacts.app / Calendar.app could not be reached"** with the app clearly installed is an **Automation / responsible-process** failure, not a missing app — macOS reports a refused Apple event as `-1728` / "can't get application". The tool says so and points at the bridge. Start the LaunchAgent, or run from Terminal.app and approve the Automation prompt.

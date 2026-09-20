@@ -724,11 +724,13 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('System Settings → Privacy & Security → Automation')
     expect(readme).toContain('npm run smoke:writes --apply')
     expect(readme).toContain('/Users/petercoates/.local/node/bin/node')
-    expect(readme).toContain('Do **not** approve Grok Bot (`com.anysphere.sand`)')
+    expect(readme).toContain('Do **not** approve the MCP client / host app that launched a short-lived stdio server')
+    expect(readme).toContain('embedded agent shell, IDE terminal, or MCP host app subprocess')
     expect(readme).toContain('Full Disk Access')
     expect(readme).toContain('npm Trusted Publisher')
     expect(readme).toContain('Do not add `node` via the + button')
     expect(readme).toContain('those panes often have **no Add button**')
+    expect(readme).not.toMatch(/Grok|anysphere|\bsand\b/i)
 
     // Fail-path copy must not send QA back to the privacy-list + button.
     expect(smoke).toContain('Privacy & Security > Automation')
