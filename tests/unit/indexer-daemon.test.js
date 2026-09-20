@@ -34,8 +34,8 @@ describe('package version 2.0.2', () => {
     expect(indexSrc).toContain('PACKAGE_VERSION')
     expect(indexSrc).toContain('Apple Tools MCP server running (v${PACKAGE_VERSION})')
     expect(indexSrc).toContain('Apple Tools MCP indexer running (v${PACKAGE_VERSION})')
-    expect(indexSrc).toContain('maybeNotifyIndexerRunning')
-    expect(indexSrc).toContain('LaunchAgent must stay quiet')
+    expect(indexSrc).not.toContain('maybeNotifyIndexerRunning')
+    expect(indexSrc).not.toContain('display notification')
     // The advertised version still comes from package.json, never a literal.
     expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.[0-9]["']/)
   })
