@@ -454,7 +454,7 @@ Events are addressed by their **iCalendar UID**, reported as `Event ID` by `cale
 
 `calendar_add`, `calendar_edit`, and `calendar_remove` share the same write-bridge RPC (`{ tool, args }` into launchd-owned node). They do not use a different socket or calendar account. Calendar.app’s dictionary has **`delete` only** — there is no `remove` or `move to trash`.
 
-Non-recurring `calendar_add` **must** create through **EventKit** and print `via: EventKit` plus `eventkit_id`. Mini `8be6cd5`: EventKit add failed (writeOnly often cannot `calendarsForEntityType`; we now use `defaultCalendarForNewEvents`) and silently fell through to Calendar.app — remove then `EVENTKIT_NOT_FOUND status=4` and Calendar.app `delete` `ETIMEDOUT`. There is **no AppleScript fallback** for non-recurring add. Recurring add still uses Calendar.app (RRULE).
+Non-recurring `calendar_add` **must** create through **EventKit** and print `via: EventKit` plus `eventkit_id`. Mini `cd74071`: EventKit had `eventKitCalendars=1` but `default=[id NSTaggedPointerString]` — JXA `String(title)` prints the ObjC class, not the calendar name, so the title match missed the only writable calendar. Titles and `calendarIdentifier` are `ObjC.unwrap`d; a single writable calendar or `defaultCalendarForNewEvents` is used when the name does not match. There is **no AppleScript fallback** for non-recurring add.
 
 `calendar_remove` is EventKit-first with those ids. Calendar.app `delete` is fallback only. `ETIMEDOUT` / `-1712` is **`timeout`**, never TCC. Failures print `osascript kind=… error=… codes=…`. `--apply` fails closed unless add printed `via: EventKit` and `eventkit_id`.
 

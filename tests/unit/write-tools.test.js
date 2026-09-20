@@ -553,6 +553,10 @@ describe('calendar_add', () => {
     expect(addScript).toContain('calendarItemExternalIdentifier')
     expect(addScript).toContain('eventIdentifier')
     expect(addScript).toContain('defaultCalendarForNewEvents')
+    expect(addScript).toContain('ObjC.unwrap')
+    expect(addScript).toContain('calendarIdentifier')
+    expect(addScript).toContain('writables.length === 1')
+    expect(addScript).toContain('function jsString')
     expect(parseEventKitAddOutput('UID<<>>LOCAL<<>>Calendar')).toEqual({
       eventId: 'UID',
       eventKitId: 'LOCAL',
