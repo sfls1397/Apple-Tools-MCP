@@ -247,11 +247,11 @@ describe('TCC guidance separates reads from writes', () => {
     // Mini: make new outgoing message blocks until spawnSync times out when
     // node → Mail Automation is denied. The error string contains
     // "spawnSync osascript" but must not be classified as ENOENT.
-    expect(classifyAppleScriptError('spawnSync osascript ETIMEDOUT')).toBe('tcc')
-    expect(classifyAppleScriptError('Error: spawnSync osascript ETIMEDOUT')).toBe('tcc')
-    expect(classifyAppleScriptError('Mail got an error: AppleEvent timed out. (-1712)')).toBe('tcc')
-    expect(isTccDenial('spawnSync osascript ETIMEDOUT')).toBe(true)
-    expect(isTccDenial('AppleEvent timed out. (-1712)')).toBe(true)
+    expect(classifyAppleScriptError('spawnSync osascript ETIMEDOUT')).toBe('timeout')
+    expect(classifyAppleScriptError('Error: spawnSync osascript ETIMEDOUT')).toBe('timeout')
+    expect(classifyAppleScriptError('Mail got an error: AppleEvent timed out. (-1712)')).toBe('timeout')
+    expect(isTccDenial('spawnSync osascript ETIMEDOUT')).toBe(false)
+    expect(isTccDenial('AppleEvent timed out. (-1712)')).toBe(false)
     expect(MAIL_TCC_GUIDANCE).toContain('hang or timeout')
     expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
     expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
@@ -267,9 +267,9 @@ describe('TCC guidance separates reads from writes', () => {
       'ETIMEDOUT'
     ])
     expect(formatOsascriptDiagnostic({
-      kind: 'tcc',
+      kind: 'timeout',
       error: 'spawnSync osascript ETIMEDOUT'
-    })).toBe('osascript kind=tcc error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT')
+    })).toBe('osascript kind=timeout error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT')
   })
 
   it('treats a missing osascript as an unavailable app, not a privacy denial', () => {

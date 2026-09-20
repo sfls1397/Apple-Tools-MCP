@@ -39,7 +39,10 @@ import {
   buildRecurrenceRule,
   buildRemoveEventScript,
   buildEventKitRemoveScript,
-  shouldTryEventKitRemove,
+  buildEventKitAddScript,
+  parseEventKitAddOutput,
+  parseEventKitCalendarList,
+  mergeCalendarSources,
   describeCalendarRemoveFailure,
   validateAlerts,
   defaultEndParts
@@ -511,12 +514,45 @@ describe('calendar_add', () => {
   })
 
   it('defaults an all-day event to the end of that day', () => {
-    osascript.mockReturnValue('EVT-ALLDAY')
+    osascript.mockReturnValue('EVT-ALLDAY<<>>EK-LOCAL-1')
     const result = calendarAdd({ calendar_name: 'Work', title: 'Offsite', start: '2026-09-21' })
     expect(result.ok).toBe(true)
+    expect(result.message).toContain('EVT-ALLDAY')
+    expect(result.message).toContain('eventkit_id: EK-LOCAL-1')
+    expect(result.message).toContain('EventKit')
     const script = lastScript()
-    expect(script).toContain('allday event:true')
-    expect(script).toContain('set endDate to atmMakeDate(2026, 9, 21, 23, 59)')
+    expect(script).toContain('saveEventSpanCommitError')
+    expect(script).toContain('var allDay = true')
+    expect(script).toContain('event.allDay = allDay')
+  })
+
+  it('creates a non-recurring event through EventKit so remove can use the same ids', () => {
+    osascript.mockReturnValue('75984151-1160-40A9-895E-D63B6C8808A8<<>>EK-SMOKE-1')
+    const result = calendarAdd({
+      calendar_name: 'Work',
+      title: 'ATM smoke',
+      start: '2026-09-21 09:00',
+      end: '2026-09-21 10:00'
+    })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('75984151-1160-40A9-895E-D63B6C8808A8')
+    expect(result.message).toContain('eventkit_id: EK-SMOKE-1')
+    expect(lastScript()).toContain('saveEventSpanCommitError')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    const addScript = buildEventKitAddScript({
+      calendarName: 'Work',
+      title: 'ATM smoke',
+      start: { year: 2026, month: 9, day: 21, hour: 9, minute: 0 },
+      end: { year: 2026, month: 9, day: 21, hour: 10, minute: 0 },
+      allDay: false,
+      location: '',
+      notes: '',
+      alerts: [10]
+    })
+    expect(addScript).toContain('calendarItemExternalIdentifier')
+    expect(addScript).toContain('eventIdentifier')
+    expect(parseEventKitAddOutput('UID<<>>LOCAL')).toEqual({ eventId: 'UID', eventKitId: 'LOCAL' })
   })
 
   it('requires a calendar name so events do not land on the default', () => {
@@ -564,26 +600,36 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(blocked.message).toContain('CONFIRMATION REQUIRED')
     expect(osascript).not.toHaveBeenCalled()
 
-    osascript.mockReturnValue('Standup')
-    const confirmed = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
+    osascript.mockReturnValue('1')
+    const confirmed = calendarRemove({ event_id: 'EVT-UID-1', eventkit_id: 'EK-1', confirm: true })
     expect(confirmed.ok).toBe(true)
-    expect(confirmed.message).toContain('Standup')
+    expect(confirmed.message).toContain('EventKit')
     const script = lastScript()
-    expect(script).toContain('delete (event id evId of cal)')
-    expect(script).toContain('with timeout of 20 seconds')
-    expect(script).toContain('delete theEvent')
-    expect(script).not.toContain('delete (every event whose uid')
-    expect(script).not.toContain('atmFindEvent')
-    expect(script).not.toContain('move to trash')
-    expect(script).not.toMatch(/\bremove\b/)
+    expect(script).toContain('eventWithIdentifier')
+    expect(script).toContain('calendarItemsWithExternalIdentifier')
+    expect(script).toContain('removeEventSpanCommitError')
+    expect(script).toContain('EK-1')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
   })
 
-  it('scopes calendar_remove to calendar_name when given', () => {
-    calendarRemove({ event_id: 'EVT-UID-1', calendar_name: 'Work', confirm: true })
-    const script = lastScript()
+  it('falls back to Calendar.app delete when EventKit cannot see the event', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('calendarItemsWithExternalIdentifier')) {
+        throw new Error('execution error: Error: Error: EVENTKIT_NOT_FOUND status=4 (-2700)')
+      }
+      return 'Standup'
+    })
+    const result = calendarRemove({ event_id: 'EVT-UID-1', calendar_name: 'Work', confirm: true })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('Standup')
+    expect(osascript).toHaveBeenCalledTimes(2)
+    const script = osascript.mock.calls[1][0]
     expect(script).toContain('if (name of cal) is "Work"')
     expect(script).toContain('delete (event id evId of cal)')
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(script).toContain('with timeout of 20 seconds')
+    expect(script).not.toContain('delete (every event whose uid')
+    expect(script).not.toContain('move to trash')
   })
 
   it('does not report a failed Calendar delete as Calendar.app unreachable', () => {
@@ -599,10 +645,10 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(result.message).not.toContain('denied Calendar access')
     expect(result.suppressTccAdvice).toBe(true)
     expect(osascript).toHaveBeenCalledTimes(2)
-    expect(osascript.mock.calls[1][1]).toMatchObject({ language: 'JavaScript' })
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
   })
 
-  it('falls back to EventKit when Calendar.app delete times out', () => {
+  it('removes via EventKit first so an iCloud Calendar.app hang is skipped', () => {
     osascript.mockImplementation((script) => {
       if (String(script).includes('calendarItemsWithExternalIdentifier')) return '1'
       throw new Error('spawnSync osascript ETIMEDOUT')
@@ -611,17 +657,22 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(result.ok).toBe(true)
     expect(result.message).toContain('EventKit')
     expect(result.message).toContain('EVT-UID-1')
-    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 
   it('surfaces raw osascript codes on calendar_remove timeout instead of TCC deny', () => {
-    osascript.mockImplementation(() => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('calendarItemsWithExternalIdentifier')) {
+        throw new Error('execution error: Error: Error: EVENTKIT_NOT_FOUND status=4 (-2700)')
+      }
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
     const result = calendarRemove({ event_id: 'EVT-UID-1', confirm: true })
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('osascript kind=timeout')
     expect(result.message).toContain('ETIMEDOUT')
+    expect(result.message).toContain('EVENTKIT_NOT_FOUND')
+    expect(result.message).toContain('-2700')
     expect(result.message).toContain('not a TCC / Automation deny')
     expect(result.message).not.toContain('denied Calendar access')
     expect(result.suppressTccAdvice).toBe(true)
@@ -641,23 +692,32 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(result.suppressTccAdvice).toBe(false)
   })
 
-  it('builds an EventKit JXA delete by iCal UID and skips fallback on CALENDAR_NOT_FOUND', () => {
-    const script = buildEventKitRemoveScript('DC4AC0EF-5BF1-448C-8492-E48A95FCB492')
+  it('looks up EventKit by eventIdentifier and externalIdentifier', () => {
+    const script = buildEventKitRemoveScript('DC4AC0EF-5BF1-448C-8492-E48A95FCB492', { eventKitId: 'EK-LOCAL' })
     expect(script).toContain('calendarItemsWithExternalIdentifier')
+    expect(script).toContain('eventWithIdentifier')
     expect(script).toContain('removeEventSpanCommitError')
     expect(script).toContain('DC4AC0EF-5BF1-448C-8492-E48A95FCB492')
-    expect(shouldTryEventKitRemove({ ok: false, error: 'CALENDAR_NOT_FOUND' })).toBe(false)
-    expect(shouldTryEventKitRemove({ ok: false, error: 'spawnSync osascript ETIMEDOUT' })).toBe(true)
+    expect(script).toContain('EK-LOCAL')
+    expect(script).toContain('writeOnly')
     expect(buildRemoveEventScript('EVT-1')).toContain('DELETE_TIMEOUT')
     const described = describeCalendarRemoveFailure(
       'calendar_remove',
       'delete calendar event EVT-1',
-      { ok: false, error: 'spawnSync osascript ETIMEDOUT', kind: 'tcc' },
-      { ok: false, error: 'EVENTKIT_NOT_FOUND status=3', kind: 'unknown' }
+      { ok: false, error: 'spawnSync osascript ETIMEDOUT', kind: 'timeout' },
+      { ok: false, error: 'EVENTKIT_NOT_FOUND status=4 writeOnly (-2700)', kind: 'not_found' }
     )
-    expect(described.message).toContain('osascript kind=tcc error=spawnSync osascript ETIMEDOUT')
+    expect(described.message).toContain('osascript kind=timeout error=spawnSync osascript ETIMEDOUT')
     expect(described.message).toContain('EVENTKIT_NOT_FOUND')
+    expect(described.message).not.toContain('denied Calendar access')
     expect(described.suppressTccAdvice).toBe(true)
+    expect(parseEventKitCalendarList('Home<<>>yes<<>>yes<<>>0<<>>On My Mac')).toEqual([
+      { name: 'Home', writable: true, local: true, sourceType: 0, source: 'On My Mac' }
+    ])
+    expect(mergeCalendarSources(
+      [{ name: 'Home', writable: true }],
+      [{ name: 'Home', writable: true, local: true, sourceType: 0, source: 'On My Mac' }]
+    )[0].local).toBe(true)
   })
 
   it('RSVPs with a validated response', () => {
@@ -1020,6 +1080,14 @@ describe('write smoke script (QA prove-out helpers)', () => {
     expect(extractEventId('calendar_add: event created. event_id: EVT-UID-1 calendar: Work'))
       .toBe('EVT-UID-1')
     expect(extractEventId('calendar_add failed — ...')).toBeNull()
+    const { extractEventKitId, pickSmokeCalendar } = await import('../../scripts/smoke-writes.js')
+    expect(extractEventKitId('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit'))
+      .toBe('EK-1')
+    expect(pickSmokeCalendar([
+      { name: 'iCloud', writable: true, local: false },
+      { name: 'Home', writable: true, local: true }
+    ], null)).toEqual({ name: 'Home', reason: 'On My Mac (EventKit sourceType local)' })
+    expect(pickSmokeCalendar([{ name: 'Work', writable: true }], 'Work').name).toBe('Work')
   })
 
   it('schedules the smoke event far enough out to miss real appointments', async () => {
@@ -1118,11 +1186,11 @@ describe('dispatchWriteTool routing', () => {
       runLocally: () => ({
         ok: false,
         suppressTccAdvice: true,
-        message: 'calendar_remove failed — Calendar.app delete timed out. osascript kind=tcc error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT'
+        message: 'calendar_remove failed — Calendar.app delete timed out. osascript kind=timeout error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT'
       })
     })
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('osascript kind=tcc')
+    expect(result.message).toContain('osascript kind=timeout')
     expect(result.message).not.toContain('No indexer daemon is running')
     expect(result.message).not.toContain('apple-tools-indexer')
   })

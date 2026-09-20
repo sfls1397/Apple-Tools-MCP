@@ -102,6 +102,31 @@ export function extractEventId(message) {
   return match ? match[1] : null;
 }
 
+export function extractEventKitId(message) {
+  const match = String(message || "").match(/eventkit_id:\s*([A-Za-z0-9._:@+/=-]+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Prefer an On My Mac calendar so Calendar.app delete is reliable if EventKit
+ * remove still misses. EventKit add/remove is the primary path on iCloud
+ * (writeOnly can delete events it created). An explicit --calendar= wins.
+ */
+export function pickSmokeCalendar(calendars, explicitName) {
+  if (explicitName) {
+    return { name: explicitName, reason: `--calendar=${explicitName}` };
+  }
+  const writable = (calendars || []).filter((c) => c.writable);
+  const local = writable.filter((c) => c.local);
+  if (local[0]) {
+    return { name: local[0].name, reason: "On My Mac (EventKit sourceType local)" };
+  }
+  if (writable[0]) {
+    return { name: writable[0].name, reason: "first writable calendar (no local calendar listed)" };
+  }
+  return { name: "Calendar", reason: "fallback name Calendar" };
+}
+
 /**
  * Listing calendars is a live Calendar.app call even during a dry run, so a
  * refusal there says something about this host - but it is not a failure of
@@ -352,11 +377,12 @@ async function main() {
   }
 
   const writable = (calendars.calendars || []).filter((c) => c.writable);
-  const targetCalendar = calendar || (writable[0] && writable[0].name) || "Calendar";
+  const picked = pickSmokeCalendar(calendars.calendars || [], calendar);
+  const targetCalendar = picked.name;
   if (calendar && writable.length > 0 && !writable.some((c) => c.name === calendar)) {
     console.log(`  Warning: --calendar=${calendar} is not in the writable list; trying it anyway.`);
   }
-  line("  Target calendar:", targetCalendar);
+  line("  Target calendar:", `${targetCalendar} (${picked.reason})`);
 
   const window = smokeEventWindow();
   const eventCreated = step("calendar_add", await run("calendar_add", {
@@ -372,6 +398,7 @@ async function main() {
 
   if (eventCreated.ok !== false) {
     const eventId = apply ? extractEventId(eventCreated.message) : "ATM-SMOKE-EVENT-UID";
+    const eventKitId = apply ? extractEventKitId(eventCreated.message) : null;
     if (apply && !eventId) {
       console.log("  calendar_add reported success but returned no event id; skipping edit/delete.");
       results.push({ ok: false });
@@ -387,6 +414,7 @@ async function main() {
       } else {
         const removed = step("calendar_remove", await run("calendar_remove", {
           event_id: eventId,
+          eventkit_id: eventKitId || undefined,
           calendar_name: targetCalendar,
           ...common
         }));
