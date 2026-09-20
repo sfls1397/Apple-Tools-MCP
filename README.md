@@ -130,25 +130,42 @@ If a write is denied and no daemon is listening, the tool says so and tells you 
 
 #### Verifying Contacts and Calendar CRUD on a Node host
 
-Run the bundled smoke test on the Mac that owns the data (the Mini). Dry run first — it changes nothing:
+The smoke test drives writes through **the same dispatcher the MCP tools use**, so when the write bridge is up the work executes inside the indexer daemon. That matters: the thing being proven is the shipping path, not the Automation rights of whatever shell you happened to type the command into.
+
+**Ship-gate procedure (Mini):**
+
+1. **Make sure the indexer LaunchAgent is running**, so the bridge is listening:
+
+   ```bash
+   pgrep -fl apple-tools-indexer
+   ls -l ~/.apple-tools-mcp/writer.sock
+   ```
+
+2. **Check out the tip / unpack the tarball** you are gating, in a short-lived directory. The global install stays untouched.
+
+3. **Dry run first** — it changes nothing:
+
+   ```bash
+   npm run smoke:writes
+   ```
+
+4. **Prove real CRUD.** This creates a clearly-named test contact and a test event roughly a year out, edits each, and deletes both again:
+
+   ```bash
+   node scripts/smoke-writes.js --apply                  # first writable calendar
+   node scripts/smoke-writes.js --apply --calendar=Work  # pick the calendar
+   node scripts/smoke-writes.js --apply --keep           # leave the test items behind
+   ```
+
+The header prints the write path it chose (`indexer daemon via write bridge` or `in this process`), and the read path (sqlite + FDA) is reported separately from the two write paths (Contacts.app, Calendar.app), so a failure tells you which mechanism refused.
+
+**The parent process matters.** With `--apply` and **no bridge listening**, the smoke test **refuses to run** rather than executing in-process and calling the result a package failure. Running it from an embedded agent shell — Grok Bot Shell, an IDE terminal, a host app's subprocess — is *not* the ship-gate context on its own, because macOS attributes the Apple events to that parent. Either start the LaunchAgent (preferred, and what production clients use), or run it from **Terminal.app**, where node is the responsible process, and pass `--allow-local` to acknowledge that:
 
 ```bash
-# from a clone
-npm run smoke:writes
-
-# from the global install
-node "$(npm root -g)/apple-tools-mcp/scripts/smoke-writes.js"
+node scripts/smoke-writes.js --apply --allow-local   # only from Terminal.app / launchd
 ```
 
-Then prove real CRUD. This creates a clearly-named test contact and a test event well in the future, edits each, and deletes both again:
-
-```bash
-node scripts/smoke-writes.js --apply                  # first writable calendar
-node scripts/smoke-writes.js --apply --calendar=Work  # pick the calendar
-node scripts/smoke-writes.js --apply --keep           # leave the test items behind
-```
-
-It reports the read path (sqlite + FDA) and the two write paths (Contacts.app, Calendar.app) separately, so a failure tells you which mechanism is at fault. Expected results: **PASS on the Node host — this is the ship gate for Contacts and Calendar writes**. On Claude Desktop with no daemon running, Contacts and Calendar CRUD are both expected to fail; that is the documented host limitation above, not a regression.
+Expected results: **PASS on the Node host with the bridge up — this is the ship gate for Contacts and Calendar writes.** On Claude Desktop with no daemon running, Contacts and Calendar CRUD are both expected to fail; that is the documented host limitation above, not a regression.
 
 ### 3. Configure your MCP client
 
@@ -238,6 +255,8 @@ Missing `config.json` is fine — env then the 5-minute default apply.
 On Mini, run the **indexer daemon**, not a sleep-pipe wrapper around `apple-tools-mcp`. Grok Bot, Claude Desktop, and other clients still attach via short-lived stdio MCP (`npx -y apple-tools-mcp` or the global `apple-tools-mcp` bin).
 
 The daemon does two jobs: it refreshes the vector index, and it serves the **write bridge** at `~/.apple-tools-mcp/writer.sock` so stdio clients can perform Contacts/Calendar writes that their host app cannot be granted (see [step 2b](#2b-grant-automation-permissions-for-write-tools-first-run)). Approve the Automation / Contacts / Calendars prompts once for the daemon's node binary.
+
+The bridge is created before the daemon touches the vector index, so writes stay available even when the index is missing, locked, or mid-rebuild. Confirm it after an upgrade with `ls -l ~/.apple-tools-mcp/writer.sock` (it should be a `srw-------` socket); the daemon removes it on shutdown.
 
 **Entrypoint:** `node index.js --mode=indexer`  
 **Convenience bin:** `apple-tools-indexer` (same file; npm global install provides it)  
@@ -495,7 +514,8 @@ The message names which process macOS was actually asking about. Work through it
 2. **Did you approve the prompts?** Check Privacy & Security → Automation, Contacts, and Calendars for the node binary that runs the daemon. `tccutil reset AddressBook` and `tccutil reset Calendar` re-arm the prompts.
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
 4. **Is it actually the write path?** Contacts or Calendar *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts or Calendar *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#reads-and-writes-are-different-mechanisms): Claude.app carries neither the addressbook nor the calendars entitlement. Start the daemon and the write succeeds through the bridge.
-5. **Prove the host itself works** with `node scripts/smoke-writes.js --apply` on the Node host; it separates the read and write mechanisms for you.
+5. **"Contacts.app / Calendar.app could not be reached"** with the app clearly installed is an **Automation / responsible-process** failure, not a missing app — macOS reports a refused Apple event as `-1728` / "can't get application". The tool says so and points at the bridge. Start the LaunchAgent, or run from Terminal.app and approve the Automation prompt.
+6. **Prove the host itself works** with `node scripts/smoke-writes.js --apply` on the Node host with the LaunchAgent running; it routes through the bridge and separates the read and write mechanisms for you.
 
 ### A write returned "CONFIRMATION REQUIRED"
 

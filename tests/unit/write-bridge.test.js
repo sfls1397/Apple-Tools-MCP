@@ -34,8 +34,10 @@ import {
   asString,
   asInteger,
   tccGuidanceFor,
+  appBundleInstalled,
   CONTACTS_TCC_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
+  ATTRIBUTION_GUIDANCE,
   TCC_GUIDANCE
 } from '../../lib/appleScript.js'
 import { isAddressBookPermissionError, ADDRESSBOOK_FDA_HINT } from '../../contacts.js'
@@ -223,6 +225,36 @@ describe('TCC guidance separates reads from writes', () => {
   it('treats a missing osascript as an unavailable app, not a privacy denial', () => {
     expect(classifyAppleScriptError('spawnSync osascript ENOENT')).toBe('app_unavailable')
     expect(isTccDenial('spawnSync osascript ENOENT')).toBe(false)
+  })
+
+  it('calls an installed app that will not respond an attribution failure', () => {
+    // QA hit this on the Mini: Contacts.app and Calendar.app are present in
+    // /System/Applications, but the smoke test reported "not available on
+    // this host" when the real problem was the responsible process.
+    const message = "Contacts got an error: Can't get application \"Contacts\". (-1728)"
+
+    expect(classifyAppleScriptError(message, { appInstalled: true })).toBe('attribution')
+    expect(classifyAppleScriptError(message, { appInstalled: false })).toBe('app_unavailable')
+    expect(classifyAppleScriptError(message)).toBe('app_unavailable')
+
+    expect(ATTRIBUTION_GUIDANCE).toContain('Automation / responsible-process')
+    expect(ATTRIBUTION_GUIDANCE).toContain('apple-tools-indexer')
+    expect(ATTRIBUTION_GUIDANCE).toContain('Terminal.app')
+  })
+
+  it('finds the first-party apps where macOS actually keeps them', () => {
+    const seen = []
+    const exists = (p) => {
+      seen.push(p)
+      return p === '/System/Applications/Contacts.app'
+    }
+
+    expect(appBundleInstalled('Contacts', exists)).toBe(true)
+    expect(seen).toContain('/System/Applications/Contacts.app')
+    expect(appBundleInstalled('Calendar', () => false)).toBe(false)
+    // No app name means we cannot tell, which must not be read as "missing".
+    expect(appBundleInstalled(null)).toBeNull()
+    expect(appBundleInstalled('../../evil', () => true)).toBeNull()
   })
 
   it('classifies an AddressBook read failure as Full Disk Access, not the entitlement gap', () => {

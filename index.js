@@ -386,15 +386,27 @@ function waitForLockAndStartDaemon() {
 
 // Initialize and start indexing
 async function initializeIndexing() {
-  isFirstEverRun = await checkIfFirstRun();
-
   if (INDEXER_MODE) {
     console.error(`Apple Tools MCP indexer running (v${PACKAGE_VERSION})`);
     logResolvedInterval(resolvedIndexInterval);
     loggedIndexInterval = true;
     // launchd started this process, so node owns its TCC prompts. Offer the
     // write bridge to stdio clients whose host app cannot get those grants.
+    // This happens before any index work: writes must stay available even if
+    // the vector index is missing, locked, or unreadable.
     await startWriteBridge();
+  }
+
+  try {
+    isFirstEverRun = await checkIfFirstRun();
+  } catch (e) {
+    // A failed readiness probe must not take the daemon (or its write
+    // bridge) down; assume a first run and let the cycle report the details.
+    console.error(`Could not determine index state: ${e.message}`);
+    isFirstEverRun = true;
+  }
+
+  if (INDEXER_MODE) {
     waitForLockAndStartDaemon();
     return;
   }
@@ -421,8 +433,12 @@ async function initializeIndexing() {
   });
 }
 
-// Start indexing immediately on server startup
-initializeIndexing();
+// Start indexing immediately on server startup. A startup failure is logged
+// rather than rejected: an unhandled rejection would tear down the daemon,
+// taking the write bridge with it.
+initializeIndexing().catch((e) => {
+  console.error(`Indexing startup failed: ${e.message}`);
+});
 
 // ============ SEMANTIC SEARCH FUNCTIONS ============
 
