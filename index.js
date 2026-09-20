@@ -29,6 +29,8 @@ import {
   executeWriteToolLocally
 } from "./lib/writeTools.js";
 import { startWriteBridgeServer, defaultSocketPath } from "./lib/writeBridge.js";
+import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSession.js";
+import { EVENTKIT_JXA_HELPERS } from "./lib/calendarWrite.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -83,6 +85,7 @@ const WRITE_SOCKET_PATH = defaultSocketPath();
 let writeBridge = null;
 
 function stopWriteBridge() {
+  closeEventKitSession();
   if (!writeBridge) return;
   try {
     writeBridge.close();
@@ -99,6 +102,7 @@ async function startWriteBridge() {
       handler: (tool, args) => executeWriteToolLocally(tool, args),
       log: (msg) => console.error(msg)
     });
+    ensureEventKitSession({ helpers: EVENTKIT_JXA_HELPERS });
   } catch (e) {
     console.error(`Write bridge unavailable: ${e.message}. Writes will run in each MCP process.`);
   }

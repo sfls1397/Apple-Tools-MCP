@@ -64,7 +64,11 @@ Builds escaped AppleScript literals (`asString`/`asInteger`/`dateCall`), parses 
 
 ### lib/mailWrite.js, messagesWrite.js, calendarWrite.js, contactsWrite.js -- Write implementations
 
-One module per data source. Each exports pure `build*Script()` builders (unit-tested without macOS) plus the tool functions. Mail addresses messages by RFC822 Message-ID (resolvable from an `.emlx` `file_path`); Messages verifies a `chat_id` against `chat.db` before sending and counts participants to detect group chats; Calendar addresses events by iCal UID and builds RRULEs from an allowlisted grammar; non-recurring `calendar_add` **must** create via EventKit (`via: EventKit` + `eventkit_id`; `ObjC.unwrap` titles/`calendarIdentifier`, single writable calendar or `defaultCalendarForNewEvents`) and does not fall back to Calendar.app; `calendar_edit` / `calendar_remove` consume that `eventkit_id` (`eventWithIdentifier` / colon-split halves) and skip Calendar.app uid lookup when it is present; ETIMEDOUT is `timeout` not TCC; Contacts addresses people by Contacts.app person id and never writes the AddressBook database directly.
+One module per data source. Each exports pure `build*Script()` builders (unit-tested without macOS) plus the tool functions. Mail addresses messages by RFC822 Message-ID (resolvable from an `.emlx` `file_path`); Messages verifies a `chat_id` against `chat.db` before sending and counts participants to detect group chats; Calendar addresses events by iCal UID and builds RRULEs from an allowlisted grammar; non-recurring `calendar_add` **must** create via EventKit (`via: EventKit` + `eventkit_id` from the in-memory saved event — writeOnly cannot re-query) and does not fall back to Calendar.app; the write-bridge daemon keeps an EventKit session that caches the `EKEvent` so `calendar_edit` / `calendar_remove` can save/remove without `eventWithIdentifier`; ETIMEDOUT is `timeout` not TCC; Contacts addresses people by Contacts.app person id and never writes the AddressBook database directly.
+
+### lib/eventKitSession.js -- writeOnly EventKit object cache
+
+Long-lived `osascript -l JavaScript` worker owned by the indexer write bridge. writeOnly EventKit can create and read ids off the saved `EKEvent` but cannot `eventWithIdentifier` afterwards; the worker caches that object so edit/remove call `saveEvent` / `removeEvent` in the same process.
 
 ### lib/writeBridge.js + lib/writeRouting.js -- TCC attribution
 
