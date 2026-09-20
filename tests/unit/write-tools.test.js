@@ -48,6 +48,7 @@ import {
   validateAlerts,
   defaultEndParts
 } from '../../lib/calendarWrite.js'
+import { setEventKitSession } from '../../lib/eventKitSession.js'
 import { contactsAdd, contactsEdit, contactsRemove } from '../../lib/contactsWrite.js'
 import {
   WRITE_TOOL_DEFINITIONS,
@@ -64,6 +65,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 beforeEach(() => {
   osascript.mockReset()
   osascript.mockReturnValue('')
+  setEventKitSession(null)
 })
 
 function lastScript() {
@@ -554,7 +556,7 @@ describe('calendar_add', () => {
     expect(addScript).toContain('calendarItemExternalIdentifier')
     expect(addScript).toContain('eventIdentifier')
     expect(addScript).toContain('calendarItemIdentifier')
-    expect(addScript).toContain('findEventByIds')
+    expect(addScript).not.toContain('EVENTKIT_LOOKUP_FAILED')
     expect(addScript).toContain('defaultCalendarForNewEvents')
     expect(addScript).toContain('ObjC.unwrap')
     expect(addScript).toContain('calendarIdentifier')
@@ -628,6 +630,49 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     const result = calendarEdit({ title: 'New title' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('event_id is required')
+  })
+
+  it('creates, edits, and removes through the EventKit session without re-query', () => {
+    const calls = []
+    setEventKitSession({
+      request(cmd) {
+        calls.push(cmd)
+        if (cmd.op === 'create') return { ok: true, output: '0801367E-5F98-477D-873D-C6ED8CD662D8<<>>9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8<<>>Calendar<<>>368D05E6-2D88-4800-8AE7-C40248D231AC' }
+        return { ok: true, output: '1' }
+      },
+      close() {}
+    })
+    const added = calendarAdd({
+      calendar_name: 'Calendar',
+      title: 'ATM smoke',
+      start: '2026-09-21 09:00',
+      end: '2026-09-21 10:00'
+    })
+    expect(added.ok).toBe(true)
+    expect(added.message).toContain('via: EventKit')
+    expect(added.message).toContain('eventkit_id: 9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8')
+    expect(osascript).not.toHaveBeenCalled()
+
+    const edited = calendarEdit({
+      event_id: '0801367E-5F98-477D-873D-C6ED8CD662D8',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8',
+      title: 'Edited'
+    })
+    expect(edited.ok).toBe(true)
+    expect(edited.message).toContain('EventKit')
+    expect(osascript).not.toHaveBeenCalled()
+
+    const removed = calendarRemove({
+      event_id: '0801367E-5F98-477D-873D-C6ED8CD662D8',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8',
+      confirm: true
+    })
+    expect(removed.ok).toBe(true)
+    expect(removed.message).toContain('EventKit')
+    expect(osascript).not.toHaveBeenCalled()
+    expect(calls.map((c) => c.op)).toEqual(['create', 'update', 'remove'])
+    expect(calls[1].ids).toContain('9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:0801367E-5F98-477D-873D-C6ED8CD662D8')
+    expect(calls[2].ids).toContain('0801367E-5F98-477D-873D-C6ED8CD662D8')
   })
 
   it('edits via EventKit when eventkit_id is present', () => {
@@ -1117,6 +1162,8 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toMatch(/run\("calendar_edit"[\s\S]*eventkit_id:/)
     expect(smoke).toMatch(/run\("calendar_remove"[\s\S]*eventkit_id:/)
     expect(readme).toContain('optional `eventkit_id` from add')
+    expect(readme).toContain('cannot re-query')
+    expect(readme).toContain('long-lived EventKit osascript session')
     expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
     expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
   })
