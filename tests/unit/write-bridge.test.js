@@ -41,6 +41,7 @@ import {
   CONTACTS_TCC_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
   MAIL_TCC_GUIDANCE,
+  MAIL_SEND_TIMEOUT_GUIDANCE,
   MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE,
   TCC_GUIDANCE
@@ -255,6 +256,12 @@ describe('TCC guidance separates reads from writes', () => {
     expect(MAIL_TCC_GUIDANCE).toContain('hang or timeout')
     expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
     expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('find/reply/send hang')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('not a TCC / Automation deny')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('Check Sent')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('before retrying')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('-1743')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('-10004')
     expect(MESSAGES_TCC_GUIDANCE).toContain('node → Messages')
   })
 
