@@ -649,15 +649,75 @@ describe('write tool definitions', () => {
     expect(daemonBranch).toContain('await startWriteBridge()')
     expect(indexSrc).toContain('stopWriteBridge()')
   })
+
+  it('starts the bridge before any index work, and survives a bad index', () => {
+    const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
+    const bridgeAt = indexSrc.indexOf('await startWriteBridge()')
+    const readinessAt = indexSrc.indexOf('await checkIfFirstRun()')
+
+    // A missing or locked vector index must not stop the daemon from
+    // serving writes, so the bridge comes up first.
+    expect(bridgeAt).toBeGreaterThan(-1)
+    expect(bridgeAt).toBeLessThan(readinessAt)
+    expect(indexSrc).toContain('Could not determine index state')
+    expect(indexSrc).toContain('Indexing startup failed')
+  })
+})
+
+describe('write smoke script routing (ship gate)', () => {
+  it('uses the write bridge whenever the daemon is listening', async () => {
+    const { resolveSmokePath } = await import('../../scripts/smoke-writes.js')
+    const route = resolveSmokePath({ apply: true, bridgeUp: true, allowLocal: false, indexerMode: false })
+
+    expect(route.proceed).toBe(true)
+    expect(route.path).toBe('daemon')
+    expect(route.reason).toContain('indexer daemon')
+  })
+
+  it('fails fast on --apply when no bridge is listening', async () => {
+    const { resolveSmokePath } = await import('../../scripts/smoke-writes.js')
+    const route = resolveSmokePath({ apply: true, bridgeUp: false, allowLocal: false, indexerMode: false })
+
+    expect(route.proceed).toBe(false)
+    expect(route.reason).toContain('LaunchAgent')
+    expect(route.reason).toContain('--allow-local')
+    // It must not quietly run in-process under a foreign parent and then
+    // report that as a package failure.
+    expect(route.reason).toContain('refused')
+  })
+
+  it('allows an explicit local run and the daemon itself', async () => {
+    const { resolveSmokePath } = await import('../../scripts/smoke-writes.js')
+    expect(resolveSmokePath({ apply: true, bridgeUp: false, allowLocal: true, indexerMode: false }))
+      .toMatchObject({ proceed: true, path: 'local' })
+    expect(resolveSmokePath({ apply: true, bridgeUp: false, allowLocal: false, indexerMode: true }))
+      .toMatchObject({ proceed: true, path: 'local' })
+  })
+
+  it('never blocks a dry run', async () => {
+    const { resolveSmokePath } = await import('../../scripts/smoke-writes.js')
+    expect(resolveSmokePath({ apply: false, bridgeUp: false, allowLocal: false, indexerMode: false }).proceed).toBe(true)
+  })
+
+  it('dispatches through the production write path, not the write modules directly', () => {
+    const source = fs.readFileSync(path.join(root, 'scripts/smoke-writes.js'), 'utf8')
+
+    expect(source).toContain('dispatchWriteTool')
+    // Importing the write modules directly is what made the smoke test
+    // bypass the bridge and fail the Mini ship gate.
+    expect(source).not.toMatch(/from "\.\.\/lib\/contactsWrite\.js"/)
+    expect(source).not.toMatch(/from "\.\.\/lib\/calendarWrite\.js"/)
+  })
 })
 
 describe('write smoke script (QA prove-out helpers)', () => {
   it('defaults to a dry run and opts in with --apply', async () => {
     const { parseSmokeArgs } = await import('../../scripts/smoke-writes.js')
-    expect(parseSmokeArgs([])).toEqual({ apply: false, keep: false, calendar: null })
-    expect(parseSmokeArgs(['--apply'])).toEqual({ apply: true, keep: false, calendar: null })
-    expect(parseSmokeArgs(['--apply', '--keep'])).toEqual({ apply: true, keep: true, calendar: null })
+    expect(parseSmokeArgs([])).toEqual({ apply: false, keep: false, allowLocal: false, calendar: null })
+    expect(parseSmokeArgs(['--apply'])).toEqual({ apply: true, keep: false, allowLocal: false, calendar: null })
+    expect(parseSmokeArgs(['--apply', '--keep'])).toEqual({ apply: true, keep: true, allowLocal: false, calendar: null })
     expect(parseSmokeArgs(['--apply', '--calendar=Work']).calendar).toBe('Work')
+    expect(parseSmokeArgs(['--apply', '--allow-local']).allowLocal).toBe(true)
   })
 
   it('reads the new ids back out of success messages', async () => {
