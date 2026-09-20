@@ -97,7 +97,7 @@ If you dismissed a prompt, re-open **Automation** and turn the **node → Mail**
 
 #### `dry_run` does not prove Mail Automation
 
-`mail_send` / `mail_draft` / `mail_reply` / `mail_forward` with `dry_run=true` return immediately and **never send Apple events to Mail**. A TCC deny for **node → Mail** is therefore invisible until a real compose (`make new outgoing message`). The hang is **Automation denied**, not “Mail.app could not be reached” / “app not available”.
+`mail_send` / `mail_draft` / `mail_reply` / `mail_forward` with `dry_run=true` return immediately and never send Apple events to Mail — dry_run never talks to Mail. A TCC deny for **node → Mail** is therefore invisible until a real compose (`make new outgoing message`). The hang is **Automation denied**, not “Mail.app could not be reached” / “app not available”.
 
 `tell application "Mail" to get name` can succeed while compose still hangs. The smoke test’s Mail step runs that real compose (then discards the outgoing message, or on an older daemon saves a clearly named Draft) so the deny fails **setup**, not a later production `mail_send`. The same Allow-via-prompt applies to **Messages** for `messages_send`; `messages_send` with `dry_run=true` likewise never talks to Messages.app. Smoke also live-enumerates Messages accounts (nothing is sent). **`--apply` fails closed if Mail, Messages, Contacts, or Calendar Automation is missing.**
 
