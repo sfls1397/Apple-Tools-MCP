@@ -26,22 +26,24 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
 const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
 
-describe('package version 2.0.1', () => {
-  it('is 2.0.1 in package.json, lockfile, and startup logs', () => {
-    expect(pkg.version).toBe('2.0.1')
-    expect(lock.version).toBe('2.0.1')
-    expect(lock.packages[''].version).toBe('2.0.1')
+describe('package version 2.0.2', () => {
+  it('is 2.0.2 in package.json, lockfile, and startup logs', () => {
+    expect(pkg.version).toBe('2.0.2')
+    expect(lock.version).toBe('2.0.2')
+    expect(lock.packages[''].version).toBe('2.0.2')
     expect(indexSrc).toContain('PACKAGE_VERSION')
     expect(indexSrc).toContain('Apple Tools MCP server running (v${PACKAGE_VERSION})')
     expect(indexSrc).toContain('Apple Tools MCP indexer running (v${PACKAGE_VERSION})')
     // The advertised version still comes from package.json, never a literal.
-    expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.[01]["']/)
+    expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.[0-9]["']/)
   })
 
   it('exposes apple-tools-indexer bin and --mode=indexer', () => {
     expect(pkg.bin['apple-tools-mcp']).toBe('./index.js')
     expect(pkg.bin['apple-tools-indexer']).toBe('./index.js')
     expect(pkg.scripts.indexer).toBe('node index.js --mode=indexer')
+    expect(pkg.scripts.permissions).toBe('node index.js permissions')
+    expect(pkg.scripts.postinstall).toBe('node scripts/postinstall.js')
     expect(pkg.scripts['build-index']).toMatch(/rebuildIndex/)
     expect(lock.packages[''].bin['apple-tools-indexer']).toBe('index.js')
     expect(isIndexerMode(['node', '/path/to/index.js', '--mode=indexer'])).toBe(true)

@@ -36,6 +36,8 @@ import {
   calendarRemove,
   calendarRsvp,
   calendarListCalendars,
+  probeCalendarAutomation,
+  buildCalendarAutomationProbeScript,
   buildRecurrenceRule,
   buildRemoveEventScript,
   buildEventKitRemoveScript,
@@ -49,7 +51,14 @@ import {
   defaultEndParts
 } from '../../lib/calendarWrite.js'
 import { setEventKitSession } from '../../lib/eventKitSession.js'
-import { contactsAdd, contactsEdit, contactsRemove } from '../../lib/contactsWrite.js'
+import {
+  contactsAdd,
+  contactsEdit,
+  contactsRemove,
+  probeContactsAutomation,
+  buildContactsAutomationProbeScript,
+  buildContactsProbeCleanupScript
+} from '../../lib/contactsWrite.js'
 import {
   WRITE_TOOL_DEFINITIONS,
   WRITE_TOOL_NAMES,
@@ -212,6 +221,61 @@ describe('mail_automation_probe', () => {
     expect(result.message).toContain('mail_automation_probe failed')
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('could not be reached')
+  })
+})
+
+describe('contacts_automation_probe', () => {
+  it('creates then deletes a throwaway person and never leaves the probe name without cleanup', () => {
+    const script = buildContactsAutomationProbeScript()
+    expect(script).toContain('tell application "Contacts"')
+    expect(script).toContain('make new person')
+    expect(script).toContain('delete probe')
+    expect(script).toContain('save')
+    expect(script).not.toContain('dry_run')
+
+    const cleanup = buildContactsProbeCleanupScript()
+    expect(cleanup).toContain('every person whose first name is "ATM"')
+    expect(cleanup).toContain('Permissions Probe')
+
+    const result = probeContactsAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(result.message).toContain('throwaway contact')
+  })
+
+  it('maps a hang to Contacts Automation denied', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeContactsAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('contacts_automation_probe failed')
+    expect(result.kind).toBe('timeout')
+  })
+})
+
+describe('calendar_automation_probe', () => {
+  it('lists calendars and never creates an event', () => {
+    const script = buildCalendarAutomationProbeScript()
+    expect(script).toContain('tell application "Calendar"')
+    expect(script).toContain('get name of every calendar')
+    expect(script).not.toContain('make new event')
+    expect(script).not.toContain('dry_run')
+
+    const result = probeCalendarAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('no events created')
+  })
+
+  it('maps a hang to Calendar Automation denied', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeCalendarAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('calendar_automation_probe failed')
+    expect(result.kind).toBe('timeout')
   })
 })
 
@@ -1138,6 +1202,16 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('Watch the host — Allow **`node`**')
     expect(readme).toContain('not “Mail.app could not be reached”')
     expect(readme).toContain('fails closed if Mail, Messages, Contacts, or Calendar')
+    expect(readme).toContain('apple-tools-mcp permissions')
+    expect(readme).toContain('npx apple-tools-mcp permissions')
+    expect(readme).toContain('npm run permissions')
+    expect(readme).toContain('process.execPath')
+    expect(readme).toContain('/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node')
+    expect(readme).toContain('not Homebrew')
+    expect(readme).toContain('after first global install')
+    expect(readme).toContain('after upgrade')
+    expect(readme).toContain('postinstall')
+    expect(readme).toContain('prints a reminder')
     expect(readme).toContain('osascript kind=')
     expect(readme).toContain('Calendar.app’s dictionary has **`delete` only**')
 

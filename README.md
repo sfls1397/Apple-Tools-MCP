@@ -43,6 +43,8 @@ If you installed from source, point your MCP client at the local `index.js` inst
 
 **Mac Mini** stays on a **global npm** install (`npm install -g apple-tools-mcp`) — no git clone on Mini. **MacBook / development** uses the clone above.
 
+After **first install** and after **upgrade** (when write tools are present or change), run the permissions command once on the host UI before using write tools — see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate).
+
 ### 2. Grant Full Disk Access
 
 The MCP server needs access to read your Mail, Messages, and Calendar databases.
@@ -72,6 +74,30 @@ Full Disk Access covers the **read** tools. Write tools need the automation perm
 ### 2b. Grant Automation for write tools (first run / ship-gate)
 
 Write tools drive Mail, Messages, Calendar, and Contacts through AppleScript. macOS gates those Apple events behind **Automation**, not by adding `node` to the Contacts or Calendars privacy lists.
+
+#### First install and upgrade: `apple-tools-mcp permissions`
+
+Run this **after first global install** and **after upgrade** when write surfaces are present or change. It probes **`process.execPath`** (the `node` running the command) so macOS can pop **Allow** dialogs for Contacts, Calendar, Mail, and Messages in one sitting. You click **Allow**; the command cannot grant silently. Already-granted surfaces report OK without another click. Missing grants print a report and the process **exits non-zero** (fail closed).
+
+Use the **same `node` the product uses** — not the MCP host app:
+
+```bash
+# After `npm install -g apple-tools-mcp` on that node:
+apple-tools-mcp permissions
+npx apple-tools-mcp permissions
+
+# From a clone:
+npm run permissions
+```
+
+The command prints the binary it is probing. Host examples (not universal paths):
+
+- **Mini:** `/Users/petercoates/.local/node/bin/node` (global npm / indexer LaunchAgent)
+- **MacBook:** `/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node` (Claude’s nvm `node`, **not** Homebrew)
+
+On the host UI (Mini Screen Sharing or MacBook local), open **System Settings → Privacy & Security → Automation**, then run the command. Click **Allow** for **`node`** → Contacts, Calendar, Mail, and Messages. npm `postinstall` only **prints a reminder** — it does not run the probes unattended.
+
+This is a real Apple Events pass: Mail uses `make new outgoing message` (compose then discard; nothing is sent). Messages enumerates accounts (nothing is sent). `dry_run` of `mail_send` / `messages_send` never talks to those apps and **does not count**. Contacts creates and deletes a throwaway person in-script. Calendar lists calendars only (no leftover events).
 
 **One-pass first-run:** Allow **`node`** to control **Mail**, **Messages**, **Contacts**, and **Calendar** in the same Automation pass. Contacts or Calendar being allowed does **not** grant Mail or Messages — they are separate Apple Events targets. A denied Mail grant hangs `mail_send` / `mail_draft` / `mail_reply` / `mail_forward` until the client disconnects; `dry_run` never talks to Mail, so that deny is invisible until a real compose.
 
@@ -543,7 +569,7 @@ Ensure Node.js has Full Disk Access (see Installation step 2).
 The message names which process macOS was actually asking about. Work through it in this order:
 
 1. **Is the indexer daemon running?** `pgrep -fl apple-tools-indexer`. If not, start it — the daemon is the supported host for Mail, Messages, Contacts, and Calendar writes (see [step 2b](#2b-grant-automation-for-write-tools-first-run--ship-gate)).
-2. **Did you approve the Automation prompts for `node`?** Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary — whatever path the plist / `which node` reports; `/Users/petercoates/.local/node/bin/node` is a Mini *example* only) is allowed to control **Mail**, **Messages**, Contacts, and Calendar. Watch the host — Allow **`node`**, not any other app. Contacts or Calendar being allowed does **not** grant Mail. A `mail_send` hang is **Automation denied**, not “Mail.app could not be reached”; `dry_run` never talks to Mail so it cannot detect this. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
+2. **Did you approve the Automation prompts for `node`?** Re-run `apple-tools-mcp permissions` with the product `node` (it prints `process.execPath`). Open System Settings → Privacy & Security → **Automation** and confirm **node** (the LaunchAgent binary — whatever path the plist / `which node` reports; `/Users/petercoates/.local/node/bin/node` is a Mini *example* only; MacBook Claude nvm is `/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node`, not Homebrew) is allowed to control **Mail**, **Messages**, Contacts, and Calendar. Watch the host — Allow **`node`**, not any other app. Contacts or Calendar being allowed does **not** grant Mail. A `mail_send` hang is **Automation denied**, not “Mail.app could not be reached”; `dry_run` never talks to Mail so it cannot detect this. Do **not** approve the MCP client / host app that launched a short-lived stdio server, and do **not** try to add `node` via **+** in the Contacts or Calendars privacy lists — those panes often have no Add button. `tccutil reset AppleEvents` re-arms the Automation prompt so you can Allow **`node`** again. Full Disk Access is a separate read grant; npm Trusted Publisher / tokens are unrelated.
 3. **Is the daemon's node binary the one with Full Disk Access?** LaunchAgents do not inherit your shell `PATH`; confirm the plist points at the same path `which node` reports.
 4. **Is it actually the write path?** Contacts or Calendar *reads* failing with `EPERM` is a Full Disk Access / attribution problem, not the entitlement gap — fix FDA for the responsible process. Contacts or Calendar *CRUD* failing with no prompt under Claude Desktop is the [documented host limitation](#reads-and-writes-are-different-mechanisms): Claude.app carries neither the addressbook nor the calendars entitlement. Start the daemon and the write succeeds through the bridge.
 5. **"Contacts.app / Calendar.app could not be reached"** with the app clearly installed is an **Automation / responsible-process** failure, not a missing app — macOS reports a refused Apple event as `-1728` / "can't get application". The tool says so and points at the bridge. Start the LaunchAgent, or run from Terminal.app and approve the Automation prompt.
