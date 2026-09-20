@@ -38,8 +38,10 @@
  */
 
 import { loadContacts, getContactStats } from "../contacts.js";
-import { probeSocket, requestWriteViaBridge, defaultSocketPath } from "../lib/writeBridge.js";
+import { probeSocket, defaultSocketPath } from "../lib/writeBridge.js";
 import { dispatchWriteTool } from "../lib/writeTools.js";
+import { probeMailAutomation } from "../lib/mailWrite.js";
+import { probeMessagesAutomation } from "../lib/messagesWrite.js";
 import { isIndexerMode } from "../lib/processMode.js";
 
 export function parseSmokeArgs(argv = []) {
@@ -128,69 +130,40 @@ export function messagesProbeSeverity(apply) {
 }
 
 /**
- * True when the daemon (or local dispatcher) does not know the setup-only
- * Mail probe — typically a 2.0.0 daemon that predates this check.
- */
-export function isUnknownWriteToolResult(result) {
-  if (!result || typeof result !== "object") return false;
-  if (result.unsupported === true) return true;
-  return /unknown write tool/i.test(String(result.message || ""));
-}
-
-/**
  * How smoke exercises Mail Apple Events.
  *
- * mail_send / mail_draft dry_run never talks to Mail, so it cannot reveal a
- * TCC deny. Prefer the compose-and-discard probe. If the daemon does not
- * know that probe yet, --apply falls back to mail_draft (same `make new
- * outgoing message` verb; nothing is sent).
+ * The compose-and-discard helper is smoke-script-only — not an MCP write
+ * tool. On --apply with the write bridge up, also run public mail_draft so
+ * launchd-owned node is fail-closed for Mail (same make new outgoing message
+ * verb; nothing is sent).
  *
- * @returns {{ tool: string|null, args: object, reason: string }}
+ * @returns {{ useLocalHelper: boolean, useMailDraft: boolean, reason: string }}
  */
-export function planMailSmokeTouch({ apply, probeAvailable }) {
-  if (probeAvailable) {
+export function planMailSmokeTouch({ apply, daemonPath }) {
+  if (apply && daemonPath) {
     return {
-      tool: "mail_automation_probe",
-      args: {},
-      reason: "compose-and-discard outgoing message (live Mail Apple Events; nothing is sent)"
-    };
-  }
-  if (apply) {
-    return {
-      tool: "mail_draft",
-      args: {},
-      reason: "mail_draft compose path (live Mail Apple Events; nothing is sent). Reload the LaunchAgent from this tip to use the discard probe."
+      useLocalHelper: true,
+      useMailDraft: true,
+      reason: "local compose-and-discard helper plus mail_draft via the write bridge (live Mail Apple Events; nothing is sent)"
     };
   }
   return {
-    tool: null,
-    args: {},
-    reason: "daemon cannot live-probe Mail yet; --apply uses mail_draft. mail_send dry_run never touches Mail, so it cannot detect a TCC deny."
+    useLocalHelper: true,
+    useMailDraft: false,
+    reason: "smoke-script compose-and-discard helper (live Mail Apple Events; nothing is sent). mail_send dry_run never touches Mail."
   };
 }
 
 /**
  * How smoke exercises Messages Apple Events.
- * messages_send dry_run never talks to Messages, and this gate never sends.
+ * Smoke-script-only helper; this gate never sends and is not an MCP tool.
  *
- * @returns {{ tool: string|null, reason: string }}
+ * @returns {{ useLocalHelper: boolean, reason: string }}
  */
-export function planMessagesSmokeTouch({ apply, probeAvailable }) {
-  if (probeAvailable) {
-    return {
-      tool: "messages_automation_probe",
-      reason: "enumerate Messages accounts (live Apple Events; nothing is sent)"
-    };
-  }
-  if (apply) {
-    return {
-      tool: null,
-      reason: "daemon cannot live-probe Messages yet. Reload the LaunchAgent from this tip so Messages Automation is exercised under launchd-owned node. messages_send dry_run never touches Messages, and this gate will not send a real iMessage."
-    };
-  }
+export function planMessagesSmokeTouch() {
   return {
-    tool: null,
-    reason: "daemon cannot live-probe Messages yet; --apply fails closed. messages_send dry_run never touches Messages."
+    useLocalHelper: true,
+    reason: "smoke-script Messages account lookup (live Apple Events; nothing is sent). messages_send dry_run never touches Messages."
   };
 }
 
@@ -296,48 +269,24 @@ async function main() {
   const results = [];
 
   // Mail first so first-run Allow includes Mail in the same pass as Contacts/Calendar.
-  // mail_send dry_run never talks to Mail; this step always uses a real compose.
+  // Helpers are smoke-script-only — not MCP write tools. mail_send dry_run never talks to Mail.
   console.log("\n--- Mail Automation (Mail.app compose / Apple Events) ---");
   if (!apply) {
     console.log("  (live make new outgoing message even on a dry run; mail_send dry_run never touches Mail)");
   }
 
-  let probeAvailable = true;
-  let probeFromBridge = null;
-  if (route.path === "daemon") {
-    const bridged = await requestWriteViaBridge({
-      socketPath,
-      tool: "mail_automation_probe",
-      args: {}
-    });
-    if (bridged.delivered && bridged.response && !isUnknownWriteToolResult(bridged.response)) {
-      probeFromBridge = bridged.response;
-      probeAvailable = true;
-    } else {
-      probeAvailable = false;
-    }
-  }
-
-  const mailPlan = planMailSmokeTouch({ apply, probeAvailable });
+  const mailPlan = planMailSmokeTouch({ apply, daemonPath: route.path === "daemon" });
   const mailSeverity = mailProbeSeverity(apply);
-  let mailResult;
-  if (mailPlan.tool === "mail_automation_probe") {
-    mailResult = probeFromBridge || await run("mail_automation_probe", {});
-  } else if (mailPlan.tool === "mail_draft") {
-    console.log(`  ${mailPlan.reason}`);
-    mailResult = await run("mail_draft", mailDraftSmokeArgs(stamp));
-  } else {
-    mailResult = {
-      ok: false,
-      message: mailPlan.reason
-    };
-  }
-
-  if (mailResult.ok === false && mailSeverity === "warning") {
-    step("mail Automation compose", mailResult, "warning");
+  const mailHelperResult = probeMailAutomation();
+  if (mailHelperResult.ok === false && mailSeverity === "warning") {
+    step("mail Automation compose", mailHelperResult, "warning");
     console.log("  Warning only: mail_send dry_run never touches Mail. --apply fails closed if Mail Automation is still denied.");
   } else {
-    results.push(step("mail Automation compose", mailResult, mailSeverity));
+    results.push(step("mail Automation compose", mailHelperResult, mailSeverity));
+  }
+  if (mailPlan.useMailDraft) {
+    console.log(`  ${mailPlan.reason}`);
+    results.push(step("mail_draft (daemon Mail Automation)", await run("mail_draft", mailDraftSmokeArgs(stamp))));
   }
 
   console.log("\n--- Messages Automation (Messages.app accounts / Apple Events) ---");
@@ -345,33 +294,8 @@ async function main() {
     console.log("  (live Messages account lookup even on a dry run; messages_send dry_run never touches Messages; nothing is sent)");
   }
 
-  let messagesProbeAvailable = true;
-  let messagesFromBridge = null;
-  if (route.path === "daemon") {
-    const bridged = await requestWriteViaBridge({
-      socketPath,
-      tool: "messages_automation_probe",
-      args: {}
-    });
-    if (bridged.delivered && bridged.response && !isUnknownWriteToolResult(bridged.response)) {
-      messagesFromBridge = bridged.response;
-      messagesProbeAvailable = true;
-    } else {
-      messagesProbeAvailable = false;
-    }
-  }
-
-  const messagesPlan = planMessagesSmokeTouch({ apply, probeAvailable: messagesProbeAvailable });
   const messagesSeverity = messagesProbeSeverity(apply);
-  let messagesResult;
-  if (messagesPlan.tool === "messages_automation_probe") {
-    messagesResult = messagesFromBridge || await run("messages_automation_probe", {});
-  } else {
-    messagesResult = {
-      ok: false,
-      message: messagesPlan.reason
-    };
-  }
+  const messagesResult = probeMessagesAutomation();
 
   if (messagesResult.ok === false && messagesSeverity === "warning") {
     step("messages Automation lookup", messagesResult, "warning");
