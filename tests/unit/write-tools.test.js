@@ -44,7 +44,8 @@ import { contactsAdd, contactsEdit, contactsRemove } from '../../lib/contactsWri
 import {
   WRITE_TOOL_DEFINITIONS,
   WRITE_TOOL_NAMES,
-  INTERNAL_WRITE_TOOLS,
+  WRITE_TOOL_HANDLERS,
+  SMOKE_ONLY_AUTOMATION_PROBES,
   isWriteTool,
   executeWriteToolLocally,
   dispatchWriteTool
@@ -673,10 +674,12 @@ describe('write tool definitions', () => {
     expect(definedNames.some((n) => n.includes('reminder'))).toBe(false)
     expect(definedNames).not.toContain('mail_automation_probe')
     expect(definedNames).not.toContain('messages_automation_probe')
-    expect(INTERNAL_WRITE_TOOLS).toContain('mail_automation_probe')
-    expect(INTERNAL_WRITE_TOOLS).toContain('messages_automation_probe')
-    expect(isWriteTool('mail_automation_probe')).toBe(true)
-    expect(isWriteTool('messages_automation_probe')).toBe(true)
+    expect(SMOKE_ONLY_AUTOMATION_PROBES).toContain('mail_automation_probe')
+    expect(SMOKE_ONLY_AUTOMATION_PROBES).toContain('messages_automation_probe')
+    expect(isWriteTool('mail_automation_probe')).toBe(false)
+    expect(isWriteTool('messages_automation_probe')).toBe(false)
+    expect(Object.keys(WRITE_TOOL_HANDLERS)).not.toContain('mail_automation_probe')
+    expect(Object.keys(WRITE_TOOL_HANDLERS)).not.toContain('messages_automation_probe')
   })
 
   it('uses snake_case names and object schemas', () => {
@@ -702,6 +705,19 @@ describe('write tool definitions', () => {
     expect(isWriteTool('mail_send')).toBe(true)
     expect(isWriteTool('mail_search')).toBe(false)
     expect(executeWriteToolLocally('reminders_add', {}).ok).toBe(false)
+  })
+
+  it('keeps Automation probes off the MCP CallTool write surface', async () => {
+    expect(isWriteTool('mail_automation_probe')).toBe(false)
+    expect(isWriteTool('messages_automation_probe')).toBe(false)
+    expect(executeWriteToolLocally('mail_automation_probe', {}).message).toContain('Unknown write tool')
+    expect(executeWriteToolLocally('messages_automation_probe', {}).unsupported).toBe(true)
+    const mail = await dispatchWriteTool('mail_automation_probe', {})
+    const messages = await dispatchWriteTool('messages_automation_probe', {})
+    expect(mail.ok).toBe(false)
+    expect(mail.message).toContain('Unknown write tool')
+    expect(messages.ok).toBe(false)
+    expect(messages.message).toContain('Unknown write tool')
   })
 
   it('never ships a Reminders tool', () => {
@@ -839,8 +855,11 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('make new outgoing message')
     expect(smoke).toContain('mail_send')
     expect(smoke).toContain('never touches Mail')
-    expect(smoke).toContain('messages_automation_probe')
+    expect(smoke).toContain('probeMessagesAutomation')
+    expect(smoke).toContain('probeMailAutomation')
     expect(smoke).toContain('never touches Messages')
+    expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
+    expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
   })
 
   it('plans a live Mail compose so a TCC deny fails setup, not production', async () => {
@@ -849,27 +868,25 @@ describe('write smoke script routing (ship gate)', () => {
       messagesProbeSeverity,
       planMailSmokeTouch,
       planMessagesSmokeTouch,
-      isUnknownWriteToolResult,
       mailDraftSmokeArgs
     } = await import('../../scripts/smoke-writes.js')
 
     expect(mailProbeSeverity(false)).toBe('warning')
     expect(mailProbeSeverity(true)).toBe('error')
 
-    expect(planMailSmokeTouch({ apply: true, probeAvailable: true }).tool).toBe('mail_automation_probe')
-    expect(planMailSmokeTouch({ apply: false, probeAvailable: true }).tool).toBe('mail_automation_probe')
-    expect(planMailSmokeTouch({ apply: true, probeAvailable: false }).tool).toBe('mail_draft')
-    expect(planMailSmokeTouch({ apply: false, probeAvailable: false }).tool).toBeNull()
-    expect(planMailSmokeTouch({ apply: false, probeAvailable: false }).reason).toContain('dry_run never touches Mail')
+    expect(planMailSmokeTouch({ apply: false, daemonPath: false })).toMatchObject({
+      useLocalHelper: true,
+      useMailDraft: false
+    })
+    expect(planMailSmokeTouch({ apply: true, daemonPath: true })).toMatchObject({
+      useLocalHelper: true,
+      useMailDraft: true
+    })
+    expect(planMailSmokeTouch({ apply: false, daemonPath: false }).reason).toContain('dry_run never touches Mail')
 
     expect(messagesProbeSeverity(true)).toBe('error')
-    expect(planMessagesSmokeTouch({ apply: true, probeAvailable: true }).tool).toBe('messages_automation_probe')
-    expect(planMessagesSmokeTouch({ apply: true, probeAvailable: false }).tool).toBeNull()
-    expect(planMessagesSmokeTouch({ apply: true, probeAvailable: false }).reason).toContain('will not send a real iMessage')
-
-    expect(isUnknownWriteToolResult({ unsupported: true })).toBe(true)
-    expect(isUnknownWriteToolResult({ message: 'Unknown write tool: mail_automation_probe' })).toBe(true)
-    expect(isUnknownWriteToolResult({ ok: true, message: 'Mail Automation allowed' })).toBe(false)
+    expect(planMessagesSmokeTouch().useLocalHelper).toBe(true)
+    expect(planMessagesSmokeTouch().reason).toContain('never touches Messages')
 
     const draft = mailDraftSmokeArgs('20260920143000')
     expect(draft.subject).toContain('ATM Mail Automation probe')

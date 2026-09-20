@@ -237,7 +237,9 @@ describe('TCC guidance separates reads from writes', () => {
     // "spawnSync osascript" but must not be classified as ENOENT.
     expect(classifyAppleScriptError('spawnSync osascript ETIMEDOUT')).toBe('tcc')
     expect(classifyAppleScriptError('Error: spawnSync osascript ETIMEDOUT')).toBe('tcc')
+    expect(classifyAppleScriptError('Mail got an error: AppleEvent timed out. (-1712)')).toBe('tcc')
     expect(isTccDenial('spawnSync osascript ETIMEDOUT')).toBe(true)
+    expect(isTccDenial('AppleEvent timed out. (-1712)')).toBe(true)
     expect(MAIL_TCC_GUIDANCE).toContain('hang or timeout')
     expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
     expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
