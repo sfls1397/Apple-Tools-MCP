@@ -446,8 +446,8 @@ Supported identifiers:
 |------|-----------|--------------|
 | `calendar_list_calendars` | none | none (read-only helper) |
 | `calendar_add` | `calendar_name` (required), `title` (required), `start` (required), `end`, `all_day`, `location`, `notes`, recurrence args, `alerts_minutes_before[]` | none |
-| `calendar_edit` | `event_id` (required) plus any of `title`, `start`, `end`, `location`, `notes`, recurrence args, `alerts_minutes_before[]`, `replace_alerts` | none |
-| `calendar_remove` | `event_id` (required), optional `calendar_name` | **`confirm` required** |
+| `calendar_edit` | `event_id` (required), optional `eventkit_id` from add, plus any of `title`, `start`, `end`, `location`, `notes`, recurrence args, `alerts_minutes_before[]`, `replace_alerts` | none |
+| `calendar_remove` | `event_id` (required), optional `eventkit_id` from add, optional `calendar_name` | **`confirm` required** |
 | `calendar_rsvp` | `event_id` (required), `response` (`accept` \| `decline` \| `tentative`), `attendee_email` | none |
 
 Events are addressed by their **iCalendar UID**, reported as `Event ID` by `calendar_date` and returned by `calendar_add`. Run `calendar_list_calendars` first so new events land on the intended calendar instead of the default one.
@@ -456,7 +456,7 @@ Events are addressed by their **iCalendar UID**, reported as `Event ID` by `cale
 
 Non-recurring `calendar_add` **must** create through **EventKit** and print `via: EventKit` plus `eventkit_id`. Mini `cd74071`: EventKit had `eventKitCalendars=1` but `default=[id NSTaggedPointerString]` — JXA `String(title)` prints the ObjC class, not the calendar name, so the title match missed the only writable calendar. Titles and `calendarIdentifier` are `ObjC.unwrap`d; a single writable calendar or `defaultCalendarForNewEvents` is used when the name does not match. There is **no AppleScript fallback** for non-recurring add.
 
-`calendar_remove` is EventKit-first with those ids. Calendar.app `delete` is fallback only. `ETIMEDOUT` / `-1712` is **`timeout`**, never TCC. Failures print `osascript kind=… error=… codes=…`. `--apply` fails closed unless add printed `via: EventKit` and `eventkit_id`.
+`calendar_edit` and `calendar_remove` take `eventkit_id` from add (`calendarUUID:eventUUID` on Mini). They look up with `eventWithIdentifier` / `calendarItemWithIdentifier` / `calendarItemsWithExternalIdentifier`, including each colon-split half. When `eventkit_id` is present, Calendar.app uid lookup is skipped so iCloud cannot hang. `calendar_remove` without `eventkit_id` may still fall back to Calendar.app `delete`. `ETIMEDOUT` / `-1712` is **`timeout`**, never TCC. Failures print `osascript kind=… error=… codes=…`. `--apply` fails closed unless add printed `via: EventKit` and `eventkit_id`.
 
 `--apply` prefers an **On My Mac** calendar when EventKit lists one. `--calendar=` still wins. The Mini host’s first writable calendar named **Calendar** (no On My Mac / iCloud label) is fine if EventKit create actually runs.
 
