@@ -201,9 +201,10 @@ describe('mail_send', () => {
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('find/reply/send hang')
+    expect(result.message).toContain('not a TCC / Automation deny')
     expect(result.message).toContain('Check Sent')
     expect(result.message).toContain('before retrying')
-    expect(result.message).not.toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('macOS denied Mail automation')
     expect(result.message).not.toContain('could not be reached')
     expect(osascript).toHaveBeenCalledTimes(2)
     const verifyScript = osascript.mock.calls[1][0]
@@ -428,7 +429,8 @@ describe('mail_reply and mail_forward', () => {
     expect(result.message).toContain('-10004')
     expect(result.message).toContain('Check Sent')
     expect(result.message).toContain('before retrying')
-    expect(result.message).not.toContain('TCC / Automation deny')
+    expect(result.message).toContain('not a TCC / Automation deny')
+    expect(result.message).not.toContain('macOS denied Mail automation')
   })
 
   it('labels a hard Mail deny on reply as TCC and skips Sent-verify', () => {
