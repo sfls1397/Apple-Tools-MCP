@@ -107,6 +107,11 @@ export function extractEventKitId(message) {
   return match ? match[1] : null;
 }
 
+export function createdViaEventKit(message) {
+  const text = String(message || "");
+  return /via:\s*EventKit\b/i.test(text) && Boolean(extractEventKitId(text));
+}
+
 /**
  * Prefer an On My Mac calendar so Calendar.app delete is reliable if EventKit
  * remove still misses. EventKit add/remove is the primary path on iCloud
@@ -398,8 +403,12 @@ async function main() {
 
   if (eventCreated.ok !== false) {
     const eventId = apply ? extractEventId(eventCreated.message) : "ATM-SMOKE-EVENT-UID";
-    const eventKitId = apply ? extractEventKitId(eventCreated.message) : null;
-    if (apply && !eventId) {
+    const eventKitId = apply ? extractEventKitId(eventCreated.message) : "EK-SMOKE";
+    if (apply && !createdViaEventKit(eventCreated.message)) {
+      console.log("  calendar_add did not print via: EventKit and eventkit_id.");
+      console.log("  Ship-gate refuses a Calendar.app-only create: writeOnly EventKit cannot delete those events, and Calendar.app delete hangs.");
+      results.push({ ok: false, message: "calendar_add ship-gate requires via: EventKit and eventkit_id" });
+    } else if (apply && !eventId) {
       console.log("  calendar_add reported success but returned no event id; skipping edit/delete.");
       results.push({ ok: false });
     } else {

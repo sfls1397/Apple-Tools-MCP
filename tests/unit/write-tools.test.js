@@ -552,7 +552,31 @@ describe('calendar_add', () => {
     })
     expect(addScript).toContain('calendarItemExternalIdentifier')
     expect(addScript).toContain('eventIdentifier')
-    expect(parseEventKitAddOutput('UID<<>>LOCAL')).toEqual({ eventId: 'UID', eventKitId: 'LOCAL' })
+    expect(addScript).toContain('defaultCalendarForNewEvents')
+    expect(parseEventKitAddOutput('UID<<>>LOCAL<<>>Calendar')).toEqual({
+      eventId: 'UID',
+      eventKitId: 'LOCAL',
+      calendar: 'Calendar'
+    })
+  })
+
+  it('does not fall back to Calendar.app when EventKit create fails', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('EVENTKIT_SAVE_FAILED: boom')
+    })
+    const result = calendarAdd({
+      calendar_name: 'Work',
+      title: 'x',
+      start: '2026-09-21 09:00',
+      end: '2026-09-21 10:00'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('does not fall back to Calendar.app')
+    expect(result.message).toContain('osascript kind=')
+    expect(result.message).toContain('EVENTKIT_SAVE_FAILED')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    expect(osascript.mock.calls[0][0]).not.toContain('make new event')
   })
 
   it('requires a calendar name so events do not land on the default', () => {
@@ -1016,6 +1040,8 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('delete-path failure')
     expect(smoke).toContain('osascript kind=')
     expect(smoke).toContain('EventKit fallback')
+    expect(smoke).toContain('createdViaEventKit')
+    expect(smoke).toContain('via: EventKit')
     expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
     expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
   })
@@ -1083,6 +1109,9 @@ describe('write smoke script (QA prove-out helpers)', () => {
     const { extractEventKitId, pickSmokeCalendar } = await import('../../scripts/smoke-writes.js')
     expect(extractEventKitId('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit'))
       .toBe('EK-1')
+    const { createdViaEventKit } = await import('../../scripts/smoke-writes.js')
+    expect(createdViaEventKit('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit')).toBe(true)
+    expect(createdViaEventKit('calendar_add: event created. event_id: EVT-1 calendar: Calendar')).toBe(false)
     expect(pickSmokeCalendar([
       { name: 'iCloud', writable: true, local: false },
       { name: 'Home', writable: true, local: true }
