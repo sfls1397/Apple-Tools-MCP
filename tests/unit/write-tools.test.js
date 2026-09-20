@@ -125,6 +125,35 @@ describe('mail_send', () => {
     expect(script).not.toMatch(/\nend tell\n.*do shell/)
   })
 
+  it('sends HTML when body_format is html, keeping a plain-text alternative', () => {
+    const result = mailCompose({
+      to: ['a@example.com'],
+      subject: 'Report',
+      body: '<p>All <b>good</b></p>',
+      body_format: 'html'
+    })
+
+    expect(result.ok).toBe(true)
+    const script = lastScript()
+    expect(script).toContain('set html content of newMessage to "<p>All <b>good</b></p>"')
+    // content carries the tag-stripped text so non-HTML clients still read it.
+    expect(script).toContain('content:"All good"')
+  })
+
+  it('defaults to a plain text body', () => {
+    mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
+    const script = lastScript()
+    expect(script).toContain('content:"All good"')
+    expect(script).not.toContain('html content')
+  })
+
+  it('rejects an unknown body_format', () => {
+    const result = mailCompose({ to: ['a@example.com'], subject: 'x', body: 'y', body_format: 'markdown' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('body_format must be')
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
   it('does not echo the body when Mail fails', () => {
     osascript.mockImplementation(() => {
       throw new Error('Mail got an error: secret body text here')
