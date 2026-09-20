@@ -37,6 +37,8 @@ import {
   appBundleInstalled,
   CONTACTS_TCC_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
+  MAIL_TCC_GUIDANCE,
+  MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE,
   TCC_GUIDANCE
 } from '../../lib/appleScript.js'
@@ -181,6 +183,9 @@ describe('write routing policy', () => {
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Full Disk Access')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Automation')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Do not add node via +')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Mail.app')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Messages.app')
+    expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('TCC / Automation denied')
   })
 })
 
@@ -221,7 +226,22 @@ describe('TCC guidance separates reads from writes', () => {
   it('points Contacts and Calendar denials at the daemon', () => {
     expect(CONTACTS_TCC_GUIDANCE).toContain('apple-tools-indexer')
     expect(CALENDAR_TCC_GUIDANCE).toContain('apple-tools-indexer')
-    expect(tccGuidanceFor('mail')).toBe(TCC_GUIDANCE)
+    expect(tccGuidanceFor('mail')).toBe(MAIL_TCC_GUIDANCE)
+    expect(tccGuidanceFor('messages')).toBe(MESSAGES_TCC_GUIDANCE)
+    expect(tccGuidanceFor('other')).toBe(TCC_GUIDANCE)
+  })
+
+  it('treats a hung Mail compose timeout as TCC / Automation denied, not a missing app', () => {
+    // Mini: make new outgoing message blocks until spawnSync times out when
+    // node → Mail Automation is denied. The error string contains
+    // "spawnSync osascript" but must not be classified as ENOENT.
+    expect(classifyAppleScriptError('spawnSync osascript ETIMEDOUT')).toBe('tcc')
+    expect(classifyAppleScriptError('Error: spawnSync osascript ETIMEDOUT')).toBe('tcc')
+    expect(isTccDenial('spawnSync osascript ETIMEDOUT')).toBe(true)
+    expect(MAIL_TCC_GUIDANCE).toContain('hang or timeout')
+    expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
+    expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
+    expect(MESSAGES_TCC_GUIDANCE).toContain('node → Messages')
   })
 
   it('treats a missing osascript as an unavailable app, not a privacy denial', () => {
