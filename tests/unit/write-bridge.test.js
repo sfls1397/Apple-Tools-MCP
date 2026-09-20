@@ -30,6 +30,9 @@ import {
 import {
   classifyAppleScriptError,
   isTccDenial,
+  isHardTccDenial,
+  formatOsascriptDiagnostic,
+  extractAppleEventCodes,
   parseWriteDateTime,
   asString,
   asInteger,
@@ -253,6 +256,20 @@ describe('TCC guidance separates reads from writes', () => {
     expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
     expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
     expect(MESSAGES_TCC_GUIDANCE).toContain('node → Messages')
+  })
+
+  it('does not treat a Calendar delete timeout as a hard TCC deny', () => {
+    expect(isHardTccDenial('spawnSync osascript ETIMEDOUT')).toBe(false)
+    expect(isHardTccDenial('AppleEvent timed out. (-1712)')).toBe(false)
+    expect(isHardTccDenial('Not authorized to send Apple events to Calendar. (-1743)')).toBe(true)
+    expect(extractAppleEventCodes('spawnSync osascript ETIMEDOUT; osascript stderr: -1712')).toEqual([
+      '-1712',
+      'ETIMEDOUT'
+    ])
+    expect(formatOsascriptDiagnostic({
+      kind: 'tcc',
+      error: 'spawnSync osascript ETIMEDOUT'
+    })).toBe('osascript kind=tcc error=spawnSync osascript ETIMEDOUT codes=ETIMEDOUT')
   })
 
   it('treats a missing osascript as an unavailable app, not a privacy denial', () => {
