@@ -35,7 +35,8 @@ import {
   calendarRsvp,
   calendarListCalendars,
   buildRecurrenceRule,
-  validateAlerts
+  validateAlerts,
+  defaultEndParts
 } from '../../lib/calendarWrite.js'
 import { contactsAdd, contactsEdit, contactsRemove } from '../../lib/contactsWrite.js'
 import {
@@ -393,6 +394,22 @@ describe('calendar_add', () => {
     expect(result.message).toContain('end is before start')
   })
 
+  it('defaults a timed event to one hour, rolling past midnight', () => {
+    expect(defaultEndParts({ year: 2026, month: 9, day: 21, hour: 9, minute: 30 }, false))
+      .toEqual({ year: 2026, month: 9, day: 21, hour: 10, minute: 30 })
+    expect(defaultEndParts({ year: 2026, month: 12, day: 31, hour: 23, minute: 30 }, false))
+      .toEqual({ year: 2027, month: 1, day: 1, hour: 0, minute: 30 })
+  })
+
+  it('defaults an all-day event to the end of that day', () => {
+    osascript.mockReturnValue('EVT-ALLDAY')
+    const result = calendarAdd({ calendar_name: 'Work', title: 'Offsite', start: '2026-09-21' })
+    expect(result.ok).toBe(true)
+    const script = lastScript()
+    expect(script).toContain('allday event:true')
+    expect(script).toContain('set endDate to atmMakeDate(2026, 9, 21, 23, 59)')
+  })
+
   it('requires a calendar name so events do not land on the default', () => {
     const result = calendarAdd({ title: 'x', start: '2026-09-21 09:00' })
     expect(result.ok).toBe(false)
@@ -580,6 +597,28 @@ describe('write tool definitions', () => {
   it('never ships a Reminders tool', () => {
     const source = fs.readFileSync(path.join(root, 'lib/writeTools.js'), 'utf8')
     expect(source.toLowerCase()).not.toContain('reminders_')
+  })
+
+  it('routes writes before the index gate so they work while the daemon holds the lock', () => {
+    const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
+    const dispatchAt = indexSrc.indexOf('isWriteTool(name)')
+    const switchAt = indexSrc.indexOf('switch (name)')
+
+    expect(dispatchAt).toBeGreaterThan(-1)
+    expect(dispatchAt).toBeLessThan(switchAt)
+    // The write path must not call requireIndex(): writes talk to the apps,
+    // not the vector index, and 1.2.1 read/search gating stays untouched.
+    const writeBlock = indexSrc.slice(dispatchAt, switchAt)
+    expect(writeBlock).not.toContain('requireIndex')
+    expect(indexSrc).toContain('requireIndex("emails")')
+  })
+
+  it('only the indexer daemon serves the write bridge', () => {
+    const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
+    const daemonBranch = indexSrc.slice(indexSrc.indexOf('if (INDEXER_MODE) {'))
+
+    expect(daemonBranch).toContain('await startWriteBridge()')
+    expect(indexSrc).toContain('stopWriteBridge()')
   })
 })
 
