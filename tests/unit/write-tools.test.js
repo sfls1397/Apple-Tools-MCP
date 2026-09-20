@@ -41,6 +41,7 @@ import {
   buildEventKitRemoveScript,
   buildEventKitAddScript,
   parseEventKitAddOutput,
+  eventKitLookupIds,
   parseEventKitCalendarList,
   mergeCalendarSources,
   describeCalendarRemoveFailure,
@@ -552,6 +553,8 @@ describe('calendar_add', () => {
     })
     expect(addScript).toContain('calendarItemExternalIdentifier')
     expect(addScript).toContain('eventIdentifier')
+    expect(addScript).toContain('calendarItemIdentifier')
+    expect(addScript).toContain('findEventByIds')
     expect(addScript).toContain('defaultCalendarForNewEvents')
     expect(addScript).toContain('ObjC.unwrap')
     expect(addScript).toContain('calendarIdentifier')
@@ -560,6 +563,11 @@ describe('calendar_add', () => {
     expect(parseEventKitAddOutput('UID<<>>LOCAL<<>>Calendar')).toEqual({
       eventId: 'UID',
       eventKitId: 'LOCAL',
+      calendar: 'Calendar'
+    })
+    expect(parseEventKitAddOutput('UID<<>>CAL:EVT<<>>Calendar<<>>ITEM')).toEqual({
+      eventId: 'UID',
+      eventKitId: 'CAL:EVT',
       calendar: 'Calendar'
     })
   })
@@ -622,6 +630,62 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(result.message).toContain('event_id is required')
   })
 
+  it('edits via EventKit when eventkit_id is present', () => {
+    osascript.mockReturnValue('1')
+    const result = calendarEdit({
+      event_id: '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      title: 'Edited'
+    })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('EventKit')
+    expect(lastScript()).toContain('findEventByIds')
+    expect(lastScript()).toContain('9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B')
+    expect(lastScript()).toContain('7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    expect(eventKitLookupIds(
+      '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B'
+    )).toEqual([
+      '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B'
+    ])
+  })
+
+  it('does not hang in Calendar.app when eventkit_id edit fails', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('EVENTKIT_NOT_FOUND status=4 writeOnly tried=9B7A:7F95')
+    })
+    const result = calendarEdit({
+      event_id: '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      title: 'Edited'
+    })
+    expect(result.ok).toBe(false)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript.mock.calls[0][1]).toMatchObject({ language: 'JavaScript' })
+    expect(result.message).toContain('skipped')
+    expect(result.message).not.toContain('denied Calendar access')
+    expect(result.message).not.toContain('atmFindEvent')
+  })
+
+  it('does not hang in Calendar.app when eventkit_id remove fails', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('EVENTKIT_NOT_FOUND status=4 writeOnly tried=9B7A:7F95')
+    })
+    const result = calendarRemove({
+      event_id: '7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      eventkit_id: '9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B',
+      confirm: true
+    })
+    expect(result.ok).toBe(false)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('skipped')
+    expect(result.message).not.toContain('denied Calendar access')
+  })
+
   it('never removes an event without confirm', () => {
     const blocked = calendarRemove({ event_id: 'EVT-UID-1' })
     expect(blocked.planned).toBe(true)
@@ -634,6 +698,7 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     expect(confirmed.message).toContain('EventKit')
     const script = lastScript()
     expect(script).toContain('eventWithIdentifier')
+    expect(script).toContain('calendarItemWithIdentifier')
     expect(script).toContain('calendarItemsWithExternalIdentifier')
     expect(script).toContain('removeEventSpanCommitError')
     expect(script).toContain('EK-1')
@@ -724,6 +789,8 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     const script = buildEventKitRemoveScript('DC4AC0EF-5BF1-448C-8492-E48A95FCB492', { eventKitId: 'EK-LOCAL' })
     expect(script).toContain('calendarItemsWithExternalIdentifier')
     expect(script).toContain('eventWithIdentifier')
+    expect(script).toContain('calendarItemWithIdentifier')
+    expect(script).toContain('findEventByIds')
     expect(script).toContain('removeEventSpanCommitError')
     expect(script).toContain('DC4AC0EF-5BF1-448C-8492-E48A95FCB492')
     expect(script).toContain('EK-LOCAL')
@@ -1046,6 +1113,10 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('EventKit fallback')
     expect(smoke).toContain('createdViaEventKit')
     expect(smoke).toContain('via: EventKit')
+    expect(smoke).toContain('eventkit_id: eventKitId')
+    expect(smoke).toMatch(/run\("calendar_edit"[\s\S]*eventkit_id:/)
+    expect(smoke).toMatch(/run\("calendar_remove"[\s\S]*eventkit_id:/)
+    expect(readme).toContain('optional `eventkit_id` from add')
     expect(smoke).not.toMatch(/run\("mail_automation_probe"/)
     expect(smoke).not.toMatch(/run\("messages_automation_probe"/)
   })
@@ -1113,6 +1184,8 @@ describe('write smoke script (QA prove-out helpers)', () => {
     const { extractEventKitId, pickSmokeCalendar } = await import('../../scripts/smoke-writes.js')
     expect(extractEventKitId('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit'))
       .toBe('EK-1')
+    expect(extractEventKitId('eventkit_id: 9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B calendar: Calendar'))
+      .toBe('9B7ABDFC-DCB9-44D1-8429-6404A0E2DA3B:7F95121D-631F-4D8C-8E74-7BC9FD7B2E2B')
     const { createdViaEventKit } = await import('../../scripts/smoke-writes.js')
     expect(createdViaEventKit('calendar_add: event created. event_id: EVT-1 eventkit_id: EK-1 via: EventKit')).toBe(true)
     expect(createdViaEventKit('calendar_add: event created. event_id: EVT-1 calendar: Calendar')).toBe(false)

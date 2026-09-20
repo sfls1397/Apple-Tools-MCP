@@ -103,8 +103,9 @@ export function extractEventId(message) {
 }
 
 export function extractEventKitId(message) {
-  const match = String(message || "").match(/eventkit_id:\s*([A-Za-z0-9._:@+/=-]+)/);
-  return match ? match[1] : null;
+  const match = String(message || "").match(/eventkit_id:\s*(\S+)/);
+  if (!match) return null;
+  return match[1].replace(/[.,;]+$/, "");
 }
 
 export function createdViaEventKit(message) {
@@ -403,7 +404,8 @@ async function main() {
 
   if (eventCreated.ok !== false) {
     const eventId = apply ? extractEventId(eventCreated.message) : "ATM-SMOKE-EVENT-UID";
-    const eventKitId = apply ? extractEventKitId(eventCreated.message) : "EK-SMOKE";
+    const extractedKitId = apply ? extractEventKitId(eventCreated.message) : "EK-SMOKE";
+    const eventKitId = extractedKitId || (eventId && eventId.includes(":") ? eventId : null);
     if (apply && !createdViaEventKit(eventCreated.message)) {
       console.log("  calendar_add did not print via: EventKit and eventkit_id.");
       console.log("  Ship-gate refuses a Calendar.app-only create: writeOnly EventKit cannot delete those events, and Calendar.app delete hangs.");
@@ -414,6 +416,7 @@ async function main() {
     } else {
       results.push(step("calendar_edit", await run("calendar_edit", {
         event_id: eventId,
+        eventkit_id: eventKitId || undefined,
         title: `ATM smoke test ${stamp} (edited)`,
         ...common
       })));
