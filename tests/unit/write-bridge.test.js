@@ -206,11 +206,23 @@ describe('TCC guidance separates reads from writes', () => {
     expect(CONTACTS_TCC_GUIDANCE).toContain('cannot be fixed with Full Disk Access or tccutil')
   })
 
+  it('explains the calendars entitlement the same way, since Claude.app holds neither', () => {
+    expect(tccGuidanceFor('calendar')).toBe(CALENDAR_TCC_GUIDANCE)
+    expect(CALENDAR_TCC_GUIDANCE).toContain('com.apple.security.personal-information.calendars')
+    expect(CALENDAR_TCC_GUIDANCE).toContain('EventKit')
+    expect(CALENDAR_TCC_GUIDANCE).toContain('reads')
+    expect(CALENDAR_TCC_GUIDANCE).toContain('Full Disk Access or tccutil cannot change it')
+  })
+
   it('points Contacts and Calendar denials at the daemon', () => {
     expect(CONTACTS_TCC_GUIDANCE).toContain('apple-tools-indexer')
     expect(CALENDAR_TCC_GUIDANCE).toContain('apple-tools-indexer')
-    expect(tccGuidanceFor('calendar')).toBe(CALENDAR_TCC_GUIDANCE)
     expect(tccGuidanceFor('mail')).toBe(TCC_GUIDANCE)
+  })
+
+  it('treats a missing osascript as an unavailable app, not a privacy denial', () => {
+    expect(classifyAppleScriptError('spawnSync osascript ENOENT')).toBe('app_unavailable')
+    expect(isTccDenial('spawnSync osascript ENOENT')).toBe(false)
   })
 
   it('classifies an AddressBook read failure as Full Disk Access, not the entitlement gap', () => {
