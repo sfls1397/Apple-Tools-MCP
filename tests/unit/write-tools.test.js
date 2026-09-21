@@ -40,6 +40,12 @@ import {
   resolveMailMessageId,
   probeMailAutomation,
   buildMailAutomationProbeScript,
+  buildComposeScript,
+  buildMailtoComposeUrl,
+  encodeMailtoQueryValue,
+  composeMailtoBody,
+  buildReplyScript,
+  buildForwardScript,
   buildFindSentByInReplyToScript,
   buildFindSentBySubjectScript,
   buildFindSentForwardScript,
@@ -130,9 +136,10 @@ describe('mail_send', () => {
     expect(result.ok).toBe(true)
     expect(osascript).toHaveBeenCalledTimes(1)
     const script = lastScript()
-    expect(script).toContain('make new outgoing message')
+    expect(script).toContain('mailto ')
     expect(script).toContain('address:"peter@example.com"')
     expect(script).toContain('send newMessage')
+    expect(script).not.toContain('make new outgoing message')
     expect(result.message).toContain('peter@example.com')
     expect(result.message).toContain('Status')
   })
@@ -176,18 +183,19 @@ describe('mail_send', () => {
   })
 
   it('escapes quotes and newlines in the body instead of injecting AppleScript', () => {
+    const body = 'x" & do shell script "whoami" & "\nend tell'
     mailCompose({
       to: ['a@example.com'],
       subject: 'Hi',
-      body: 'x" & do shell script "whoami" & "\nend tell'
+      body
     })
     const script = lastScript()
     expect(script).not.toContain('do shell script "whoami"')
-    expect(script).toContain('\\" & do shell script \\"whoami\\"')
+    expect(script).toContain(encodeMailtoQueryValue(body))
     expect(script).not.toMatch(/\nend tell\n.*do shell/)
   })
 
-  it('sends HTML when body_format is html, keeping a plain-text alternative', () => {
+  it('sends HTML via mailto with tags stripped, never AppleScript html content', () => {
     const result = mailCompose({
       to: ['a@example.com'],
       subject: 'Report',
@@ -197,16 +205,20 @@ describe('mail_send', () => {
 
     expect(result.ok).toBe(true)
     const script = lastScript()
-    expect(script).toContain('set html content of newMessage to "<p>All <b>good</b></p>"')
-    // content carries the tag-stripped text so non-HTML clients still read it.
-    expect(script).toContain('content:"All good"')
+    expect(script).toContain('set newMessage to mailto ')
+    expect(script).toContain(encodeMailtoQueryValue('All good'))
+    expect(script).not.toContain('html content')
+    expect(script).not.toContain('set html content')
+    expect(script).not.toContain('<blockquote')
+    expect(script).not.toMatch(/content:"All good"/)
   })
 
-  it('defaults to a plain text body', () => {
+  it('defaults to a plain text body via mailto, not AppleScript content', () => {
     mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
     const script = lastScript()
-    expect(script).toContain('content:"All good"')
+    expect(script).toContain(encodeMailtoQueryValue('All good'))
     expect(script).not.toContain('html content')
+    expect(script).not.toMatch(/content:"All good"/)
   })
 
   it('rejects an unknown body_format', () => {
@@ -276,6 +288,118 @@ describe('mail_send', () => {
     expect(osascript).toHaveBeenCalledTimes(1)
   })
 
+})
+
+describe('mail compose mailto body (FB11734014)', () => {
+  it('percent-encodes mailto values without prefixing lines with >', () => {
+    const body = 'Quick note about your Mac\nSecond line'
+    const encoded = encodeMailtoQueryValue(body)
+    expect(encoded).toContain('Quick%20note%20about%20your%20Mac')
+    expect(encoded).toContain('%0D%0A')
+    expect(encoded).not.toMatch(/^>/)
+    expect(encoded).not.toContain('%0A>')
+    expect(encoded).not.toContain('%0D%0A>')
+    expect(encoded).not.toContain('>Quick')
+    expect(encodeMailtoQueryValue('a&b=c"d')).toContain('%26')
+    expect(encodeMailtoQueryValue('a&b=c"d')).toContain('%22')
+  })
+
+  it('builds a mailto URL with subject and body only (recipients stay on make new)', () => {
+    const url = buildMailtoComposeUrl({
+      subject: 'Quick note about your Mac',
+      body: 'Line one\nLine two'
+    })
+    expect(url.startsWith('mailto:?subject=')).toBe(true)
+    expect(url).toContain('subject=Quick%20note%20about%20your%20Mac')
+    expect(url).toContain(`body=${encodeMailtoQueryValue('Line one\nLine two')}`)
+    expect(url).not.toContain('>Line')
+    expect(url).not.toContain('<blockquote')
+  })
+
+  it('does not inject quote prefixes or a cite-blockquote into a plain compose', () => {
+    const body = 'Quick note about your Mac\nSecond line'
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Quick note about your Mac',
+      body,
+      send: true
+    })
+
+    expect(script).toContain('set newMessage to mailto ')
+    expect(script).toContain(encodeMailtoQueryValue(body))
+    expect(script).toContain('address:"a@example.com"')
+    expect(script).toContain('send newMessage')
+    expect(script).not.toContain('make new outgoing message')
+    expect(script).not.toMatch(/\bcontent:/)
+    expect(script).not.toContain('set content')
+    expect(script).not.toContain('html content')
+    expect(script).not.toContain('<blockquote')
+    expect(script).not.toMatch(/(^|\n)>[ \t]/)
+    // Raw body lines must not appear as quoted text in the script.
+    expect(script).not.toContain(`> ${body.split('\n')[0]}`)
+    expect(script).not.toContain('> Quick note about your Mac')
+    expect(script).not.toContain('>Second line')
+  })
+
+  it('does not wrap a plain-looking HTML compose in blockquote or > prefixes', () => {
+    const htmlBody = '<p>Quick note about your Mac</p>\n<p>Second line</p>'
+    expect(composeMailtoBody(htmlBody, { html: true })).toBe('Quick note about your Mac Second line')
+    expect(composeMailtoBody(htmlBody, { html: true })).not.toMatch(/^>/)
+    expect(composeMailtoBody(htmlBody, { html: true })).not.toContain('<blockquote')
+
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Quick note about your Mac',
+      body: htmlBody,
+      send: true,
+      html: true
+    })
+
+    expect(script).toContain('set newMessage to mailto ')
+    expect(script).toContain(encodeMailtoQueryValue('Quick note about your Mac Second line'))
+    expect(script).not.toContain('set html content')
+    expect(script).not.toContain('html content')
+    expect(script).not.toMatch(/\bcontent:/)
+    expect(script).not.toContain('<blockquote')
+    expect(script).not.toContain('> Quick note about your Mac')
+    expect(script).not.toMatch(/(^|\n)>[ \t]/)
+    // Raw HTML must not be injected as AppleScript html content (that cite-wraps).
+    expect(script).not.toContain('<p>Quick note about your Mac</p>')
+  })
+
+  it('keeps reply/forward quoting of the original message', () => {
+    const reply = buildReplyScript({
+      messageId: 'abc@example.com',
+      body: 'Thanks',
+      replyAll: false,
+      sendNow: true
+    })
+    expect(reply).toContain('set content to "Thanks" & return & content')
+
+    const forward = buildForwardScript({
+      messageId: 'abc@example.com',
+      to: ['a@example.com'],
+      body: 'FYI',
+      sendNow: true
+    })
+    expect(forward).toContain('set content to "FYI" & return & content')
+  })
+
+  it('documents the Mail cite-blockquote quirk and mailto compose path', () => {
+    const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+    expect(readme).toContain('Compose is not quoted')
+    expect(readme).toContain('FB11734014')
+    expect(readme).toContain('mailto')
+    expect(readme).toContain('blockquote type="cite"')
+    expect(readme).toContain('does **not** set Mail\'s `html content`')
+    expect(readme).toContain('body_format: "html"')
+    expect(readme).toContain('Inspect each Sent `.emlx`')
+    expect(readme).toContain('post-publish')
+  })
 })
 
 describe('mail_automation_probe', () => {
