@@ -305,6 +305,18 @@ describe('mail_send', () => {
     expect(osascript).toHaveBeenCalledTimes(1)
   })
 
+  it('aborts without sending when paste lands in To', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('BODY_PASTE_MISDIRECTED')
+    })
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('header field')
+    expect(result.message).toContain('nothing was sent')
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
 })
 
 describe('mail compose native paste (FB11734014, -2753)', () => {
@@ -330,6 +342,10 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain('atmPasteMailBody')
     expect(script).toContain('address:"a@example.com"')
     expect(script).toContain('send newMessage')
+    expect(script).toContain('count of to recipients of newMessage')
+    expect(script).toContain('is not 1')
+    expect(script).toContain('BODY_PASTE_MISDIRECTED')
+    expect(script).toContain('delete newMessage')
     expect(script).not.toMatch(/set newMessage to mailto/)
     expect(script).not.toMatch(/content:/)
     expect(script).not.toContain('set content')
@@ -360,6 +376,8 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
 
     expect(script).toContain('make new outgoing message')
     expect(script).toContain('atmPasteMailBody("Quick note about your Mac Second line")')
+    expect(script).toContain('count of to recipients of newMessage')
+    expect(script).toContain('delete newMessage')
     expect(script).not.toContain('set html content')
     expect(script).not.toContain('html content')
     expect(script).not.toMatch(/content:/)
