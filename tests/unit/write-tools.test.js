@@ -81,8 +81,12 @@ import {
   ensureContactsAppReady,
   contactsAppIsReady,
   CONTACTS_READY_ATTEMPTS,
-  CONTACTS_READY_INTERVAL_MS
+  CONTACTS_READY_INTERVAL_MS,
+  CONTACTS_READY_BUDGET_MS,
+  CONTACTS_LAUNCH_TIMEOUT_MS,
+  CONTACTS_READY_SCRIPT_TIMEOUT_MS
 } from '../../lib/contactsWrite.js'
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../../lib/writeBridge.js'
 import { safeOpenApp, OPEN_APP_ALLOWLIST } from '../../lib/shell.js'
 import {
   WRITE_TOOL_DEFINITIONS,
@@ -1446,6 +1450,35 @@ describe('contacts writes', () => {
     expect(toolsSrc).not.toContain('ensureContactsAppReady')
     expect(bridgeSrc).not.toContain('ensureContactsAppReady')
     expect(CONTACTS_READY_ATTEMPTS * CONTACTS_READY_INTERVAL_MS).toBeGreaterThanOrEqual(8000)
+    expect(CONTACTS_READY_BUDGET_MS).toBeLessThanOrEqual(20000)
+    expect(CONTACTS_LAUNCH_TIMEOUT_MS).toBeLessThanOrEqual(4000)
+    expect(CONTACTS_READY_SCRIPT_TIMEOUT_MS).toBeLessThanOrEqual(2000)
+    expect(CONTACTS_READY_BUDGET_MS + 60000).toBeLessThan(DEFAULT_REQUEST_TIMEOUT_MS)
+  })
+
+  it('stops the ready poll when the wall-clock budget is exhausted', () => {
+    let t = 0
+    let nameTries = 0
+    const result = ensureContactsAppReady({
+      attempts: 16,
+      intervalMs: 1,
+      budgetMs: 50,
+      launchTimeoutMs: 20,
+      readyTimeoutMs: 20,
+      openRetryEvery: 0,
+      sleep: () => {},
+      openApp: () => {},
+      now: () => t,
+      run: (script, opts) => {
+        expect(opts.timeout).toBeLessThanOrEqual(20)
+        t += 30
+        if (script.includes('get name')) nameTries += 1
+        return { ok: false, kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT', output: '' }
+      }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('app_not_running')
+    expect(nameTries).toBeLessThan(16)
   })
 
   it('safeOpenApp only allows Contacts/Mail/Messages via open -a argv', () => {
