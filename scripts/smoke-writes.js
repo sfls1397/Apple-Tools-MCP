@@ -8,7 +8,9 @@
  *   A hang or timeout is TCC / Automation denied, not "Mail.app missing".
  * - Messages account/service lookup (Automation → Messages.app). Nothing
  *   is sent. A deny fails --apply the same way Mail does.
- * - Contacts CRUD (AddressBook class, via Contacts.app)
+ * - Contacts CRUD (AddressBook class, via Contacts.app). The write path
+ *   launches Contacts.app before CRUD; keep Contacts, Mail, and Messages
+ *   running on the host. Calendar does not need to stay open (EventKit).
  * - Calendar CRUD (calendars class, via Calendar.app)
  *
  * Mail, Messages, Contacts, and Calendar must all pass on the Node host —
@@ -336,6 +338,7 @@ async function main() {
   }
 
   console.log("\n--- Contacts CRUD (Contacts.app / AddressBook privacy class) ---");
+  console.log("  Keep Contacts, Mail, and Messages running for write reliability. Calendar does not need to stay open (EventKit).");
   const created = step("contacts_add", await run("contacts_add", {
     first_name: "ATM Smoke",
     last_name: `Test ${stamp}`,

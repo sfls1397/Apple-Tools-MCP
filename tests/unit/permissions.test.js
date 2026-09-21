@@ -136,6 +136,7 @@ describe('grant classification and fail-closed exit', () => {
       message: 'The app is installed, so this is an Automation / responsible-process problem rather than a missing app'
     })).toBe('missing')
     expect(classifyGrantStatus({ ok: false, kind: 'unknown', message: 'disk full' })).toBe('error')
+    expect(classifyGrantStatus({ ok: false, kind: 'app_not_running', message: 'Contacts.app was not running' })).toBe('error')
   })
 
   it('exits non-zero unless every required grant is present', () => {

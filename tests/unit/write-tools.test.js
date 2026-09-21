@@ -14,6 +14,7 @@ import {
   MAIL_TCC_GUIDANCE,
   MAIL_SEND_TIMEOUT_GUIDANCE,
   CONTACTS_TCC_GUIDANCE,
+  CONTACTS_APP_NOT_RUNNING_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
   MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE
@@ -71,7 +72,11 @@ import {
   contactsRemove,
   probeContactsAutomation,
   buildContactsAutomationProbeScript,
-  buildContactsProbeCleanupScript
+  buildContactsProbeCleanupScript,
+  buildContactsLaunchScript,
+  buildContactsReadyScript,
+  ensureContactsAppReady,
+  contactsAppIsReady
 } from '../../lib/contactsWrite.js'
 import {
   WRITE_TOOL_DEFINITIONS,
@@ -94,6 +99,16 @@ beforeEach(() => {
 function lastScript() {
   expect(osascript).toHaveBeenCalled()
   return osascript.mock.calls[osascript.mock.calls.length - 1][0]
+}
+
+function mockContactsAppleScript(writeOutput = '') {
+  osascript.mockImplementation((script) => {
+    const s = String(script)
+    if (s.includes('to launch') && !s.includes('make new person')) return ''
+    if (s.includes('if running')) return 'READY'
+    if (typeof writeOutput === 'function') return writeOutput(s)
+    return writeOutput
+  })
 }
 
 // ============ MAIL ============
@@ -292,9 +307,12 @@ describe('contacts_automation_probe', () => {
     expect(cleanup).toContain('every person whose first name is "ATM"')
     expect(cleanup).toContain('Permissions Probe')
 
+    mockContactsAppleScript('')
     const result = probeContactsAutomation()
     expect(result.ok).toBe(true)
-    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript).toHaveBeenCalledTimes(4)
+    expect(osascript.mock.calls[0][0]).toContain('to launch')
+    expect(osascript.mock.calls[1][0]).toContain('if running')
     expect(result.message).toContain('throwaway contact')
   })
 
@@ -1199,7 +1217,7 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
 
 describe('contacts writes', () => {
   it('creates a contact and returns its id', () => {
-    osascript.mockReturnValue('ABCD-1234:ABPerson')
+    mockContactsAppleScript('ABCD-1234:ABPerson')
     const result = contactsAdd({
       first_name: 'Ada',
       last_name: 'Lovelace',
@@ -1229,7 +1247,7 @@ describe('contacts writes', () => {
   })
 
   it('edits a contact by id', () => {
-    osascript.mockReturnValue('Ada Lovelace')
+    mockContactsAppleScript('Ada Lovelace')
     const result = contactsEdit({ contact_id: 'ABCD-1234:ABPerson', organization: 'Analytical Engines' })
     expect(result.ok).toBe(true)
     expect(lastScript()).toContain('set organization of thePerson to "Analytical Engines"')
@@ -1248,7 +1266,7 @@ describe('contacts writes', () => {
     expect(blocked.message).toContain('CONFIRMATION REQUIRED')
     expect(osascript).not.toHaveBeenCalled()
 
-    osascript.mockReturnValue('Ada Lovelace')
+    mockContactsAppleScript('Ada Lovelace')
     const confirmed = contactsRemove({ contact_id: 'ABCD-1234:ABPerson', confirm: true })
     expect(confirmed.ok).toBe(true)
     expect(lastScript()).toContain('delete thePerson')
@@ -1258,6 +1276,57 @@ describe('contacts writes', () => {
     const result = contactsRemove({})
     expect(result.ok).toBe(false)
     expect(result.message).toContain('contact_id is required')
+  })
+
+  it('launches Contacts.app and polls running before CRUD', () => {
+    expect(buildContactsLaunchScript()).toBe('tell application "Contacts" to launch')
+    expect(buildContactsReadyScript()).toContain('if running then return "READY"')
+    expect(contactsAppIsReady('READY')).toBe(true)
+    expect(contactsAppIsReady('NOT_READY')).toBe(false)
+
+    const calls = []
+    const result = ensureContactsAppReady({
+      attempts: 3,
+      intervalMs: 1,
+      sleep: () => {},
+      run: (script) => {
+        calls.push(script)
+        if (script.includes('to launch')) return { ok: true, output: '', kind: null }
+        if (calls.filter((s) => s.includes('if running')).length < 2) {
+          return { ok: true, output: 'NOT_READY', kind: null }
+        }
+        return { ok: true, output: 'READY', kind: null }
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(calls[0]).toContain('to launch')
+    expect(calls.some((s) => s.includes('if running'))).toBe(true)
+  })
+
+  it('does not label a Contacts -600 cold launch as Automation / attribution', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Contacts got an error: Application isn\'t running. (-600)')
+    })
+    const result = contactsAdd(
+      { first_name: 'Ada' },
+      { attempts: 1, sleep: () => {} }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CONTACTS_APP_NOT_RUNNING_GUIDANCE)
+    expect(result.message).toContain('kind=app_not_running')
+    expect(result.message).toContain('-600')
+    expect(result.message).not.toContain(ATTRIBUTION_GUIDANCE)
+    expect(result.message).not.toContain(CONTACTS_TCC_GUIDANCE)
+  })
+
+  it('still maps a hard Contacts deny (-1743) to TCC, not cold-launch', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Contacts. (-1743)')
+    })
+    const result = contactsAdd({ first_name: 'Ada' }, { attempts: 1, sleep: () => {} })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+    expect(result.message).not.toContain(CONTACTS_APP_NOT_RUNNING_GUIDANCE)
   })
 })
 
@@ -1434,6 +1503,11 @@ describe('write smoke script routing (ship gate)', () => {
     // Mail + Messages are the same first-run Automation pass as Contacts/Calendar.
     expect(readme).toContain('One-pass first-run')
     expect(readme).toContain('control **Mail**, **Messages**, **Contacts**, and **Calendar**')
+    expect(readme).toContain('Keep Contacts, Mail, and Messages running')
+    expect(readme).toContain('Calendar does not need to stay open')
+    expect(readme).toContain('EventKit')
+    expect(smoke).toContain('Keep Contacts, Mail, and Messages running')
+    expect(smoke).toContain('Calendar does not need to stay open (EventKit)')
     expect(readme).toContain('node → Mail')
     expect(readme).toContain('node → Messages')
     expect(readme).toContain('dry_run never talks to Mail')
