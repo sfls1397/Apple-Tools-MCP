@@ -97,7 +97,7 @@ describe('npm 12 bin publish contract', () => {
       expect(fs.existsSync(abs), `${rel} must exist`).toBe(true)
       const src = fs.readFileSync(abs, 'utf8')
       expect(src.startsWith('#!/usr/bin/env node\n')).toBe(true)
-      expect(src).toMatch(/from ['"]\.\.\/index\.js['"]|import\(['"]\.\.\/index\.js['"]\)/)
+      expect(src).toMatch(/import(?:\(|\s)['"]\.\.\/index\.js['"]/)
     }
 
     const indexerSrc = fs.readFileSync(path.join(root, CLI_BINS['apple-tools-indexer']), 'utf8')
