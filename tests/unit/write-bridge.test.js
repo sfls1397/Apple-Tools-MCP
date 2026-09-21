@@ -50,6 +50,7 @@ import {
   CALENDAR_TCC_GUIDANCE,
   MAIL_TCC_GUIDANCE,
   MAIL_ACCESSIBILITY_GUIDANCE,
+  MAIL_GUI_SCRIPTING_GUIDANCE,
   MAIL_SEND_TIMEOUT_GUIDANCE,
   MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE,
@@ -211,6 +212,7 @@ describe('write routing policy', () => {
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Messages.app')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('TCC / Automation denied')
     expect(hostAutomationAdvice({ launchAgent: true })).toContain('write-bridge / LaunchAgent')
+    expect(hostAutomationAdvice({ launchAgent: true })).toContain('System Events')
   })
 })
 
@@ -237,6 +239,7 @@ describe('AppleScript error classification', () => {
     expect(needsHostTccAdvice(`contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`)).toBe(true)
     expect(needsHostTccAdvice('Not authorized to send Apple events to Contacts. (-1743)')).toBe(true)
     expect(needsHostTccAdvice(MAIL_SEND_TIMEOUT_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(MAIL_GUI_SCRIPTING_GUIDANCE)).toBe(false)
     expect(needsHostTccAdvice(CONTACTS_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
     expect(needsHostTccAdvice(MAIL_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
     expect(needsHostTccAdvice(MESSAGES_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
