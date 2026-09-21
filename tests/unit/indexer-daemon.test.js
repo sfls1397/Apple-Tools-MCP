@@ -42,13 +42,13 @@ describe('package version 2.0.2', () => {
   })
 
   it('exposes apple-tools-indexer bin and --mode=indexer', () => {
-    expect(pkg.bin['apple-tools-mcp']).toBe('./index.js')
-    expect(pkg.bin['apple-tools-indexer']).toBe('./index.js')
+    expect(pkg.bin['apple-tools-mcp']).toBe('bin/apple-tools-mcp.js')
+    expect(pkg.bin['apple-tools-indexer']).toBe('bin/apple-tools-indexer.js')
     expect(pkg.scripts.indexer).toBe('node index.js --mode=indexer')
     expect(pkg.scripts.permissions).toBe('node index.js permissions')
     expect(pkg.scripts.postinstall).toBe('node scripts/postinstall.js')
     expect(pkg.scripts['build-index']).toMatch(/rebuildIndex/)
-    expect(lock.packages[''].bin['apple-tools-indexer']).toBe('index.js')
+    expect(lock.packages[''].bin['apple-tools-indexer']).toBe('bin/apple-tools-indexer.js')
     expect(isIndexerMode(['node', '/path/to/index.js', '--mode=indexer'])).toBe(true)
     expect(isIndexerMode(['node', '/usr/local/bin/apple-tools-indexer'])).toBe(true)
   })

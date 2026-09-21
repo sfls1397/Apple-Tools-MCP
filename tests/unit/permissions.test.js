@@ -31,7 +31,7 @@ describe('permissions command wiring', () => {
     const permSrc = fs.readFileSync(path.join(root, 'lib/permissions.js'), 'utf8')
     const postSrc = fs.readFileSync(path.join(root, 'scripts/postinstall.js'), 'utf8')
 
-    expect(pkg.bin['apple-tools-mcp']).toBe('./index.js')
+    expect(pkg.bin['apple-tools-mcp']).toBe('bin/apple-tools-mcp.js')
     expect(pkg.scripts.permissions).toBe('node index.js permissions')
     expect(pkg.scripts.postinstall).toBe('node scripts/postinstall.js')
     expect(pkg.files).toContain('scripts/postinstall.js')

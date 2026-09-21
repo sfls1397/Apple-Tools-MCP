@@ -5,8 +5,8 @@
   "type": "module",
   "main": "index.js",
   "bin": {
-    "apple-tools-mcp": "./index.js",
-    "apple-tools-indexer": "./index.js"
+    "apple-tools-mcp": "bin/apple-tools-mcp.js",
+    "apple-tools-indexer": "bin/apple-tools-indexer.js"
   },
   "author": "Peter Coates",
   "license": "MIT",
@@ -45,6 +45,7 @@
     "search.js",
     "contacts.js",
     "lib/",
+    "bin/",
     "scripts/audit-index.js",
     "scripts/smoke-writes.js",
     "scripts/postinstall.js",
