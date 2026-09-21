@@ -33,6 +33,7 @@ import {
 import {
   classifyAppleScriptError,
   isTccDenial,
+  needsHostTccAdvice,
   isHardTccDenial,
   formatOsascriptDiagnostic,
   extractAppleEventCodes,
@@ -214,6 +215,24 @@ describe('AppleScript error classification', () => {
     expect(isTccDenial('osascript: Operation not permitted')).toBe(true)
     expect(isTccDenial('execution error: Calendar got an error (-10004)')).toBe(true)
     expect(isTccDenial('some other failure')).toBe(false)
+  })
+
+  it('attaches host recovery advice to rewritten TCC / attribution copy, not Mail timeouts', () => {
+    expect(isTccDenial(CONTACTS_TCC_GUIDANCE)).toBe(false)
+    expect(isTccDenial(CALENDAR_TCC_GUIDANCE)).toBe(false)
+    expect(isTccDenial(MESSAGES_TCC_GUIDANCE)).toBe(false)
+    expect(isTccDenial(ATTRIBUTION_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(CONTACTS_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(CALENDAR_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(MESSAGES_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(MAIL_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(ATTRIBUTION_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(`contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`)).toBe(true)
+    expect(needsHostTccAdvice('Not authorized to send Apple events to Contacts. (-1743)')).toBe(true)
+    expect(needsHostTccAdvice(MAIL_SEND_TIMEOUT_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(`mail_reply failed — ${MAIL_SEND_TIMEOUT_GUIDANCE}`)).toBe(false)
+    expect(needsHostTccAdvice('some other failure')).toBe(false)
   })
 
   it('separates not-found, app-unavailable, and unknown failures', () => {
