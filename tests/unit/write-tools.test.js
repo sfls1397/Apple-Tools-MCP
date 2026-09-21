@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url'
 import {
   MAIL_TCC_GUIDANCE,
   MAIL_SEND_TIMEOUT_GUIDANCE,
+  MAIL_ACCESSIBILITY_GUIDANCE,
   CONTACTS_TCC_GUIDANCE,
   CONTACTS_APP_NOT_RUNNING_GUIDANCE,
   MAIL_APP_NOT_RUNNING_GUIDANCE,
@@ -41,9 +42,9 @@ import {
   probeMailAutomation,
   buildMailAutomationProbeScript,
   buildComposeScript,
-  buildMailtoComposeUrl,
-  encodeMailtoQueryValue,
-  composeMailtoBody,
+  composeNativeBody,
+  buildMailBodyPasteHandler,
+  isMailAccessibilityDenial,
   buildReplyScript,
   buildForwardScript,
   buildFindSentByInReplyToScript,
@@ -136,10 +137,11 @@ describe('mail_send', () => {
     expect(result.ok).toBe(true)
     expect(osascript).toHaveBeenCalledTimes(1)
     const script = lastScript()
-    expect(script).toContain('mailto ')
+    expect(script).toContain('make new outgoing message')
     expect(script).toContain('address:"peter@example.com"')
     expect(script).toContain('send newMessage')
-    expect(script).not.toContain('make new outgoing message')
+    expect(script).not.toMatch(/set newMessage to mailto/)
+    expect(script).toContain('atmPasteMailBody')
     expect(result.message).toContain('peter@example.com')
     expect(result.message).toContain('Status')
   })
@@ -191,11 +193,11 @@ describe('mail_send', () => {
     })
     const script = lastScript()
     expect(script).not.toContain('do shell script "whoami"')
-    expect(script).toContain(encodeMailtoQueryValue(body))
-    expect(script).not.toMatch(/\nend tell\n.*do shell/)
+    expect(script).toContain('\\" & do shell script \\"whoami\\"')
+    expect(script).toContain('atmPasteMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell")')
   })
 
-  it('sends HTML via mailto with tags stripped, never AppleScript html content', () => {
+  it('sends HTML via native paste with tags stripped, never AppleScript html content', () => {
     const result = mailCompose({
       to: ['a@example.com'],
       subject: 'Report',
@@ -205,20 +207,22 @@ describe('mail_send', () => {
 
     expect(result.ok).toBe(true)
     const script = lastScript()
-    expect(script).toContain('set newMessage to mailto ')
-    expect(script).toContain(encodeMailtoQueryValue('All good'))
+    expect(script).toContain('make new outgoing message')
+    expect(script).toContain('atmPasteMailBody("All good")')
     expect(script).not.toContain('html content')
     expect(script).not.toContain('set html content')
     expect(script).not.toContain('<blockquote')
     expect(script).not.toMatch(/content:"All good"/)
+    expect(script).not.toMatch(/set newMessage to mailto/)
   })
 
-  it('defaults to a plain text body via mailto, not AppleScript content', () => {
+  it('defaults to a plain text body via make new + paste, not AppleScript content', () => {
     mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
     const script = lastScript()
-    expect(script).toContain(encodeMailtoQueryValue('All good'))
+    expect(script).toContain('atmPasteMailBody("All good")')
     expect(script).not.toContain('html content')
     expect(script).not.toMatch(/content:"All good"/)
+    expect(script).toContain('make new outgoing message with properties {subject:"Report", visible:true}')
   })
 
   it('rejects an unknown body_format', () => {
@@ -288,32 +292,27 @@ describe('mail_send', () => {
     expect(osascript).toHaveBeenCalledTimes(1)
   })
 
-})
-
-describe('mail compose mailto body (FB11734014)', () => {
-  it('percent-encodes mailto values without prefixing lines with >', () => {
-    const body = 'Quick note about your Mac\nSecond line'
-    const encoded = encodeMailtoQueryValue(body)
-    expect(encoded).toContain('Quick%20note%20about%20your%20Mac')
-    expect(encoded).toContain('%0D%0A')
-    expect(encoded).not.toMatch(/^>/)
-    expect(encoded).not.toContain('%0A>')
-    expect(encoded).not.toContain('%0D%0A>')
-    expect(encoded).not.toContain('>Quick')
-    expect(encodeMailtoQueryValue('a&b=c"d')).toContain('%26')
-    expect(encodeMailtoQueryValue('a&b=c"d')).toContain('%22')
+  it('maps Accessibility paste deny to MAIL_ACCESSIBILITY_GUIDANCE, not Mail Automation TCC', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('ACCESSIBILITY_DENIED')
+    })
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(isMailAccessibilityDenial({ error: 'ACCESSIBILITY_DENIED' })).toBe(true)
+    expect(result.message).toContain(MAIL_ACCESSIBILITY_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 
-  it('builds a mailto URL with subject and body only (recipients stay on make new)', () => {
-    const url = buildMailtoComposeUrl({
-      subject: 'Quick note about your Mac',
-      body: 'Line one\nLine two'
-    })
-    expect(url.startsWith('mailto:?subject=')).toBe(true)
-    expect(url).toContain('subject=Quick%20note%20about%20your%20Mac')
-    expect(url).toContain(`body=${encodeMailtoQueryValue('Line one\nLine two')}`)
-    expect(url).not.toContain('>Line')
-    expect(url).not.toContain('<blockquote')
+})
+
+describe('mail compose native paste (FB11734014, -2753)', () => {
+  it('creates a real outgoing message without mailto or AppleScript content', () => {
+    const handler = buildMailBodyPasteHandler()
+    expect(handler).toContain('keystroke "v" using command down')
+    expect(handler).toContain('System Events')
+    expect(handler).toContain('ACCESSIBILITY_DENIED')
   })
 
   it('does not inject quote prefixes or a cite-blockquote into a plain compose', () => {
@@ -327,27 +326,27 @@ describe('mail compose mailto body (FB11734014)', () => {
       send: true
     })
 
-    expect(script).toContain('set newMessage to mailto ')
-    expect(script).toContain(encodeMailtoQueryValue(body))
+    expect(script).toContain('set newMessage to make new outgoing message with properties {subject:"Quick note about your Mac", visible:true}')
+    expect(script).toContain('atmPasteMailBody')
     expect(script).toContain('address:"a@example.com"')
     expect(script).toContain('send newMessage')
-    expect(script).not.toContain('make new outgoing message')
-    expect(script).not.toMatch(/\bcontent:/)
+    expect(script).not.toMatch(/set newMessage to mailto/)
+    expect(script).not.toMatch(/content:/)
     expect(script).not.toContain('set content')
     expect(script).not.toContain('html content')
     expect(script).not.toContain('<blockquote')
     expect(script).not.toMatch(/(^|\n)>[ \t]/)
-    // Raw body lines must not appear as quoted text in the script.
-    expect(script).not.toContain(`> ${body.split('\n')[0]}`)
     expect(script).not.toContain('> Quick note about your Mac')
     expect(script).not.toContain('>Second line')
+    expect(composeNativeBody(body)).toBe(body)
+    expect(composeNativeBody(body)).not.toMatch(/^>/)
   })
 
   it('does not wrap a plain-looking HTML compose in blockquote or > prefixes', () => {
     const htmlBody = '<p>Quick note about your Mac</p>\n<p>Second line</p>'
-    expect(composeMailtoBody(htmlBody, { html: true })).toBe('Quick note about your Mac Second line')
-    expect(composeMailtoBody(htmlBody, { html: true })).not.toMatch(/^>/)
-    expect(composeMailtoBody(htmlBody, { html: true })).not.toContain('<blockquote')
+    expect(composeNativeBody(htmlBody, { html: true })).toBe('Quick note about your Mac Second line')
+    expect(composeNativeBody(htmlBody, { html: true })).not.toMatch(/^>/)
+    expect(composeNativeBody(htmlBody, { html: true })).not.toContain('<blockquote')
 
     const script = buildComposeScript({
       to: ['a@example.com'],
@@ -359,16 +358,16 @@ describe('mail compose mailto body (FB11734014)', () => {
       html: true
     })
 
-    expect(script).toContain('set newMessage to mailto ')
-    expect(script).toContain(encodeMailtoQueryValue('Quick note about your Mac Second line'))
+    expect(script).toContain('make new outgoing message')
+    expect(script).toContain('atmPasteMailBody("Quick note about your Mac Second line")')
     expect(script).not.toContain('set html content')
     expect(script).not.toContain('html content')
-    expect(script).not.toMatch(/\bcontent:/)
+    expect(script).not.toMatch(/content:/)
     expect(script).not.toContain('<blockquote')
     expect(script).not.toContain('> Quick note about your Mac')
     expect(script).not.toMatch(/(^|\n)>[ \t]/)
-    // Raw HTML must not be injected as AppleScript html content (that cite-wraps).
     expect(script).not.toContain('<p>Quick note about your Mac</p>')
+    expect(script).not.toMatch(/set newMessage to mailto/)
   })
 
   it('keeps reply/forward quoting of the original message', () => {
@@ -389,16 +388,16 @@ describe('mail compose mailto body (FB11734014)', () => {
     expect(forward).toContain('set content to "FYI" & return & content')
   })
 
-  it('documents the Mail cite-blockquote quirk and mailto compose path', () => {
+  it('documents the Mail cite-blockquote quirk, mailto -2753, and paste compose', () => {
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
     expect(readme).toContain('Compose is not quoted')
     expect(readme).toContain('FB11734014')
-    expect(readme).toContain('mailto')
+    expect(readme).toContain('make new outgoing message')
     expect(readme).toContain('blockquote type="cite"')
-    expect(readme).toContain('does **not** set Mail\'s `html content`')
+    expect(readme).toContain('-2753')
+    expect(readme).toContain('Accessibility')
     expect(readme).toContain('body_format: "html"')
     expect(readme).toContain('Inspect each Sent `.emlx`')
-    expect(readme).toContain('post-publish')
   })
 })
 
