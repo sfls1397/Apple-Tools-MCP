@@ -442,19 +442,22 @@ describe('AppleScript Injection Prevention', () => {
 })
 
 describe('mail compose paste focus (2.0.8)', () => {
-  it('does not type or paste until Tab calibration lands in the body', () => {
+  it('does not type or paste until hit-test lands in the body', () => {
     const handler = buildMailBodyPasteHandler()
-    const tabAt = handler.indexOf('atmTabIntoMailBody')
+    const hitAt = handler.indexOf('atmAxHitFill')
     const typeAt = handler.indexOf('atmTypeMailBody')
     const pasteAt = handler.indexOf('keystroke "v" using command down')
-    expect(tabAt).toBeGreaterThan(-1)
-    expect(typeAt).toBeGreaterThan(tabAt)
+    expect(hitAt).toBeGreaterThan(-1)
+    expect(typeAt).toBeGreaterThan(hitAt)
     expect(pasteAt).toBeGreaterThan(typeAt)
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).not.toMatch(/\bweb area\b/)
     expect(handler).toContain('AXWebArea')
-    expect(handler).toContain('atmSafeToPaste')
+    expect(handler).toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).not.toContain('atmSafeToPaste')
     expect(handler).not.toContain('count of windows')
+    expect(handler).not.toContain('click at')
+    expect(handler).not.toContain('entire contents')
     expect(handler).not.toMatch(/content of msg/)
   })
 
@@ -521,10 +524,14 @@ end atmFocusedElement`
 
     const handler = buildMailBodyPasteHandler()
     expect(handler).toContain(focused)
-    expect(handler).toContain('atmSafeToPaste')
+    expect(handler).toContain('atmAxHitFill')
     expect(handler).toContain('atmAxFocusedValue')
+    expect(handler).toContain('AXUIElementCopyElementAtPosition')
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bweb area\b/)
+    expect(handler).not.toContain('click at')
+    expect(handler).not.toContain('entire contents')
+    expect(handler).not.toContain('do shell script')
 
     const script = buildComposeScript({
       to: ['a@example.com'],
@@ -588,6 +595,34 @@ describe('System Events permissions probe (2.1.2)', () => {
       const bindings = [...script.matchAll(/set\s+(\w+)\s+to/g)].map((m) => m[1])
       expect(bindings).not.toContain(name)
     }
+  })
+})
+
+describe('mail compose AX hit-test (2.1.3)', () => {
+  it('embeds the Mini-proven coordinate hit-test and never deep-walks or clicks', () => {
+    const handler = buildMailBodyPasteHandler()
+    expect(handler).toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).toContain('atmComposeFrameByTitle')
+    expect(handler).toContain('message body')
+    expect(handler).toContain('AXTextField')
+    expect(handler).toContain('BODY_FOCUS_FAILED')
+    expect(handler).not.toContain('click at')
+    expect(handler).not.toContain('entire contents')
+    expect(handler).not.toContain('UI elements of atmEl')
+    expect(handler).not.toContain('atmTabIntoMailBody')
+    expect(handler).not.toContain('do shell script')
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi" & beep',
+      body: '" & do shell script "whoami" & "',
+      send: true
+    })
+    expect(script).not.toContain('do shell script "whoami"')
+    expect(script).toContain('atmFillMailBody')
+    expect(script).toContain('AXUIElementCopyElementAtPosition')
+    expect(script).not.toContain('click at')
   })
 })
 
