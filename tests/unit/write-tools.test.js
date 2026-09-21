@@ -10,7 +10,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { MAIL_TCC_GUIDANCE, MAIL_SEND_TIMEOUT_GUIDANCE } from '../../lib/appleScript.js'
+import {
+  MAIL_TCC_GUIDANCE,
+  MAIL_SEND_TIMEOUT_GUIDANCE,
+  CONTACTS_TCC_GUIDANCE,
+  CALENDAR_TCC_GUIDANCE,
+  MESSAGES_TCC_GUIDANCE,
+  ATTRIBUTION_GUIDANCE
+} from '../../lib/appleScript.js'
 
 const osascript = vi.hoisted(() => vi.fn(() => ''))
 
@@ -1642,6 +1649,76 @@ describe('dispatchWriteTool routing', () => {
     expect(result.message).toContain('process.execPath')
     expect(result.message).toContain('Do not start apple-tools-indexer')
     expect(result.message).not.toMatch(/LaunchAgent/)
+  })
+
+  it('appends Terminal host advice after handlers rewrite Contacts/Calendar/Messages/attribution copy', async () => {
+    const cases = [
+      ['contacts_add', CONTACTS_TCC_GUIDANCE],
+      ['calendar_list_calendars', CALENDAR_TCC_GUIDANCE],
+      ['messages_send', MESSAGES_TCC_GUIDANCE],
+      ['contacts_add', ATTRIBUTION_GUIDANCE]
+    ]
+    for (const [tool, guidance] of cases) {
+      const result = await dispatchWriteTool(tool, {}, {
+        indexerMode: false,
+        probe: async () => false,
+        runLocally: () => ({
+          ok: false,
+          message: `${tool} failed — attempted to write. ${guidance}`
+        })
+      })
+      expect(result.ok).toBe(false)
+      expect(result.message).toContain(guidance)
+      expect(result.message).toContain('Terminal.app')
+      expect(result.message).toContain('Do not start apple-tools-indexer')
+      expect(result.message).not.toMatch(/LaunchAgent/)
+    }
+  })
+
+  it('appends Terminal host advice when a real contacts_add rewrite has no -1743 left', async () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Contacts. (-1743)')
+    })
+    const result = await dispatchWriteTool('contacts_add', { first_name: 'Ada' }, {
+      indexerMode: false,
+      probe: async () => false
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+    expect(result.message).not.toContain('(-1743)')
+    expect(result.message).toContain('Terminal.app')
+    expect(result.message).toContain('Do not start apple-tools-indexer')
+  })
+
+  it('does not append host TCC advice to a Mail send timeout', async () => {
+    const result = await dispatchWriteTool('mail_reply', {}, {
+      indexerMode: false,
+      probe: async () => false,
+      runLocally: () => ({
+        ok: false,
+        message: `mail_reply failed — attempted to reply. ${MAIL_SEND_TIMEOUT_GUIDANCE}`
+      })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain('Terminal.app')
+    expect(result.message).not.toContain('Do not start apple-tools-indexer')
+    expect(result.message).not.toContain('LaunchAgent')
+  })
+
+  it('appends Mini write-bridge copy when rewritten Contacts deny happens with a live socket', async () => {
+    const result = await dispatchWriteTool('contacts_add', {}, {
+      indexerMode: false,
+      probe: async () => true,
+      request: async () => ({ delivered: false, response: null, error: 'ECONNREFUSED' }),
+      runLocally: () => ({
+        ok: false,
+        message: `contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`
+      })
+    })
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+    expect(result.message).toContain('indexer daemon was reachable')
+    expect(result.message).not.toContain('Do not start apple-tools-indexer')
   })
 
   it('does not append TCC fallback advice when calendar_remove suppresses it', async () => {
