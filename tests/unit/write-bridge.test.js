@@ -198,7 +198,7 @@ describe('write routing policy', () => {
     expect(terminal).toContain('Terminal.app')
     expect(terminal).toContain('process.execPath')
     expect(terminal).toContain(execPath)
-    expect(terminal).toContain('Automation')
+    expect(terminal).toContain('Contacts, Calendar, Mail, Messages, and System Events')
     expect(terminal).toContain('Do not start apple-tools-indexer')
     expect(terminal).not.toMatch(/LaunchAgent/)
     expect(terminal).not.toContain('Start apple-tools-indexer')

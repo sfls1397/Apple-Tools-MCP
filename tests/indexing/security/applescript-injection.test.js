@@ -451,8 +451,10 @@ describe('mail compose paste focus (2.0.8)', () => {
     expect(pasteAt).toBeGreaterThan(typeAt)
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).not.toMatch(/\bweb area\b/)
-    expect(handler).not.toContain('AXWebArea')
+    expect(handler).toContain('AXWebArea')
+    expect(handler).toContain('atmSafeToPaste')
     expect(handler).not.toContain('count of windows')
+    expect(handler).not.toMatch(/content of msg/)
   })
 
   it('deletes the outgoing message before send when paste is misdirected or focus missed the body', () => {
@@ -517,7 +519,9 @@ end atmFocusedElement`
     expect(focused).not.toMatch(/\bselected UI element\b/)
 
     const handler = buildMailBodyPasteHandler()
-    expect(handler).not.toContain(focused)
+    expect(handler).toContain(focused)
+    expect(handler).toContain('atmSafeToPaste')
+    expect(handler).toContain('atmAxFocusedValue')
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bweb area\b/)
 
@@ -529,7 +533,8 @@ end atmFocusedElement`
       body: '" & do shell script "whoami" & "',
       send: true
     })
-    expect(script).not.toContain('atmFocusedElement')
+    expect(script).toContain('atmFocusedElement')
+    expect(script).not.toMatch(/content of newMessage/)
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).not.toMatch(/content:/)
