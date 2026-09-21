@@ -49,14 +49,17 @@ import {
   buildComposeScript,
   composeNativeBody,
   composeBodyNeedle,
+  composeTitleMarker,
   buildMailBodyPasteHandler,
+  buildAtmAxHitTestJxa,
   isMailAccessibilityDenial,
   isMailBodyFocusFailed,
   isMailBodyPasteMisdirected,
   isMailGuiScriptingUnavailable,
   BODY_FOCUS_FAILED_SENTINEL,
-  MAIL_BODY_MIN_AX_HEIGHT,
-  MAIL_BODY_TAB_MAX,
+  MAIL_COMPOSE_TITLE_MARKER_MAX,
+  MAIL_COMPOSE_TOP_UI_MAX,
+  ATM_AX_HIT_TEST_MARKER,
   MAIL_COMPOSE_TIMEOUT_MS,
   MAIL_SE_PROBE_TIMEOUT_MS,
   SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS,
@@ -205,10 +208,13 @@ describe('mail_send', () => {
     expect(script).toContain('send newMessage')
     expect(script).not.toMatch(/set newMessage to mailto/)
     expect(script).toContain('atmFillMailBody')
-    expect(script).toContain('atmTabIntoMailBody')
+    expect(script).toContain('atmComposeFrameByTitle')
+    expect(script).toContain('atmAxHitFill')
+    expect(script).toContain('AXUIElementCopyElementAtPosition')
     expect(script).toContain('atmTypeMailBody')
-    expect(script.indexOf('atmTabIntoMailBody')).toBeLessThan(script.indexOf('atmTypeMailBody'))
-    expect(script.indexOf('atmTypeMailBody')).toBeLessThan(script.indexOf('keystroke "v" using command down'))
+    expect(script.indexOf('atmComposeFrameByTitle')).toBeLessThan(script.indexOf('atmAxHitFill'))
+    expect(script.indexOf('on atmAxHitFill')).toBeLessThan(script.indexOf('on atmTypeMailBody'))
+    expect(script.indexOf('on atmTypeMailBody')).toBeLessThan(script.indexOf('keystroke "v" using command down'))
     expect(result.message).toContain('peter@example.com')
     expect(result.message).toContain('Status')
     expect(result.message).toContain('verified in Sent')
@@ -283,7 +289,7 @@ describe('mail_send', () => {
     const script = firstScript()
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('\\" & do shell script \\"whoami\\"')
-    expect(script).toContain('atmFillMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell", "x\\" & do shell script \\"whoami\\" & \\"", newMessage)')
+    expect(script).toContain('atmFillMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell", "x\\" & do shell script \\"whoami\\" & \\"", "Hi", newMessage)')
   })
 
   it('sends HTML via native paste with tags stripped, never AppleScript html content', () => {
@@ -297,7 +303,7 @@ describe('mail_send', () => {
     expect(result.ok).toBe(true)
     const script = firstScript()
     expect(script).toContain('make new outgoing message')
-    expect(script).toContain('atmFillMailBody("All good", "All good", newMessage)')
+    expect(script).toContain('atmFillMailBody("All good", "All good", "Report", newMessage)')
     expect(script).not.toContain('html content')
     expect(script).not.toContain('set html content')
     expect(script).not.toContain('<blockquote')
@@ -308,7 +314,7 @@ describe('mail_send', () => {
   it('defaults to a plain text body via make new + keystroke, not AppleScript content', () => {
     mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
     const script = firstScript()
-    expect(script).toContain('atmFillMailBody("All good", "All good", newMessage)')
+    expect(script).toContain('atmFillMailBody("All good", "All good", "Report", newMessage)')
     expect(script).not.toContain('html content')
     expect(script).not.toMatch(/content:"All good"/)
     expect(script).toContain('make new outgoing message with properties {subject:"Report", visible:true}')
@@ -483,12 +489,16 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).toContain('keystroke "v" using command down')
     expect(handler).toContain('System Events')
     expect(handler).toContain('ACCESSIBILITY_DENIED')
-    expect(handler).toContain('atmFillMailBody(bodyText, needle, msg)')
-    expect(handler).toContain('atmTabIntoMailBody(msg)')
+    expect(handler).toContain('atmFillMailBody(bodyText, needle, titleMarker, msg)')
+    expect(handler).toContain('atmComposeFrameByTitle')
+    expect(handler).toContain('atmAxHitFill')
     expect(handler).toContain('atmTypeMailBody(bodyText)')
-    expect(handler).toContain('key code 48')
+    expect(handler).toContain('AXUIElementCopyElementAtPosition')
     expect(handler).toContain('key code 36')
+    expect(handler).not.toContain('key code 48')
     expect(handler).not.toContain('count of windows')
+    expect(handler).not.toContain('click at')
+    expect(handler).not.toContain('entire contents')
   })
 
   it('does not use the System Events web area class or window walker', () => {
@@ -511,7 +521,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).not.toMatch(/content:/)
   })
 
-  it('calibrates Tab against AX focused role, not Mail content of', () => {
+  it('finds the body via title-marker + AX hit-test, not Mail content of', () => {
     const focused = buildAtmFocusedElementHandler()
     expect(focused).toContain('on atmFocusedElement()')
     expect(focused).toContain(ATM_FOCUSED_WHOSE_QUERY)
@@ -521,26 +531,41 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(focused).not.toMatch(/\bselected UI element\b/)
     expect(focused).not.toMatch(/\bweb area\b/)
 
+    const jxa = buildAtmAxHitTestJxa()
+    expect(jxa).toContain(ATM_AX_HIT_TEST_MARKER)
+    expect(jxa).toContain('AXUIElementCopyElementAtPosition')
+    expect(jxa).toContain('AXWebArea')
+    expect(jxa).toContain('message body')
+    expect(jxa).toContain('AXTextField')
+    expect(jxa).toContain('AXFocused')
+    expect(jxa).toContain('AXValue')
+    expect(jxa).toContain('BODY_FOCUS_FAILED')
+    expect(jxa).not.toContain('click at')
+    expect(jxa).not.toContain('do shell script')
+
     const handler = buildMailBodyPasteHandler()
     expect(handler).toContain(focused)
     expect(handler).toContain('set fe to my atmFocusedElement()')
-    expect(handler).toContain('on atmSafeToPaste()')
     expect(handler).toContain('on atmAxFocusedValue()')
-    expect(handler).toContain('if r is "AXWebArea" then return true')
-    expect(handler).toContain('if r is "AXTextArea" then return true')
-    expect(handler).toContain(`if r is "AXTextArea" and atmH > 0 and atmH < ${MAIL_BODY_MIN_AX_HEIGHT} then return false`)
-    expect(handler).toContain('if my atmSafeToPaste() then return')
-    expect(handler).toContain('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    expect(handler).toContain('on atmComposeFrameByTitle')
+    expect(handler).toContain('on atmAxHitFill')
+    expect(handler).toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).toContain('message body')
+    expect(handler).toContain('if atmHit is "BODY_FOCUS_FAILED" then error "BODY_FOCUS_FAILED"')
+    expect(handler).not.toContain('on atmSafeToPaste()')
+    expect(handler).not.toContain('atmTabIntoMailBody')
     const fillAt = handler.indexOf('on atmFillMailBody')
     expect(fillAt).toBeGreaterThan(-1)
-    expect(handler.indexOf('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"', fillAt)).toBeLessThan(
-      handler.indexOf('atmTypeMailBody(bodyText)', fillAt)
-    )
+    expect(handler.indexOf('atmComposeFrameByTitle', fillAt)).toBeGreaterThan(fillAt)
+    expect(handler.indexOf('atmAxHitFill', fillAt)).toBeGreaterThan(handler.indexOf('atmComposeFrameByTitle', fillAt))
     expect(handler).not.toContain('atmMailBodyContains')
     expect(handler).not.toMatch(/content of msg/)
     expect(handler).not.toMatch(/content of newMessage/)
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bselected UI element\b/)
+    expect(handler).not.toContain('entire contents')
+    expect(handler).not.toContain('UI elements of atmEl')
+    expect(handler).not.toContain('click at')
 
     const script = buildComposeScript({
       to: ['a@example.com'],
@@ -554,6 +579,8 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
     expect(script).toContain(ATM_FOCUSED_AX_QUERY)
     expect(script).toContain('atmAxFocusedValue')
+    expect(script).toContain('atmComposeFrameByTitle')
+    expect(script).toContain('AXUIElementCopyElementAtPosition')
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toMatch(/\bselected UI element\b/)
     expect(script).not.toMatch(/\bweb area\b/)
@@ -564,23 +591,38 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).not.toMatch(/content:/)
   })
 
-  it('tabs into the body until AX role is a body field then types Returns', () => {
+  it('title-markers the compose window then hit-tests AXWebArea message body', () => {
+    expect(composeTitleMarker('Status')).toBe('Status')
+    expect(composeTitleMarker('')).toBe('New Message')
+    expect(composeTitleMarker(null)).toBe('New Message')
+    expect(composeTitleMarker('x'.repeat(MAIL_COMPOSE_TITLE_MARKER_MAX + 10))).toHaveLength(MAIL_COMPOSE_TITLE_MARKER_MAX)
+    expect(MAIL_COMPOSE_TOP_UI_MAX).toBeLessThanOrEqual(48)
+
     const handler = buildMailBodyPasteHandler()
-    expect(handler).toContain('atmTabIntoMailBody')
+    expect(handler).toContain('atmComposeFrameByTitle')
     expect(handler).toContain('BODY_FOCUS_FAILED')
-    expect(handler).toContain('key code 48')
-    expect(handler).toContain('key code 36')
-    expect(handler).toContain(`repeat with atmN from 0 to ${MAIL_BODY_TAB_MAX}`)
-    expect(handler).toContain('atmSafeToPaste')
+    expect(handler).toContain('atmBodyHitPointList')
+    expect(handler).toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).toContain('message body')
+    expect(handler).toContain('AXTextField')
+    expect(handler).toContain(`repeat with atmIdx from 1 to atmCount`)
+    expect(handler).toContain(`if atmCount > ${MAIL_COMPOSE_TOP_UI_MAX} then set atmCount to ${MAIL_COMPOSE_TOP_UI_MAX}`)
     expect(handler).toContain('atmAxFocusedValue')
+    expect(handler).not.toContain('atmTabIntoMailBody')
+    expect(handler).not.toContain('atmSafeToPaste')
     expect(handler).not.toContain('atmMailBodyContains')
     expect(handler).not.toMatch(/content of msg/)
     expect(handler).not.toContain('set content')
-    expect(handler.indexOf('atmTabIntoMailBody')).toBeLessThan(handler.indexOf('on atmTypeMailBody'))
+    expect(handler).not.toContain('entire contents')
+    expect(handler).not.toContain('click at')
+    expect(handler.indexOf('on atmComposeFrameByTitle')).toBeLessThan(handler.indexOf('on atmAxHitFill'))
+    expect(handler.indexOf('on atmAxHitFill')).toBeLessThan(handler.indexOf('on atmTypeMailBody'))
     expect(handler.indexOf('on atmTypeMailBody')).toBeLessThan(handler.indexOf('keystroke "v" using command down'))
     const fillAt = handler.indexOf('on atmFillMailBody')
     expect(fillAt).toBeGreaterThan(-1)
-    expect(handler.indexOf('atmTypeMailBody(bodyText)', fillAt)).toBeGreaterThan(fillAt)
+    expect(handler.indexOf('atmAxHitFill', fillAt)).toBeGreaterThan(fillAt)
+    expect(handler.indexOf('if atmHit is "VALUE_MISS"', fillAt)).toBeGreaterThan(handler.indexOf('atmAxHitFill', fillAt))
+    expect(handler.indexOf('atmTypeMailBody(bodyText)', fillAt)).toBeGreaterThan(handler.indexOf('if atmHit is "VALUE_MISS"', fillAt))
     expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeGreaterThan(handler.indexOf('atmTypeMailBody(bodyText)', fillAt))
     expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeLessThan(handler.indexOf('atmPasteMailBodyFallback(bodyText)', fillAt))
   })
@@ -621,7 +663,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     })
 
     expect(script).toContain('set newMessage to make new outgoing message with properties {subject:"Quick note about your Mac", visible:true}')
-    expect(script).toContain('atmFillMailBody("Quick note about your Mac\\nSecond line", "Quick note about your Mac", newMessage)')
+    expect(script).toContain('atmFillMailBody("Quick note about your Mac\\nSecond line", "Quick note about your Mac", "Quick note about your Mac", newMessage)')
     expect(script).toContain('address:"a@example.com"')
     expect(script).toContain('send newMessage')
     expect(script).toContain('count of to recipients of newMessage')
@@ -673,7 +715,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     })
 
     expect(script).toContain('make new outgoing message')
-    expect(script).toContain('atmFillMailBody("Quick note about your Mac Second line", "Quick note about your Mac Second line", newMessage)')
+    expect(script).toContain('atmFillMailBody("Quick note about your Mac Second line", "Quick note about your Mac Second line", "Quick note about your Mac", newMessage)')
     expect(script).toContain('count of to recipients of newMessage')
     expect(script).toContain('subject of newMessage as string')
     expect(script).toContain('does not contain "Quick note about your Mac Second line"')
@@ -726,6 +768,8 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('AppleScript reserved identifiers (2.0.10)')
     expect(readme).toContain('Keystroke compose (2.1.0)')
     expect(readme).toContain('AX body-focus oracle (2.1.1)')
+    expect(readme).toContain('Compose body hit-test (2.1.3)')
+    expect(readme).toContain('AXUIElementCopyElementAtPosition')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')
     expect(readme).toContain('System Events')
@@ -733,9 +777,11 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).not.toMatch(/Manual prove \(2\.0\.8 on the Mac host\)/)
     expect(readme).not.toMatch(/Manual prove \(2\.0\.9 on the Mac host\)/)
     expect(readme).not.toMatch(/Manual prove \(2\.1\.0 on the Mac host\)/)
-    expect(readme).toContain('Manual prove (2.1.1 on the Mac host)')
+    expect(readme).toContain('Manual prove (2.1.3 on the Mini host)')
     expect(readme).toContain('content of')
     expect(readme).toContain('AXFocusedUIElement')
+    expect(readme).toContain('message body')
+    expect(readme).toContain('AXTextField')
   })
 
   it('does not destructure into AppleScript reserved shorts (2.0.10 compile -2741 on th)', () => {

@@ -367,7 +367,7 @@ describe('runPermissionsCommand', () => {
       argv: [execPath, '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp', 'permissions'],
       existsSync: () => false,
       realpathSync: (p) => p,
-      version: '2.1.2',
+      version: '2.1.3',
       stdout: (line) => lines.push(line),
       probes: {
         ...allGrantedProbes,
