@@ -50,6 +50,9 @@ import {
   isMailBodyPasteMisdirected,
   BODY_FOCUS_FAILED_SENTINEL,
   MAIL_BODY_MIN_AX_HEIGHT,
+  ATM_FOCUSED_WHOSE_QUERY,
+  ATM_FOCUSED_AX_QUERY,
+  buildAtmFocusedElementHandler,
   buildReplyScript,
   buildForwardScript,
   buildFindSentByInReplyToScript,
@@ -489,6 +492,47 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).not.toMatch(/content:/)
   })
 
+  it('does not use focused UI element (-2741/-2740 on macOS 26 System Events)', () => {
+    const focused = buildAtmFocusedElementHandler()
+    expect(focused).toContain('on atmFocusedElement()')
+    expect(focused).toContain(ATM_FOCUSED_WHOSE_QUERY)
+    expect(focused).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(focused.indexOf(ATM_FOCUSED_AX_QUERY)).toBeLessThan(focused.indexOf(ATM_FOCUSED_WHOSE_QUERY))
+    expect(focused).not.toMatch(/\bfocused UI element\b/)
+    expect(focused).not.toMatch(/\bselected UI element\b/)
+    expect(focused).not.toMatch(/\bweb area\b/)
+
+    const handler = buildMailBodyPasteHandler()
+    expect(handler).toContain(focused)
+    expect(handler).toContain('set fe to my atmFocusedElement()')
+    expect(handler).toContain('if fe is missing value then return false')
+    expect(handler).toContain('if r is "AXWindow" then return false')
+    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    expect(handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
+      handler.indexOf('keystroke "v" using command down')
+    )
+    expect(handler).not.toMatch(/\bfocused UI element\b/)
+    expect(handler).not.toMatch(/\bselected UI element\b/)
+
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Status',
+      body: 'All good',
+      send: true
+    })
+    expect(script).toContain('set atmFe to my atmFocusedElement()')
+    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
+    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).not.toMatch(/\bfocused UI element\b/)
+    expect(script).not.toMatch(/\bselected UI element\b/)
+    expect(script).not.toMatch(/\bweb area\b/)
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_PASTE_MISDIRECTED')
+    expect(script).not.toMatch(/content:/)
+  })
+
   it('does not focus a header text area before trying the body web area', () => {
     const handler = buildMailBodyPasteHandler()
     expect(handler).toContain('atmSafeToPaste')
@@ -558,7 +602,10 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain('subject of newMessage as string')
     expect(script).toContain('content of newMessage as string')
     expect(script).toContain('does not contain "Quick note about your Mac"')
-    expect(script).toContain('value of focused UI element')
+    expect(script).toContain('atmFocusedElement')
+    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
+    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toMatch(/set content of newMessage/)
     expect(script).toContain('delete newMessage')
     expect(script).not.toMatch(/set newMessage to mailto/)
@@ -642,9 +689,13 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('planned: true')
     expect(readme).toContain('To + subject')
     expect(readme).toContain('Compose body focus (2.0.8)')
+    expect(readme).toContain('macOS 26 focus compile (2.0.9)')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')
     expect(readme).toContain('Subject then Tab')
+    expect(readme).toContain('first UI element whose focused is true')
+    expect(readme).toContain('AXFocusedUIElement')
+    expect(readme).not.toMatch(/Manual prove \(2\.0\.8 on the Mac host\)/)
   })
 })
 

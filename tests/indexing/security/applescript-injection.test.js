@@ -6,7 +6,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildComposeScript,
-  buildMailBodyPasteHandler
+  buildMailBodyPasteHandler,
+  buildAtmFocusedElementHandler,
+  ATM_FOCUSED_WHOSE_QUERY,
+  ATM_FOCUSED_AX_QUERY
 } from '../../../lib/mailWrite.js'
 
 describe('AppleScript Injection Prevention', () => {
@@ -485,5 +488,54 @@ describe('mail compose paste focus (2.0.8)', () => {
     expect(script).not.toMatch(/content:/)
     expect(script).not.toContain('set content of newMessage')
     expect(script).not.toContain('html content')
+  })
+})
+
+describe('mail compose focus query (2.0.9 macOS 26 System Events)', () => {
+  it('ships only compile-safe focus reads, never focused UI element', () => {
+    const focused = buildAtmFocusedElementHandler()
+    expect(focused).toBe(
+      `on atmFocusedElement()
+  tell application "System Events"
+    tell process "Mail"
+      try
+        set fe to ${ATM_FOCUSED_AX_QUERY}
+        if fe is not missing value then return fe
+      end try
+      try
+        return ${ATM_FOCUSED_WHOSE_QUERY}
+      end try
+    end tell
+  end tell
+  return missing value
+end atmFocusedElement`
+    )
+    expect(ATM_FOCUSED_WHOSE_QUERY).toBe('first UI element whose focused is true')
+    expect(ATM_FOCUSED_AX_QUERY).toBe('value of attribute "AXFocusedUIElement"')
+    expect(focused).not.toMatch(/\bfocused UI element\b/)
+    expect(focused).not.toMatch(/\bselected UI element\b/)
+
+    const handler = buildMailBodyPasteHandler()
+    expect(handler).toContain(focused)
+    expect(handler).toContain('set fe to my atmFocusedElement()')
+    expect(handler).not.toMatch(/\bfocused UI element\b/)
+    expect(handler).not.toMatch(/\bweb area\b/)
+
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi" & beep',
+      body: '" & do shell script "whoami" & "',
+      send: true
+    })
+    expect(script).toContain('set atmFe to my atmFocusedElement()')
+    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
+    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).not.toMatch(/\bfocused UI element\b/)
+    expect(script).not.toContain('do shell script "whoami"')
+    expect(script).not.toMatch(/content:/)
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_PASTE_MISDIRECTED')
   })
 })
