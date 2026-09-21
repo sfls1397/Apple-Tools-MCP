@@ -27,7 +27,8 @@ import {
   WRITE_TOOL_DEFINITIONS,
   isWriteTool,
   dispatchWriteTool,
-  executeWriteToolLocally
+  executeWriteToolLocally,
+  mcpWriteResult
 } from "./lib/writeTools.js";
 import { startWriteBridgeServer, defaultSocketPath } from "./lib/writeBridge.js";
 import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSession.js";
@@ -1373,10 +1374,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         socketPath: WRITE_SOCKET_PATH,
         log: (msg) => console.error(msg)
       });
-      return {
-        content: [{ type: "text", text: writeResult.message }],
-        ...(writeResult.ok === false ? { isError: true } : {})
-      };
+      return mcpWriteResult(writeResult);
     }
 
     switch (name) {
