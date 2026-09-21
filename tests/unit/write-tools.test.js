@@ -79,8 +79,11 @@ import {
   buildContactsLaunchScript,
   buildContactsReadyScript,
   ensureContactsAppReady,
-  contactsAppIsReady
+  contactsAppIsReady,
+  CONTACTS_READY_ATTEMPTS,
+  CONTACTS_READY_INTERVAL_MS
 } from '../../lib/contactsWrite.js'
+import { safeOpenApp, OPEN_APP_ALLOWLIST } from '../../lib/shell.js'
 import {
   WRITE_TOOL_DEFINITIONS,
   WRITE_TOOL_NAMES,
@@ -107,8 +110,8 @@ function lastScript() {
 function mockContactsAppleScript(writeOutput = '') {
   osascript.mockImplementation((script) => {
     const s = String(script)
-    if (s.includes('to launch') && !s.includes('make new person')) return ''
-    if (s.includes('if running')) return 'READY'
+    if ((s.includes('to launch') || s.includes('to activate')) && !s.includes('make new person')) return ''
+    if (s.includes('to get name') && !s.includes('make new person')) return 'Contacts'
     if (typeof writeOutput === 'function') return writeOutput(s)
     return writeOutput
   })
@@ -316,7 +319,7 @@ describe('contacts_automation_probe', () => {
     expect(result.ok).toBe(true)
     expect(osascript).toHaveBeenCalledTimes(4)
     expect(osascript.mock.calls[0][0]).toContain('to launch')
-    expect(osascript.mock.calls[1][0]).toContain('if running')
+    expect(osascript.mock.calls[1][0]).toContain('get name')
     expect(result.message).toContain('throwaway contact')
   })
 
@@ -1284,29 +1287,61 @@ describe('contacts writes', () => {
     expect(result.message).toContain('contact_id is required')
   })
 
-  it('launches Contacts.app and polls running before CRUD', () => {
-    expect(buildContactsLaunchScript()).toBe('tell application "Contacts" to launch')
-    expect(buildContactsReadyScript()).toContain('if running then return "READY"')
+  it('opens Contacts with open -a, then polls get name before CRUD', () => {
+    expect(buildContactsLaunchScript()).toContain('to launch')
+    expect(buildContactsLaunchScript()).toContain('to activate')
+    expect(buildContactsReadyScript()).toBe('tell application "Contacts" to get name')
+    expect(contactsAppIsReady('Contacts')).toBe(true)
     expect(contactsAppIsReady('READY')).toBe(true)
     expect(contactsAppIsReady('NOT_READY')).toBe(false)
 
+    const opened = []
     const calls = []
     const result = ensureContactsAppReady({
       attempts: 3,
       intervalMs: 1,
+      openRetryEvery: 4,
       sleep: () => {},
+      openApp: (name) => { opened.push(name) },
       run: (script) => {
         calls.push(script)
         if (script.includes('to launch')) return { ok: true, output: '', kind: null }
-        if (calls.filter((s) => s.includes('if running')).length < 2) {
-          return { ok: true, output: 'NOT_READY', kind: null }
+        if (calls.filter((s) => s.includes('get name')).length < 2) {
+          return { ok: false, kind: 'app_not_running', error: 'Application isn\'t running. (-600)', output: '' }
         }
-        return { ok: true, output: 'READY', kind: null }
+        return { ok: true, output: 'Contacts', kind: null }
       }
     })
     expect(result.ok).toBe(true)
+    expect(opened[0]).toBe('Contacts')
     expect(calls[0]).toContain('to launch')
-    expect(calls.some((s) => s.includes('if running'))).toBe(true)
+    expect(calls.some((s) => s.includes('get name'))).toBe(true)
+  })
+
+  it('retries open -a Contacts during a longer ready poll', () => {
+    const opened = []
+    let nameTries = 0
+    const result = ensureContactsAppReady({
+      attempts: 8,
+      intervalMs: 1,
+      openRetryEvery: 4,
+      sleep: () => {},
+      openApp: (name) => { opened.push(name) },
+      run: (script) => {
+        if (script.includes('get name')) {
+          nameTries += 1
+          if (nameTries < 6) {
+            return { ok: false, kind: 'app_not_running', error: 'Application isn\'t running. (-600)', output: '' }
+          }
+          return { ok: true, output: 'Contacts', kind: null }
+        }
+        return { ok: true, output: '', kind: null }
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(opened[0]).toBe('Contacts')
+    expect(opened.length).toBeGreaterThanOrEqual(2)
+    expect(nameTries).toBeGreaterThanOrEqual(6)
   })
 
   it('does not label a Contacts -600 cold launch as Automation / attribution', () => {
@@ -1350,6 +1385,7 @@ describe('contacts writes', () => {
     const result = ensureContactsAppReady({
       attempts: 3,
       sleep: () => {},
+      openApp: () => {},
       run: () => ({
         ok: false,
         kind: 'attribution',
@@ -1360,6 +1396,31 @@ describe('contacts writes', () => {
     expect(result.ok).toBe(false)
     expect(result.kind).toBe('attribution')
     expect(result.error).toContain('-1728')
+  })
+
+  it('keeps Contacts ensure-running in the write handlers, not the stdio client', () => {
+    const contactsSrc = fs.readFileSync(path.join(root, 'lib/contactsWrite.js'), 'utf8')
+    const toolsSrc = fs.readFileSync(path.join(root, 'lib/writeTools.js'), 'utf8')
+    const bridgeSrc = fs.readFileSync(path.join(root, 'lib/writeBridge.js'), 'utf8')
+    expect(contactsSrc).toContain('ensureContactsAppReady')
+    expect(contactsSrc).toContain('safeOpenApp')
+    expect(toolsSrc).not.toContain('ensureContactsAppReady')
+    expect(bridgeSrc).not.toContain('ensureContactsAppReady')
+    expect(CONTACTS_READY_ATTEMPTS * CONTACTS_READY_INTERVAL_MS).toBeGreaterThanOrEqual(8000)
+  })
+
+  it('safeOpenApp only allows Contacts/Mail/Messages via open -a argv', () => {
+    expect(OPEN_APP_ALLOWLIST).toEqual(['Contacts', 'Mail', 'Messages'])
+    expect(() => safeOpenApp('Contacts; rm -rf /')).toThrow(/not allowed/)
+    expect(() => safeOpenApp('../Mail')).toThrow(/not allowed/)
+    const seen = []
+    safeOpenApp('Contacts', {
+      spawn: (cmd, args, opts) => {
+        seen.push({ cmd, args, shell: opts.shell })
+        return { status: 0, stdout: '', stderr: '', error: null }
+      }
+    })
+    expect(seen[0]).toEqual({ cmd: 'open', args: ['-a', 'Contacts'], shell: false })
   })
 
   it('still maps a hard Contacts deny (-1743) to TCC, not cold-launch', () => {
