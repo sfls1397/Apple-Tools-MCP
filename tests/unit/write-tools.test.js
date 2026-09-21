@@ -176,6 +176,9 @@ describe('mail_send', () => {
     expect(script).toContain('send newMessage')
     expect(script).not.toMatch(/set newMessage to mailto/)
     expect(script).toContain('atmPasteMailBody')
+    expect(script.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
+      script.indexOf('keystroke "v" using command down')
+    )
     expect(result.message).toContain('peter@example.com')
     expect(result.message).toContain('Status')
     expect(result.message).toContain('verified in Sent')
@@ -372,11 +375,16 @@ describe('mail_send', () => {
     })
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
+    expect(result.planned).toBeUndefined()
+    expect(result.mailbox).toBeNull()
     expect(isMailBodyPasteMisdirected({ error: 'BODY_PASTE_MISDIRECTED' })).toBe(true)
     expect(result.message).toContain('header field')
     expect(result.message).toContain('nothing was sent')
+    expect(result.message).not.toContain('Hello')
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(osascript).toHaveBeenCalledTimes(1)
+    expect(mcpWriteResult(result).isError).toBe(true)
   })
 
   it('aborts without pasting when the caret stays in a header field', () => {
@@ -385,6 +393,9 @@ describe('mail_send', () => {
     })
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
+    expect(result.planned).toBeUndefined()
+    expect(result.mailbox).toBeNull()
     expect(isMailBodyFocusFailed({ error: BODY_FOCUS_FAILED_SENTINEL })).toBe(true)
     expect(isMailBodyPasteMisdirected({ error: BODY_FOCUS_FAILED_SENTINEL })).toBe(true)
     expect(result.message).toContain('could not be moved into the message body')
@@ -392,6 +403,7 @@ describe('mail_send', () => {
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain('Hello')
     expect(osascript).toHaveBeenCalledTimes(1)
+    expect(mcpWriteResult(result).isError).toBe(true)
   })
 
   it('returns success when the message is still in Outbox', () => {
@@ -489,6 +501,36 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).not.toMatch(/set focused of text area 1 of w to true/)
     expect(handler).not.toContain('first UI element of w whose role is "AXTextArea"')
     expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    expect(handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
+      handler.indexOf('keystroke "v" using command down')
+    )
+    expect(handler).toContain('To:')
+    expect(handler).toContain('Cc:')
+    expect(handler).toContain('Bcc:')
+    expect(handler).toContain('Subject')
+  })
+
+  it('pastes only after body focus, then refuses send if headers changed', () => {
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Status',
+      body: 'All good',
+      send: true
+    })
+    const pasteCall = script.indexOf('atmPasteMailBody')
+    const deleteAt = script.indexOf('delete newMessage')
+    const sendAt = script.lastIndexOf('send newMessage')
+    expect(pasteCall).toBeGreaterThan(-1)
+    expect(deleteAt).toBeGreaterThan(pasteCall)
+    expect(sendAt).toBeGreaterThan(deleteAt)
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_PASTE_MISDIRECTED')
+    expect(script).toContain('subject of newMessage as string')
+    expect(script).toContain('count of to recipients of newMessage')
+    expect(script).toContain('count of cc recipients of newMessage')
+    expect(script).toContain('count of bcc recipients of newMessage')
   })
 
   it('does not inject quote prefixes or a cite-blockquote into a plain compose', () => {
