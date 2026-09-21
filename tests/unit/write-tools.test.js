@@ -6,7 +6,7 @@
  * escaping, and on the dry_run / confirm gates that keep it from running.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -49,8 +49,16 @@ import {
   buildForwardScript,
   buildFindSentByInReplyToScript,
   buildFindSentBySubjectScript,
+  buildFindSentByRecipientAndSubjectScript,
   buildFindSentForwardScript,
   recoverIfInSent,
+  parseSentVerifyOutput,
+  parseOutgoingMessageId,
+  verifyQueuedMessage,
+  sentVerifyClock,
+  resetSentVerifyClock,
+  SENT_VERIFY_ATTEMPTS,
+  MAIL_VERIFY_MISS_GUIDANCE,
   isMailHardTcc,
   isMailSendTimeout
 } from '../../lib/mailWrite.js'
@@ -102,20 +110,39 @@ import {
   SMOKE_ONLY_AUTOMATION_PROBES,
   isWriteTool,
   executeWriteToolLocally,
-  dispatchWriteTool
+  dispatchWriteTool,
+  mcpWriteResult
 } from '../../lib/writeTools.js'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 beforeEach(() => {
   osascript.mockReset()
-  osascript.mockReturnValue('')
+  sentVerifyClock.sleep = () => {}
+  osascript.mockImplementation((script) => {
+    if (isMailSentVerifyScript(script)) return 'SENT'
+    return ''
+  })
   setEventKitSession(null)
 })
+
+afterEach(() => {
+  resetSentVerifyClock()
+})
+
+function isMailSentVerifyScript(script) {
+  const s = String(script)
+  return s.includes('return "SENT"') || s.includes('return "OUTBOX"') || s.includes('return "NOT_FOUND"')
+}
 
 function lastScript() {
   expect(osascript).toHaveBeenCalled()
   return osascript.mock.calls[osascript.mock.calls.length - 1][0]
+}
+
+function firstScript() {
+  expect(osascript).toHaveBeenCalled()
+  return osascript.mock.calls[0][0]
 }
 
 function mockContactsAppleScript(writeOutput = '') {
@@ -131,12 +158,14 @@ function mockContactsAppleScript(writeOutput = '') {
 // ============ MAIL ============
 
 describe('mail_send', () => {
-  it('sends to a single recipient and reports what happened', () => {
+  it('sends to a single recipient and reports what happened only after Sent verify', () => {
     const result = mailCompose({ to: ['peter@example.com'], subject: 'Status', body: 'All good' })
 
     expect(result.ok).toBe(true)
-    expect(osascript).toHaveBeenCalledTimes(1)
-    const script = lastScript()
+    expect(result.delivered).toBe(true)
+    expect(result.mailbox).toBe('sent')
+    expect(osascript).toHaveBeenCalledTimes(2)
+    const script = firstScript()
     expect(script).toContain('make new outgoing message')
     expect(script).toContain('address:"peter@example.com"')
     expect(script).toContain('send newMessage')
@@ -144,6 +173,13 @@ describe('mail_send', () => {
     expect(script).toContain('atmPasteMailBody')
     expect(result.message).toContain('peter@example.com')
     expect(result.message).toContain('Status')
+    expect(result.message).toContain('verified in Sent')
+    expect(result.message).toContain('mailbox: sent')
+    expect(result.message).toContain('delivery: sent')
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('peter@example.com')
+    expect(verifyScript).toContain('subj is "Status"')
+    expect(verifyScript).toContain('hitTo')
   })
 
   it('refuses to invent a recipient', () => {
@@ -158,12 +194,19 @@ describe('mail_send', () => {
 
     const blocked = mailCompose(args)
     expect(blocked.planned).toBe(true)
+    expect(blocked.ok).toBe(false)
+    expect(blocked.delivered).toBe(false)
     expect(blocked.message).toContain('CONFIRMATION REQUIRED')
     expect(osascript).not.toHaveBeenCalled()
+    const mcp = mcpWriteResult(blocked)
+    expect(mcp.isError).toBe(true)
+    expect(mcp.content[0].text).toContain('CONFIRMATION REQUIRED')
+    expect(mcp.content[0].text).not.toContain('verified in Sent')
 
     const confirmed = mailCompose({ ...args, confirm: true })
     expect(confirmed.ok).toBe(true)
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(confirmed.delivered).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(2)
   })
 
   it('counts cc and bcc toward the multi-recipient gate', () => {
@@ -177,11 +220,19 @@ describe('mail_send', () => {
     expect(osascript).not.toHaveBeenCalled()
   })
 
-  it('previews without sending on dry_run', () => {
+  it('previews without sending on dry_run and does not look like delivered', () => {
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello', dry_run: true })
+    expect(result.ok).toBe(false)
+    expect(result.planned).toBe(true)
+    expect(result.delivered).toBe(false)
+    expect(result.mailbox).toBeNull()
     expect(result.message).toContain('DRY RUN')
     expect(result.message).toContain('a@example.com')
+    expect(result.message).not.toContain('verified in Sent')
     expect(osascript).not.toHaveBeenCalled()
+    const mcp = mcpWriteResult(result)
+    expect(mcp.isError).toBe(true)
+    expect(mcp.content[0].text).toContain('DRY RUN')
   })
 
   it('escapes quotes and newlines in the body instead of injecting AppleScript', () => {
@@ -191,7 +242,7 @@ describe('mail_send', () => {
       subject: 'Hi',
       body
     })
-    const script = lastScript()
+    const script = firstScript()
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('\\" & do shell script \\"whoami\\"')
     expect(script).toContain('atmPasteMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell")')
@@ -206,7 +257,7 @@ describe('mail_send', () => {
     })
 
     expect(result.ok).toBe(true)
-    const script = lastScript()
+    const script = firstScript()
     expect(script).toContain('make new outgoing message')
     expect(script).toContain('atmPasteMailBody("All good")')
     expect(script).not.toContain('html content')
@@ -218,7 +269,7 @@ describe('mail_send', () => {
 
   it('defaults to a plain text body via make new + paste, not AppleScript content', () => {
     mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
-    const script = lastScript()
+    const script = firstScript()
     expect(script).toContain('atmPasteMailBody("All good")')
     expect(script).not.toContain('html content')
     expect(script).not.toMatch(/content:"All good"/)
@@ -260,8 +311,11 @@ describe('mail_send', () => {
     expect(result.message).not.toContain('could not be reached')
     expect(osascript).toHaveBeenCalledTimes(2)
     const verifyScript = osascript.mock.calls[1][0]
-    expect(verifyScript).toContain('subject is "Hi"')
+    expect(verifyScript).toContain('subj is "Hi"')
+    expect(verifyScript).toContain('a@example.com')
+    expect(verifyScript).toContain('hitTo')
     expect(verifyScript).toContain('sent mailbox')
+    expect(verifyScript).not.toMatch(/whose subject is "Hi" and date sent/)
   })
 
   it('returns success when a hung send is already in Sent', () => {
@@ -273,6 +327,8 @@ describe('mail_send', () => {
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(true)
     expect(result.recovered).toBe(true)
+    expect(result.delivered).toBe(true)
+    expect(result.mailbox).toBe('sent')
     expect(result.message).toContain('mail_send: sent')
     expect(result.message).toContain('verified in Sent')
     expect(result.message).not.toContain('TCC')
@@ -315,6 +371,52 @@ describe('mail_send', () => {
     expect(result.message).toContain('nothing was sent')
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns success when the message is still in Outbox', () => {
+    osascript.mockImplementation((script) => {
+      if (isMailSentVerifyScript(script)) return 'OUTBOX'
+      return 'OK'
+    })
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(true)
+    expect(result.delivered).toBe(false)
+    expect(result.mailbox).toBe('outbox')
+    expect(result.message).toContain('queued in Outbox')
+    expect(result.message).toContain('still sending')
+    expect(result.message).toContain('mailbox: outbox')
+    expect(result.message).toContain('delivery: outbox')
+    expect(mcpWriteResult(result).isError).toBeUndefined()
+  })
+
+  it('fails loud when send returns but Sent/Outbox verify misses', () => {
+    osascript.mockImplementation((script) => {
+      if (isMailSentVerifyScript(script)) return 'NOT_FOUND'
+      return 'OK'
+    })
+    const result = mailCompose({ to: ['a@example.com'], subject: 'test', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
+    expect(result.mailbox).toBeNull()
+    expect(result.message).toContain(MAIL_VERIFY_MISS_GUIDANCE)
+    expect(result.message).toContain('mail_send failed')
+    expect(result.message).not.toContain('Hello')
+    expect(osascript.mock.calls.length).toBe(1 + SENT_VERIFY_ATTEMPTS)
+    expect(mcpWriteResult(result).isError).toBe(true)
+  })
+
+  it('prefers a captured Message-ID together with To on verify', () => {
+    osascript.mockImplementation((script) => {
+      if (isMailSentVerifyScript(script)) return 'SENT'
+      return 'atm-compose-id.123@example.com'
+    })
+    const result = mailCompose({ to: ['a@example.com'], subject: 'test', body: 'Hello' })
+    expect(result.ok).toBe(true)
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('atm-compose-id.123@example.com')
+    expect(verifyScript).toContain('a@example.com')
+    expect(verifyScript).toContain('hitTo')
+    expect(verifyScript).toContain('subj is "test"')
   })
 
 })
@@ -440,6 +542,11 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('Accessibility')
     expect(readme).toContain('body_format: "html"')
     expect(readme).toContain('Inspect each Sent `.emlx`')
+    expect(readme).toContain('mail_send success is Sent/Outbox verify')
+    expect(readme).toContain('never matches subject alone')
+    expect(readme).toContain('isError: true')
+    expect(readme).toContain('planned: true')
+    expect(readme).toContain('To + subject')
   })
 })
 
@@ -588,7 +695,7 @@ describe('mail_reply and mail_forward', () => {
   it('replies to a resolved message id', () => {
     const result = mailReply({ message_id: '<abc@example.com>', body: 'Thanks' })
     expect(result.ok).toBe(true)
-    const script = lastScript()
+    const script = firstScript()
     expect(script).toContain('atmFindMessage("abc@example.com")')
     expect(script).toContain('reply theMessage without opening window without reply to all')
     expect(script).toContain('send theReply')
@@ -597,8 +704,11 @@ describe('mail_reply and mail_forward', () => {
   it('treats reply-all as a multi-recipient send', () => {
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks', reply_all: true })
     expect(result.planned).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
     expect(result.message).toContain('CONFIRMATION REQUIRED')
     expect(osascript).not.toHaveBeenCalled()
+    expect(mcpWriteResult(result).isError).toBe(true)
   })
 
   it('requires a message id', () => {
@@ -678,7 +788,7 @@ describe('mail_reply and mail_forward', () => {
   it('forwards to a validated recipient', () => {
     const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
     expect(result.ok).toBe(true)
-    const script = lastScript()
+    const script = firstScript()
     expect(script).toContain('forward theMessage without opening window')
     expect(script).toContain('address:"c@example.com"')
   })
@@ -719,7 +829,7 @@ describe('mail_reply and mail_forward', () => {
 })
 
 describe('mail Sent verify helpers', () => {
-  it('builds an In-Reply-To Sent scan, a Re: fallback scan, and a subject Sent scan', () => {
+  it('builds an In-Reply-To Sent scan, a Re: fallback scan, and a To+subject compose scan', () => {
     const byReply = buildFindSentByInReplyToScript('abc@example.com')
     expect(byReply).toContain('In-Reply-To:')
     expect(byReply).toContain('<abc@example.com>')
@@ -730,12 +840,18 @@ describe('mail Sent verify helpers', () => {
     expect(byReply).toContain('sent mailbox')
     expect(byReply).toContain('outgoing mailbox')
     expect(byReply).toContain('source of msg')
+    expect(byReply).toContain('return "SENT"')
+    expect(byReply).toContain('return "OUTBOX"')
     expect(byReply).not.toContain('subj contains origSubject')
     expect(byReply).not.toContain('Begin forwarded message')
 
-    const bySubject = buildFindSentBySubjectScript('Status update')
-    expect(bySubject).toContain('subject is "Status update"')
+    const bySubject = buildFindSentByRecipientAndSubjectScript('Status update', ['a@example.com'])
+    expect(bySubject).toContain('subj is "Status update"')
+    expect(bySubject).toContain('a@example.com')
+    expect(bySubject).toContain('hitTo')
     expect(bySubject).toContain('sent mailbox')
+    expect(bySubject).not.toMatch(/whose subject is "Status update"/)
+    expect(buildFindSentBySubjectScript('Status update', ['a@example.com'])).toContain('hitTo')
   })
 
   it('builds a forward Sent scan that skips reply headers', () => {
@@ -745,25 +861,69 @@ describe('mail Sent verify helpers', () => {
     expect(byForward).toContain('c@example.com')
     expect(byForward).toContain('A reply to the original is not this forward')
     expect(byForward).toContain('The original, not the forward we just sent')
-    expect(byForward).toContain('if exactFwd then return')
-    expect(byForward).toContain('if looksForward and mentionsOrigId then return')
+    expect(byForward).toContain('if exactFwd then')
+    expect(byForward).toContain('if looksForward and mentionsOrigId then')
     expect(byForward).toContain('atmFindMessage')
+    expect(byForward).toContain('return "SENT"')
     expect(byForward).not.toContain('subj contains origSubject')
     expect(byForward).not.toContain('looksForward and (mentionsOrig or hitTo)')
   })
 
-  it('treats FOUND as a recovery hit and verify failure as not recovered', () => {
-    osascript.mockImplementationOnce(() => 'FOUND')
-    expect(recoverIfInSent({ inReplyTo: 'abc@example.com' })).toEqual({ found: true })
+  it('requires To + subject for compose recover and never matches subject alone', () => {
+    expect(recoverIfInSent({ subject: 'test' })).toBeNull()
+    expect(osascript).not.toHaveBeenCalled()
+
+    const script = buildFindSentByRecipientAndSubjectScript('test', ['a@example.com'])
+    expect(script).toContain('hitTo')
+    expect(script).toContain('a@example.com')
+    expect(script).toContain('subj is "test"')
+    expect(script).not.toMatch(/whose subject is "test"/)
+
+    const withId = buildFindSentByRecipientAndSubjectScript('test', ['a@example.com'], 'abc@host')
+    expect(withId).toContain('abc@host')
+    expect(withId).toContain('hitId and hitTo')
+
+    osascript.mockImplementationOnce(() => 'SENT')
+    expect(recoverIfInSent({ subject: 'test', to: ['a@example.com'] })).toEqual({
+      found: true,
+      mailbox: 'sent'
+    })
+    expect(osascript.mock.calls[osascript.mock.calls.length - 1][0]).toContain('a@example.com')
+  })
+
+  it('treats FOUND/SENT as Sent and OUTBOX as still sending', () => {
+    expect(parseSentVerifyOutput('SENT')).toEqual({ found: true, mailbox: 'sent' })
+    expect(parseSentVerifyOutput('FOUND')).toEqual({ found: true, mailbox: 'sent' })
+    expect(parseSentVerifyOutput('OUTBOX')).toEqual({ found: true, mailbox: 'outbox' })
+    expect(parseSentVerifyOutput('NOT_FOUND')).toBeNull()
+    expect(parseOutgoingMessageId('OK')).toBeNull()
+    expect(parseOutgoingMessageId('id.1@example.com')).toBe('id.1@example.com')
 
     osascript.mockImplementationOnce(() => 'FOUND')
-    expect(recoverIfInSent({ inReplyTo: 'abc@example.com', forwardTo: ['c@example.com'] })).toEqual({ found: true })
+    expect(recoverIfInSent({ inReplyTo: 'abc@example.com' })).toEqual({ found: true, mailbox: 'sent' })
+
+    osascript.mockImplementationOnce(() => 'OUTBOX')
+    expect(recoverIfInSent({ inReplyTo: 'abc@example.com', forwardTo: ['c@example.com'] })).toEqual({
+      found: true,
+      mailbox: 'outbox'
+    })
     expect(osascript.mock.calls[osascript.mock.calls.length - 1][0]).toContain('Begin forwarded message')
 
     osascript.mockImplementationOnce(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
-    expect(recoverIfInSent({ subject: 'Hi' })).toBeNull()
+    expect(recoverIfInSent({ subject: 'Hi', to: ['a@example.com'] })).toBeNull()
+  })
+
+  it('retries verifyQueuedMessage until Sent appears', () => {
+    osascript
+      .mockImplementationOnce(() => 'NOT_FOUND')
+      .mockImplementationOnce(() => 'SENT')
+    expect(verifyQueuedMessage({ subject: 'Hi', to: ['a@example.com'] })).toEqual({
+      found: true,
+      mailbox: 'sent'
+    })
+    expect(osascript).toHaveBeenCalledTimes(2)
   })
 
   it('distinguishes hard TCC deny codes from send timeouts', () => {
@@ -1713,6 +1873,27 @@ describe('write tool definitions', () => {
     expect(executeWriteToolLocally('reminders_add', {}).ok).toBe(false)
   })
 
+  it('sets MCP isError for planned writes and omits it for verified sends', () => {
+    const planned = mcpWriteResult({
+      ok: false,
+      planned: true,
+      delivered: false,
+      message: 'DRY RUN (mail_send): would send. Nothing was changed.'
+    })
+    expect(planned.isError).toBe(true)
+    expect(planned.content[0].text).toContain('DRY RUN')
+    expect(planned.content[0].text).not.toContain('verified in Sent')
+
+    const verified = mcpWriteResult({
+      ok: true,
+      delivered: true,
+      mailbox: 'sent',
+      message: 'mail_send: sent (verified in Sent). mailbox: sent delivery: sent'
+    })
+    expect(verified.isError).toBeUndefined()
+    expect(verified.content[0].text).toContain('verified in Sent')
+  })
+
   it('keeps Automation probes off the MCP CallTool write surface', async () => {
     expect(isWriteTool('mail_automation_probe')).toBe(false)
     expect(isWriteTool('messages_automation_probe')).toBe(false)
@@ -1743,6 +1924,7 @@ describe('write tool definitions', () => {
     const writeBlock = indexSrc.slice(dispatchAt, switchAt)
     expect(writeBlock).not.toContain('requireIndex')
     expect(indexSrc).toContain('requireIndex("emails")')
+    expect(indexSrc).toContain('mcpWriteResult')
   })
 
   it('only the indexer daemon serves the write bridge', () => {
@@ -1935,6 +2117,7 @@ describe('write smoke script routing (ship gate)', () => {
     const source = fs.readFileSync(path.join(root, 'scripts/smoke-writes.js'), 'utf8')
 
     expect(source).toContain('dispatchWriteTool')
+    expect(source).toContain('result.planned === true')
     // Importing the write modules directly is what made the smoke test
     // bypass the bridge and fail the Mini ship gate.
     expect(source).not.toMatch(/from "\.\.\/lib\/contactsWrite\.js"/)

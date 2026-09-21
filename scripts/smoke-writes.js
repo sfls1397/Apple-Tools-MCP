@@ -233,8 +233,9 @@ function line(label, value) {
 }
 
 function step(name, result, severity = "error") {
-  const failed = result.ok === false;
-  const status = failed ? (severity === "warning" ? "WARN" : "FAIL") : result.planned ? "PLANNED" : "OK";
+  const planned = result && result.planned === true;
+  const failed = result && result.ok === false && !planned;
+  const status = planned ? "PLANNED" : failed ? (severity === "warning" ? "WARN" : "FAIL") : "OK";
   console.log(`\n[${status}] ${name}`);
   console.log(`  ${result.message}`);
   return result;
@@ -348,7 +349,7 @@ async function main() {
   }));
   results.push(created);
 
-  if (created.ok !== false) {
+  if (created.ok !== false || created.planned) {
     const contactId = apply ? extractContactId(created.message) : "ABCD1234-SMOKE:ABPerson";
     if (apply && !contactId) {
       console.log("  contacts_add reported success but returned no contact id; skipping edit/delete.");
@@ -405,7 +406,7 @@ async function main() {
   }));
   results.push(eventCreated);
 
-  if (eventCreated.ok !== false) {
+  if (eventCreated.ok !== false || eventCreated.planned) {
     const eventId = apply ? extractEventId(eventCreated.message) : "ATM-SMOKE-EVENT-UID";
     const extractedKitId = apply ? extractEventKitId(eventCreated.message) : "EK-SMOKE";
     const eventKitId = extractedKitId || (eventId && eventId.includes(":") ? eventId : null);
@@ -451,7 +452,7 @@ async function main() {
     }
   }
 
-  const failed = results.some((r) => r && r.ok === false);
+  const failed = results.some((r) => r && r.ok === false && !r.planned);
   console.log("\n" + "=".repeat(60));
   if (failed) {
     console.log("Result: FAILED - see the messages above.");
