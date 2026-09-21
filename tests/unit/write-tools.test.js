@@ -178,7 +178,7 @@ describe('mail_send', () => {
     expect(result.message).toContain('delivery: sent')
     const verifyScript = osascript.mock.calls[1][0]
     expect(verifyScript).toContain('peter@example.com')
-    expect(verifyScript).toContain('subject is "Status"')
+    expect(verifyScript).toContain('subj is "Status"')
     expect(verifyScript).toContain('hitTo')
   })
 
@@ -311,7 +311,7 @@ describe('mail_send', () => {
     expect(result.message).not.toContain('could not be reached')
     expect(osascript).toHaveBeenCalledTimes(2)
     const verifyScript = osascript.mock.calls[1][0]
-    expect(verifyScript).toContain('subject is "Hi"')
+    expect(verifyScript).toContain('subj is "Hi"')
     expect(verifyScript).toContain('a@example.com')
     expect(verifyScript).toContain('hitTo')
     expect(verifyScript).toContain('sent mailbox')
@@ -416,10 +416,10 @@ describe('mail_send', () => {
     expect(verifyScript).toContain('atm-compose-id.123@example.com')
     expect(verifyScript).toContain('a@example.com')
     expect(verifyScript).toContain('hitTo')
-    expect(verifyScript).toContain('subject is "test"')
+    expect(verifyScript).toContain('subj is "test"')
   })
 
-}))
+})
 
 describe('mail compose native paste (FB11734014, -2753)', () => {
   it('creates a real outgoing message without mailto or AppleScript content', () => {
@@ -846,7 +846,7 @@ describe('mail Sent verify helpers', () => {
     expect(byReply).not.toContain('Begin forwarded message')
 
     const bySubject = buildFindSentByRecipientAndSubjectScript('Status update', ['a@example.com'])
-    expect(bySubject).toContain('subject is "Status update"')
+    expect(bySubject).toContain('subj is "Status update"')
     expect(bySubject).toContain('a@example.com')
     expect(bySubject).toContain('hitTo')
     expect(bySubject).toContain('sent mailbox')
@@ -876,7 +876,7 @@ describe('mail Sent verify helpers', () => {
     const script = buildFindSentByRecipientAndSubjectScript('test', ['a@example.com'])
     expect(script).toContain('hitTo')
     expect(script).toContain('a@example.com')
-    expect(script).toContain('subject is "test"')
+    expect(script).toContain('subj is "test"')
     expect(script).not.toMatch(/whose subject is "test"/)
 
     const withId = buildFindSentByRecipientAndSubjectScript('test', ['a@example.com'], 'abc@host')
