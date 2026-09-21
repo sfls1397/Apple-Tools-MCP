@@ -449,6 +449,7 @@ async function initializeIndexing() {
 if (PERMISSIONS_MODE) {
   runPermissionsCommand({
     execPath: process.execPath,
+    argv: process.argv,
     version: PACKAGE_VERSION
   }).then((code) => {
     process.exit(code);

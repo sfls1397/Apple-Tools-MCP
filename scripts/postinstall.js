@@ -12,10 +12,13 @@ export function postinstallReminderText() {
     "apple-tools-mcp: after first install or upgrade, run permissions on the Mac UI",
     "(with System Settings → Privacy & Security → Automation open):",
     "",
+    "  $(which node) $(which apple-tools-mcp) permissions",
     "  apple-tools-mcp permissions",
     "  npx apple-tools-mcp permissions",
     "",
     "Use the same node binary the product uses (process.execPath).",
+    "A shebang `apple-tools-mcp` can start a different node than the path you typed;",
+    "Allows attach to execPath. Re-run with that exact node if the command WARNs.",
     "This reminder does not grant anything and does not run the probes."
   ].join("\n");
 }
