@@ -324,13 +324,16 @@ describe('contacts_automation_probe', () => {
   })
 
   it('maps a hang to Contacts Automation denied', () => {
-    osascript.mockImplementation(() => {
+    osascript.mockImplementation((script) => {
+      const s = String(script)
+      if (s.includes('to launch') || s.includes('to get name')) return 'Contacts'
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
     const result = probeContactsAutomation()
     expect(result.ok).toBe(false)
     expect(result.message).toContain('contacts_automation_probe failed')
     expect(result.kind).toBe('timeout')
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
   })
 })
 
@@ -1288,8 +1291,8 @@ describe('contacts writes', () => {
   })
 
   it('opens Contacts with open -a, then polls get name before CRUD', () => {
-    expect(buildContactsLaunchScript()).toContain('to launch')
-    expect(buildContactsLaunchScript()).toContain('to activate')
+    expect(buildContactsLaunchScript()).toBe('tell application "Contacts" to launch')
+    expect(buildContactsLaunchScript()).not.toContain('activate')
     expect(buildContactsReadyScript()).toBe('tell application "Contacts" to get name')
     expect(contactsAppIsReady('Contacts')).toBe(true)
     expect(contactsAppIsReady('READY')).toBe(true)
@@ -1316,6 +1319,42 @@ describe('contacts writes', () => {
     expect(opened[0]).toBe('Contacts')
     expect(calls[0]).toContain('to launch')
     expect(calls.some((s) => s.includes('get name'))).toBe(true)
+  })
+
+  it('does not treat a launch/activate timeout as TCC; keeps polling get name', () => {
+    const kinds = []
+    const result = ensureContactsAppReady({
+      attempts: 3,
+      intervalMs: 1,
+      openRetryEvery: 0,
+      sleep: () => {},
+      openApp: () => {},
+      run: (script) => {
+        if (script.includes('to launch')) {
+          kinds.push('launch-timeout')
+          return { ok: false, kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT', output: '' }
+        }
+        kinds.push('get-name')
+        return { ok: true, output: 'Contacts', kind: null }
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(kinds).toContain('launch-timeout')
+    expect(kinds).toContain('get-name')
+  })
+
+  it('maps an exhausted launch timeout to app_not_running, not TCC', () => {
+    const result = ensureContactsAppReady({
+      attempts: 2,
+      intervalMs: 1,
+      openRetryEvery: 0,
+      sleep: () => {},
+      openApp: () => {},
+      run: () => ({ ok: false, kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT', output: '' })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('app_not_running')
+    expect(result.error).toContain('ETIMEDOUT')
   })
 
   it('retries open -a Contacts during a longer ready poll', () => {
