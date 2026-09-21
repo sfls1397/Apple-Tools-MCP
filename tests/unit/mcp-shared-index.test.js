@@ -501,6 +501,19 @@ describe('AC: regression / packaging / security', () => {
     expect(indexSrc).toContain('requireIndex("calendar")')
   })
 
+  it('does not statically import @xenova/transformers (Linux sharp-safe)', () => {
+    expect(indexerSrc).not.toMatch(/^import\s+.*@xenova\/transformers/m)
+    expect(indexerSrc).toContain('await import("@xenova/transformers")')
+  })
+
+  it('real embedding idx tests skip when Xenova/sharp cannot load', () => {
+    const helper = fs.readFileSync(path.join(root, 'tests/indexing/helpers/real-data.js'), 'utf8')
+    expect(helper).toContain('export function embedderAvailable')
+    expect(helper).toContain("process.platform !== 'darwin'")
+    const cacheSrc = fs.readFileSync(path.join(root, 'tests/indexing/caching/real-embedding-cache.test.js'), 'utf8')
+    expect(cacheSrc).toContain('skipIf(!sources.embedder)')
+  })
+
   it('package version is 2.0.2 and dependencies are unchanged', () => {
     expect(pkg.version).toBe('2.0.2')
     expect(lock.version).toBe('2.0.2')

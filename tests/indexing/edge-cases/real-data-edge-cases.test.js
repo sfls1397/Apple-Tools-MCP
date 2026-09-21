@@ -12,7 +12,6 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
 import {
   checkDataSources,
-  buildProductionIndex,
   isProductionIndexReady,
   searchProductionIndex,
   embed,
@@ -199,7 +198,7 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
   }
 )
 
-describe('Embedding Edge Cases', () => {
+describe.skipIf(!sources.embedder)('Embedding Edge Cases', () => {
   it('should handle empty string embedding', async () => {
     const vector = await embed('')
     expect(vector).toHaveLength(384)

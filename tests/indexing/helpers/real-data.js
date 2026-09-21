@@ -16,6 +16,9 @@
 import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
 
 const HOME = process.env.HOME
 
@@ -42,8 +45,31 @@ export function checkDataSources() {
     messages: fs.existsSync(MESSAGES_DB),
     calendar: fs.existsSync(CALENDAR_DB),
     contacts: fs.existsSync(CONTACTS_DB),
-    productionIndex: fs.existsSync(PRODUCTION_INDEX_DIR)
+    productionIndex: fs.existsSync(PRODUCTION_INDEX_DIR),
+    embedder: embedderAvailable()
   }
+}
+
+/**
+ * True when the real Xenova/sharp native can load.
+ * This package is darwin-only; Linux CI / Cloud Agent checkouts typically have
+ * a darwin sharp binary and fail with sharp-linux-x64.node missing. Real
+ * embedding idx tests must skip instead of failing the suite.
+ */
+let cachedEmbedderAvailable
+export function embedderAvailable() {
+  if (cachedEmbedderAvailable !== undefined) return cachedEmbedderAvailable
+  if (process.platform !== 'darwin') {
+    cachedEmbedderAvailable = false
+    return false
+  }
+  try {
+    require('sharp')
+    cachedEmbedderAvailable = true
+  } catch {
+    cachedEmbedderAvailable = false
+  }
+  return cachedEmbedderAvailable
 }
 
 /**
