@@ -327,6 +327,30 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).toContain('ACCESSIBILITY_DENIED')
   })
 
+  it('does not use the System Events web area class (-2741 on macOS 26)', () => {
+    const handler = buildMailBodyPasteHandler()
+    expect(handler).not.toMatch(/\bweb area\b/)
+    expect(handler).toContain('text area 1')
+    expect(handler).toContain('scroll area 1')
+    expect(handler).toContain('UI element')
+    expect(handler).toContain('whose role is "AXWebArea"')
+    expect(handler).toContain('whose role is "AXTextArea"')
+    expect(handler).toContain('role of atmElem as string')
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Quick note about your Mac',
+      body: 'Hello',
+      send: true
+    })
+    expect(script).not.toMatch(/\bweb area\b/)
+    expect(script).toContain('whose role is "AXWebArea"')
+    expect(script).toContain('make new outgoing message')
+    expect(script).not.toMatch(/set newMessage to mailto/)
+    expect(script).not.toMatch(/content:/)
+  })
+
   it('does not inject quote prefixes or a cite-blockquote into a plain compose', () => {
     const body = 'Quick note about your Mac\nSecond line'
     const script = buildComposeScript({
