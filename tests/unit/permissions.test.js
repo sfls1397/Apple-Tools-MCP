@@ -31,7 +31,7 @@ describe('permissions command wiring', () => {
     const permSrc = fs.readFileSync(path.join(root, 'lib/permissions.js'), 'utf8')
     const postSrc = fs.readFileSync(path.join(root, 'scripts/postinstall.js'), 'utf8')
 
-    expect(pkg.bin['apple-tools-mcp']).toBe('./index.js')
+    expect(pkg.bin['apple-tools-mcp']).toBe('bin/apple-tools-mcp.js')
     expect(pkg.scripts.permissions).toBe('node index.js permissions')
     expect(pkg.scripts.postinstall).toBe('node scripts/postinstall.js')
     expect(pkg.files).toContain('scripts/postinstall.js')
@@ -194,7 +194,7 @@ describe('runPermissionsCommand', () => {
       argv: [execPath, '/Users/petercoates/.local/node/bin/apple-tools-mcp', 'permissions'],
       existsSync: () => false,
       realpathSync: (p) => p,
-      version: '2.0.2',
+      version: '2.0.3',
       stdout: (line) => lines.push(line),
       probes: {
         Contacts: () => ({ ok: true, message: 'Contacts ok' }),
@@ -207,7 +207,7 @@ describe('runPermissionsCommand', () => {
 
     const text = lines.join('\n')
     expect(code).toBe(1)
-    expect(text).toContain('Apple Tools MCP permissions (v2.0.2)')
+    expect(text).toContain('Apple Tools MCP permissions (v2.0.3)')
     expect(text).toContain('Probing node binary: /Users/petercoates/.local/node/bin/node')
     expect(text).toContain(EXAMPLE_MINI_NODE)
     expect(text).toContain(EXAMPLE_MACBOOK_NVM_NODE)
@@ -241,7 +241,7 @@ describe('runPermissionsCommand', () => {
       argv: [execPath, '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp', 'permissions'],
       existsSync: () => false,
       realpathSync: (p) => p,
-      version: '2.0.2',
+      version: '2.0.3',
       stdout: (line) => lines.push(line),
       probes: { Contacts: granted, Calendar: granted, Mail: granted, Messages: granted },
       fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
@@ -263,7 +263,7 @@ describe('runPermissionsCommand', () => {
       existsSync: (p) => p === sibling,
       realpathSync: (p) => p,
       readFileSync: () => '#!/usr/bin/env node\n',
-      version: '2.0.2',
+      version: '2.0.3',
       stdout: (line) => lines.push(line),
       probes: { Contacts: granted, Calendar: granted, Mail: granted, Messages: granted },
       fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
@@ -286,7 +286,7 @@ describe('runPermissionsCommand', () => {
       argv: [execPath, '/Users/petercoates/.local/node/bin/apple-tools-mcp', 'permissions'],
       existsSync: (p) => String(p).endsWith('writer.sock'),
       realpathSync: (p) => p,
-      version: '2.0.2',
+      version: '2.0.3',
       stdout: (line) => lines.push(line),
       probes: {
         Contacts: () => ({ ok: false, kind: 'tcc', message: 'Contacts denied' }),

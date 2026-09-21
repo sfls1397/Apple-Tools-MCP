@@ -38,6 +38,7 @@ describe('isIndexerMode', () => {
   it('detects the apple-tools-indexer bin name', () => {
     expect(isIndexerMode(['node', '/usr/local/bin/apple-tools-indexer'])).toBe(true)
     expect(isIndexerMode(['node', '/opt/homebrew/bin/apple-tools-indexer'])).toBe(true)
+    expect(isIndexerMode(['node', '/opt/homebrew/lib/node_modules/apple-tools-mcp/bin/apple-tools-indexer.js'])).toBe(true)
   })
 
   it('does not treat unrelated --mode values as indexer', () => {
