@@ -9,7 +9,9 @@ import {
   buildMailBodyPasteHandler,
   buildAtmFocusedElementHandler,
   ATM_FOCUSED_WHOSE_QUERY,
-  ATM_FOCUSED_AX_QUERY
+  ATM_FOCUSED_AX_QUERY,
+  ATM_APPLESCRIPT_RESERVED_SHORTS,
+  MAIL_BODY_MIN_AX_HEIGHT
 } from '../../../lib/mailWrite.js'
 
 describe('AppleScript Injection Prevention', () => {
@@ -537,5 +539,38 @@ end atmFocusedElement`
     expect(script).not.toMatch(/content:/)
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
+  })
+})
+
+describe('mail compose reserved AppleScript identifiers (2.1.0)', () => {
+  it('does not destructure size/position into reserved shorts like th', () => {
+    const handler = buildMailBodyPasteHandler()
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi" & beep',
+      body: '" & do shell script "whoami" & "',
+      send: true
+    })
+    for (const src of [handler, script]) {
+      const bindings = [...src.matchAll(/set\s*\{([^}]+)\}/g)].flatMap((m) =>
+        m[1].split(',').map((part) => part.trim())
+      )
+      expect(bindings.length).toBeGreaterThan(0)
+      for (const name of bindings) {
+        expect(ATM_APPLESCRIPT_RESERVED_SHORTS).not.toContain(name)
+      }
+      expect(src).toContain('set {atmW, atmH} to size')
+      expect(src).toContain(`atmH >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
+      expect(src).not.toMatch(/set \{tw, th\}/)
+      expect(src).not.toMatch(/\bif th >=/)
+      expect(src).not.toMatch(/\bfocused UI element\b/)
+      expect(src).not.toMatch(/content:/)
+    }
+    expect(script).not.toContain('do shell script "whoami"')
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_PASTE_MISDIRECTED')
+    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
   })
 })

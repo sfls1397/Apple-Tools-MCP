@@ -52,6 +52,7 @@ import {
   MAIL_BODY_MIN_AX_HEIGHT,
   ATM_FOCUSED_WHOSE_QUERY,
   ATM_FOCUSED_AX_QUERY,
+  ATM_APPLESCRIPT_RESERVED_SHORTS,
   buildAtmFocusedElementHandler,
   buildReplyScript,
   buildForwardScript,
@@ -538,8 +539,8 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).toContain('atmSafeToPaste')
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).toContain('key code 48')
-    expect(handler).toContain(`eh < ${MAIL_BODY_MIN_AX_HEIGHT}`)
-    expect(handler).toContain(`eh >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
+    expect(handler).toContain(`atmH < ${MAIL_BODY_MIN_AX_HEIGHT}`)
+    expect(handler).toContain(`atmH >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
     expect(handler).toContain('AXTextField')
     expect(handler.indexOf('whose role is "AXWebArea"')).toBeLessThan(handler.indexOf('text area 1 of scroll area 1'))
     expect(handler).not.toMatch(/set focused of text area 1 of w to true/)
@@ -690,12 +691,55 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('To + subject')
     expect(readme).toContain('Compose body focus (2.0.8)')
     expect(readme).toContain('macOS 26 focus compile (2.0.9)')
+    expect(readme).toContain('AppleScript reserved identifiers (2.1.0)')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')
     expect(readme).toContain('Subject then Tab')
     expect(readme).toContain('first UI element whose focused is true')
     expect(readme).toContain('AXFocusedUIElement')
+    expect(readme).toContain('atmW')
+    expect(readme).toContain('atmH')
     expect(readme).not.toMatch(/Manual prove \(2\.0\.8 on the Mac host\)/)
+    expect(readme).not.toMatch(/Manual prove \(2\.0\.9 on the Mac host\)/)
+    expect(readme).not.toMatch(/Manual prove \(2\.0\.10 on the Mac host\)/)
+  })
+
+  it('does not destructure into AppleScript reserved shorts (2.1.0 compile -2741 on th)', () => {
+    const handler = buildMailBodyPasteHandler()
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Status',
+      body: 'All good',
+      send: true
+    })
+    for (const src of [handler, script]) {
+      const bindings = [...src.matchAll(/set\s*\{([^}]+)\}/g)].flatMap((m) =>
+        m[1].split(',').map((part) => part.trim())
+      )
+      expect(bindings.length).toBeGreaterThan(0)
+      for (const name of bindings) {
+        expect(ATM_APPLESCRIPT_RESERVED_SHORTS).not.toContain(name)
+      }
+      expect(src).toContain('set {atmW, atmH} to size of atmElem')
+      expect(src).toContain('set {atmW, atmH} to size of ta')
+      expect(src).toContain('set {atmW, atmH} to size of fe')
+      expect(src).toContain('set {atmX, atmY} to position of w')
+      expect(src).toContain('set {atmWinW, atmWinH} to size of w')
+      expect(src).toContain(`if atmH >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
+      expect(src).not.toMatch(/set \{tw, th\}/)
+      expect(src).not.toMatch(/set \{ew, eh\}/)
+      expect(src).not.toMatch(/\bif th >=/)
+      expect(src).not.toMatch(/\bset eh to 0\b/)
+      expect(src).not.toMatch(/\bfocused UI element\b/)
+      expect(src).not.toMatch(/\bweb area\b/)
+      expect(src).not.toMatch(/content:/)
+    }
+    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    expect(handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
+      handler.indexOf('keystroke "v" using command down')
+    )
   })
 })
 
