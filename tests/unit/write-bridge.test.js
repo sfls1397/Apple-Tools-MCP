@@ -49,6 +49,7 @@ import {
   CALENDAR_APP_NOT_RUNNING_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
   MAIL_TCC_GUIDANCE,
+  MAIL_ACCESSIBILITY_GUIDANCE,
   MAIL_SEND_TIMEOUT_GUIDANCE,
   MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE,
@@ -230,6 +231,7 @@ describe('AppleScript error classification', () => {
     expect(needsHostTccAdvice(CALENDAR_TCC_GUIDANCE)).toBe(true)
     expect(needsHostTccAdvice(MESSAGES_TCC_GUIDANCE)).toBe(true)
     expect(needsHostTccAdvice(MAIL_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(MAIL_ACCESSIBILITY_GUIDANCE)).toBe(true)
     expect(needsHostTccAdvice(ATTRIBUTION_GUIDANCE)).toBe(true)
     expect(needsHostTccAdvice(TCC_GUIDANCE)).toBe(true)
     expect(needsHostTccAdvice(`contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`)).toBe(true)
