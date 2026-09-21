@@ -363,6 +363,16 @@ describe('Filter Extraction from Natural Language', () => {
   })
 })
 
+// ============ MODULE LOAD (no Xenova / sharp native) ============
+
+describe('search.js module load', () => {
+  it('imports without loading the Xenova / sharp native', async () => {
+    const search = await import('../../search.js')
+    expect(typeof search.resolvePronouns).toBe('function')
+    expect(typeof search.formatEmailResults).toBe('function')
+  })
+})
+
 // ============ PRONOUN RESOLUTION ============
 
 describe('Pronoun Resolution', () => {

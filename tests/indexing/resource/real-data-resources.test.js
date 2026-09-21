@@ -8,7 +8,6 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
 import {
   checkDataSources,
-  buildProductionIndex,
   isProductionIndexReady,
   searchProductionIndex,
   embed,
@@ -30,7 +29,7 @@ function getMemoryUsage() {
   }
 }
 
-describe('Memory Usage', () => {
+describe.skipIf(!sources.embedder)('Memory Usage', () => {
   describe('Embedding Memory', () => {
     it('should measure memory during embedding generation', async () => {
       // Force GC if available
@@ -236,7 +235,7 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
   }
 )
 
-describe('CPU Throttling', () => {
+describe.skipIf(!sources.embedder)('CPU Throttling', () => {
   it.skip('should yield between batch operations', async () => {
     // Test that batch processing doesn't block the event loop excessively
     // SKIPPED: This test is timing-sensitive and hardware-dependent
