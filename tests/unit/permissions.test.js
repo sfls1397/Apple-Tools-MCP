@@ -17,7 +17,7 @@ import {
   runPermissionsCommand
 } from '../../lib/permissions.js'
 import { postinstallReminderText } from '../../scripts/postinstall.js'
-import { buildMailAutomationProbeScript } from '../../lib/mailWrite.js'
+import { buildMailAutomationProbeScript, buildSystemEventsProbeScript } from '../../lib/mailWrite.js'
 import { buildMessagesAutomationProbeScript } from '../../lib/messagesWrite.js'
 import { buildContactsAutomationProbeScript } from '../../lib/contactsWrite.js'
 import { buildCalendarAutomationProbeScript } from '../../lib/calendarWrite.js'
@@ -54,6 +54,7 @@ describe('permissions command wiring', () => {
     expect(permSrc).toContain('probeMessagesAutomation')
     expect(permSrc).toContain('probeContactsAutomation')
     expect(permSrc).toContain('probeCalendarAutomation')
+    expect(permSrc).toContain('probeSystemEventsAutomation')
 
     expect(postSrc).toContain('does not run the probes')
     expect(postSrc).not.toContain('runPermissionsCommand')
@@ -99,21 +100,33 @@ describe('probe scripts are live Apple Events, not dry_run', () => {
     expect(script).not.toContain('make new event')
     expect(script).not.toContain('dry_run')
   })
+
+  it('System Events asks for its name and never types', () => {
+    const script = buildSystemEventsProbeScript()
+    expect(script).toContain('tell application "System Events"')
+    expect(script).toContain('set atmName to name')
+    expect(script).toContain('UI elements enabled')
+    expect(script).not.toContain('keystroke')
+    expect(script).not.toContain('key code')
+    expect(script).not.toContain('dry_run')
+  })
 })
 
 describe('grant classification and fail-closed exit', () => {
-  it('prints the four required surfaces as granted | missing | error', () => {
-    expect(REQUIRED_SURFACES).toEqual(['Contacts', 'Calendar', 'Mail', 'Messages'])
+  it('prints the required surfaces as granted | missing | error', () => {
+    expect(REQUIRED_SURFACES).toEqual(['Contacts', 'Calendar', 'Mail', 'Messages', 'System Events'])
     expect(formatGrantReport({
       Contacts: 'granted',
       Calendar: 'missing',
       Mail: 'error',
-      Messages: 'granted'
+      Messages: 'granted',
+      'System Events': 'granted'
     })).toEqual([
       'Contacts = granted',
       'Calendar = missing',
       'Mail = error',
-      'Messages = granted'
+      'Messages = granted',
+      'System Events = granted'
     ])
   })
 
@@ -135,19 +148,30 @@ describe('grant classification and fail-closed exit', () => {
       ok: false,
       message: 'The app is installed, so this is an Automation / responsible-process problem rather than a missing app'
     })).toBe('missing')
+    expect(classifyGrantStatus({
+      ok: false,
+      message: 'system_events_automation_probe failed — ACCESSIBILITY_DENIED'
+    })).toBe('missing')
+    expect(classifyGrantStatus({
+      ok: false,
+      message: 'GUI_SCRIPTING_UNAVAILABLE'
+    })).toBe('missing')
     expect(classifyGrantStatus({ ok: false, kind: 'unknown', message: 'disk full' })).toBe('error')
     expect(classifyGrantStatus({ ok: false, kind: 'app_not_running', message: 'Contacts.app was not running' })).toBe('error')
   })
 
   it('exits non-zero unless every required grant is present', () => {
     expect(exitCodeForGrants({
-      Contacts: 'granted', Calendar: 'granted', Mail: 'granted', Messages: 'granted'
+      Contacts: 'granted', Calendar: 'granted', Mail: 'granted', Messages: 'granted', 'System Events': 'granted'
     })).toBe(0)
+    expect(exitCodeForGrants({
+      Contacts: 'granted', Calendar: 'granted', Mail: 'granted', Messages: 'granted', 'System Events': 'missing'
+    })).toBe(1)
     expect(exitCodeForGrants({
       Contacts: 'granted', Calendar: 'granted', Mail: 'granted', Messages: 'missing'
     })).toBe(1)
     expect(exitCodeForGrants({
-      Contacts: 'granted', Calendar: 'error', Mail: 'granted', Messages: 'granted'
+      Contacts: 'granted', Calendar: 'error', Mail: 'granted', Messages: 'granted', 'System Events': 'granted'
     })).toBe(1)
     expect(exitCodeForGrants({})).toBe(1)
   })
@@ -186,6 +210,15 @@ describe('probe binary and Full Disk Access advisory', () => {
 })
 
 describe('runPermissionsCommand', () => {
+  const granted = () => ({ ok: true, message: 'already allowed' })
+  const allGrantedProbes = {
+    Contacts: granted,
+    Calendar: granted,
+    Mail: granted,
+    Messages: granted,
+    'System Events': granted
+  }
+
   it('prints next-dialog UX, the probed binary, and a fail-closed report', async () => {
     const lines = []
     const execPath = '/Users/petercoates/.local/node/bin/node'
@@ -200,7 +233,8 @@ describe('runPermissionsCommand', () => {
         Contacts: () => ({ ok: true, message: 'Contacts ok' }),
         Calendar: () => ({ ok: true, message: 'Calendar ok' }),
         Mail: () => ({ ok: true, message: 'Mail ok' }),
-        Messages: () => ({ ok: false, kind: 'tcc', message: 'Messages Automation denied' })
+        Messages: () => ({ ok: false, kind: 'tcc', message: 'Messages Automation denied' }),
+        'System Events': () => ({ ok: true, message: 'System Events ok' })
       },
       fdaProbe: () => ({ status: 'readable', message: 'FDA ok' })
     })
@@ -217,24 +251,27 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('dry_run of mail_send / messages_send does not count')
     expect(text).toContain('Next dialog: click Allow for node → Contacts')
     expect(text).toContain('Next dialog: click Allow for node → Messages')
+    expect(text).toContain('Next dialog: click Allow for node → System Events')
     expect(text).toContain('[granted] Contacts:')
     expect(text).toContain('[missing] Messages:')
+    expect(text).toContain('[granted] System Events:')
     expect(text).toContain('Grant report')
     expect(text).toContain('Contacts = granted')
     expect(text).toContain('Messages = missing')
+    expect(text).toContain('System Events = granted')
     expect(text).toContain('INCOMPLETE')
     expect(text).toContain('fail closed')
     expect(text).toContain('[readable] FDA ok')
     expect(text).not.toContain('WARN: Allow dialogs attach to process.execPath')
     expect(text).toContain('Terminal.app')
     expect(text).toContain('Do not start apple-tools-indexer')
+    expect(text).toContain('System Events')
     expect(text).not.toMatch(/LaunchAgent/)
     expect(text).not.toContain('write-bridge')
   })
 
   it('is idempotent when every surface is already granted', async () => {
     const lines = []
-    const granted = () => ({ ok: true, message: 'already allowed' })
     const execPath = '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node'
     const code = await runPermissionsCommand({
       execPath,
@@ -243,11 +280,12 @@ describe('runPermissionsCommand', () => {
       realpathSync: (p) => p,
       version: '2.0.10',
       stdout: (line) => lines.push(line),
-      probes: { Contacts: granted, Calendar: granted, Mail: granted, Messages: granted },
+      probes: allGrantedProbes,
       fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
     })
     expect(code).toBe(0)
     expect(lines.join('\n')).toContain('Result: PASS')
+    expect(lines.join('\n')).toContain('System Events')
     expect(lines.join('\n')).toContain('without another click')
   })
 
@@ -256,7 +294,6 @@ describe('runPermissionsCommand', () => {
     const cli = '/Users/peter/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp'
     const sibling = '/Users/peter/.nvm/versions/node/v22.21.1/bin/node'
     const lines = []
-    const granted = () => ({ ok: true, message: 'already allowed' })
     await runPermissionsCommand({
       execPath,
       argv: [execPath, cli, 'permissions'],
@@ -265,7 +302,7 @@ describe('runPermissionsCommand', () => {
       readFileSync: () => '#!/usr/bin/env node\n',
       version: '2.0.10',
       stdout: (line) => lines.push(line),
-      probes: { Contacts: granted, Calendar: granted, Mail: granted, Messages: granted },
+      probes: allGrantedProbes,
       fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
     })
     const text = lines.join('\n')
@@ -292,13 +329,37 @@ describe('runPermissionsCommand', () => {
         Contacts: () => ({ ok: false, kind: 'tcc', message: 'Contacts denied' }),
         Calendar: () => ({ ok: true, message: 'Calendar ok' }),
         Mail: () => ({ ok: true, message: 'Mail ok' }),
-        Messages: () => ({ ok: true, message: 'Messages ok' })
+        Messages: () => ({ ok: true, message: 'Messages ok' }),
+        'System Events': () => ({ ok: true, message: 'System Events ok' })
       },
       fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
     })
     const text = lines.join('\n')
     expect(text).toContain('write-bridge / LaunchAgent')
     expect(text).toContain('[missing] Contacts:')
+  })
+
+  it('fails closed when System Events Automation is missing', async () => {
+    const lines = []
+    const execPath = '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node'
+    const code = await runPermissionsCommand({
+      execPath,
+      argv: [execPath, '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp', 'permissions'],
+      existsSync: () => false,
+      realpathSync: (p) => p,
+      version: '2.1.1',
+      stdout: (line) => lines.push(line),
+      probes: {
+        ...allGrantedProbes,
+        'System Events': () => ({ ok: false, kind: 'tcc', message: 'System Events Automation denied' })
+      },
+      fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
+    })
+    const text = lines.join('\n')
+    expect(code).toBe(1)
+    expect(text).toContain('[missing] System Events:')
+    expect(text).toContain('System Events = missing')
+    expect(text).toContain('INCOMPLETE')
   })
 })
 
