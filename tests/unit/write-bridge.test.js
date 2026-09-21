@@ -43,6 +43,7 @@ import {
   tccGuidanceFor,
   appBundleInstalled,
   CONTACTS_TCC_GUIDANCE,
+  CONTACTS_APP_NOT_RUNNING_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
   MAIL_TCC_GUIDANCE,
   MAIL_SEND_TIMEOUT_GUIDANCE,
@@ -231,6 +232,7 @@ describe('AppleScript error classification', () => {
     expect(needsHostTccAdvice(`contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`)).toBe(true)
     expect(needsHostTccAdvice('Not authorized to send Apple events to Contacts. (-1743)')).toBe(true)
     expect(needsHostTccAdvice(MAIL_SEND_TIMEOUT_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(CONTACTS_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
     expect(needsHostTccAdvice(`mail_reply failed — ${MAIL_SEND_TIMEOUT_GUIDANCE}`)).toBe(false)
     expect(needsHostTccAdvice('some other failure')).toBe(false)
   })
@@ -238,6 +240,8 @@ describe('AppleScript error classification', () => {
   it('separates not-found, app-unavailable, and unknown failures', () => {
     expect(classifyAppleScriptError('script error: EVENT_NOT_FOUND')).toBe('not_found')
     expect(classifyAppleScriptError("Mail got an error: Application isn't running. (-600)")).toBe('app_unavailable')
+    expect(classifyAppleScriptError("Contacts got an error: Application isn't running. (-600)", { appInstalled: true })).toBe('app_not_running')
+    expect(classifyAppleScriptError("Not authorized to send Apple events to Contacts. (-1743)", { appInstalled: true })).toBe('tcc')
     expect(classifyAppleScriptError('weird failure')).toBe('unknown')
     // Detached Calendar delete specifier — not a missing Calendar.app.
     expect(classifyAppleScriptError(
