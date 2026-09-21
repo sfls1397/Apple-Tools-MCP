@@ -1437,6 +1437,7 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('apple-tools-mcp permissions')
     expect(readme).toContain('npx apple-tools-mcp permissions')
     expect(readme).toContain('npm run permissions')
+    expect(readme).toContain('$(which node) $(which apple-tools-mcp) permissions')
     expect(readme).toContain('process.execPath')
     expect(readme).toContain('/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node')
     expect(readme).toContain('not Homebrew')

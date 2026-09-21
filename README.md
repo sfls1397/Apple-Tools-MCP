@@ -79,18 +79,21 @@ Write tools drive Mail, Messages, Calendar, and Contacts through AppleScript. ma
 
 Run this **after first global install** and **after upgrade** when write surfaces are present or change. It probes **`process.execPath`** (the `node` running the command) so macOS can pop **Allow** dialogs for Contacts, Calendar, Mail, and Messages in one sitting. You click **Allow**; the command cannot grant silently. Already-granted surfaces report OK without another click. Missing grants print a report and the process **exits non-zero** (fail closed).
 
-Use the **same `node` the product uses** — not the MCP host app:
+Use the **same `node` the product uses** — not the MCP host app. Always invoke so **`process.execPath`** is that node. A bare `apple-tools-mcp` (or a path like `~/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp`) can have a shebang that starts a **different** node; Allow dialogs attach to `execPath`, not the CLI path you typed.
 
 ```bash
-# After `npm install -g apple-tools-mcp` on that node:
-apple-tools-mcp permissions
+# Preferred: execPath matches the product node
+$(which node) $(which apple-tools-mcp) permissions
+
+# After `npm install -g apple-tools-mcp` on that node (same idea):
+node "$(dirname "$(which node)")/../lib/node_modules/apple-tools-mcp/index.js" permissions
 npx apple-tools-mcp permissions
 
 # From a clone:
 npm run permissions
 ```
 
-The command prints the binary it is probing. Host examples (not universal paths):
+If the invoked CLI path and `process.execPath` differ, the command prints a **WARN** with both paths and tells you to re-run as `execPath …/apple-tools-mcp permissions`. The command also prints the binary it is probing. Host examples (not universal paths):
 
 - **Mini:** `/Users/petercoates/.local/node/bin/node` (global npm / indexer LaunchAgent)
 - **MacBook:** `/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node` (Claude’s nvm `node`, **not** Homebrew)

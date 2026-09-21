@@ -11,6 +11,8 @@ import {
   formatGrantReport,
   exitCodeForGrants,
   describeProbeBinary,
+  detectExecPathMismatch,
+  formatExecPathMismatchWarn,
   probeFullDiskAccess,
   runPermissionsCommand
 } from '../../lib/permissions.js'
@@ -36,6 +38,7 @@ describe('permissions command wiring', () => {
 
     expect(indexSrc).toContain('isPermissionsMode')
     expect(indexSrc).toContain('runPermissionsCommand')
+    expect(indexSrc).toContain('argv: process.argv')
     expect(indexSrc).toContain('PERMISSIONS_MODE')
     expect(indexSrc).toContain('version: PACKAGE_VERSION')
     expect(indexSrc).toContain('!PERMISSIONS_MODE && shouldConnectMcpStdio')
@@ -184,8 +187,12 @@ describe('probe binary and Full Disk Access advisory', () => {
 describe('runPermissionsCommand', () => {
   it('prints next-dialog UX, the probed binary, and a fail-closed report', async () => {
     const lines = []
+    const execPath = '/Users/petercoates/.local/node/bin/node'
     const code = await runPermissionsCommand({
-      execPath: '/Users/petercoates/.local/node/bin/node',
+      execPath,
+      argv: [execPath, '/Users/petercoates/.local/node/bin/apple-tools-mcp', 'permissions'],
+      existsSync: () => false,
+      realpathSync: (p) => p,
       version: '2.0.2',
       stdout: (line) => lines.push(line),
       probes: {
@@ -217,13 +224,18 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('INCOMPLETE')
     expect(text).toContain('fail closed')
     expect(text).toContain('[readable] FDA ok')
+    expect(text).not.toContain('WARN: Allow dialogs attach to process.execPath')
   })
 
   it('is idempotent when every surface is already granted', async () => {
     const lines = []
     const granted = () => ({ ok: true, message: 'already allowed' })
+    const execPath = '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node'
     const code = await runPermissionsCommand({
-      execPath: '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node',
+      execPath,
+      argv: [execPath, '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp', 'permissions'],
+      existsSync: () => false,
+      realpathSync: (p) => p,
       version: '2.0.2',
       stdout: (line) => lines.push(line),
       probes: { Contacts: granted, Calendar: granted, Mail: granted, Messages: granted },
@@ -233,6 +245,98 @@ describe('runPermissionsCommand', () => {
     expect(lines.join('\n')).toContain('Result: PASS')
     expect(lines.join('\n')).toContain('without another click')
   })
+
+  it('prints a loud WARN when the invoked CLI node differs from execPath', async () => {
+    const execPath = '/Users/peter/.nvm/versions/node/v22.22.2/bin/node'
+    const cli = '/Users/peter/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp'
+    const sibling = '/Users/peter/.nvm/versions/node/v22.21.1/bin/node'
+    const lines = []
+    const granted = () => ({ ok: true, message: 'already allowed' })
+    await runPermissionsCommand({
+      execPath,
+      argv: [execPath, cli, 'permissions'],
+      existsSync: (p) => p === sibling,
+      realpathSync: (p) => p,
+      readFileSync: () => '#!/usr/bin/env node\n',
+      version: '2.0.2',
+      stdout: (line) => lines.push(line),
+      probes: { Contacts: granted, Calendar: granted, Mail: granted, Messages: granted },
+      fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
+    })
+    const text = lines.join('\n')
+    expect(text).toContain('WARN: Allow dialogs attach to process.execPath')
+    expect(text).toContain(cli)
+    expect(text).toContain(sibling)
+    expect(text).toContain(execPath)
+    expect(text).toContain('Allows attach HERE')
+    expect(text).toContain(`${execPath} ${cli} permissions`)
+    expect(text).toContain('$(which node) $(which apple-tools-mcp) permissions')
+  })
+})
+
+describe('execPath vs invoked CLI mismatch', () => {
+  const identity = (p) => p
+
+  it('fires when argv[0] is a different node than execPath', () => {
+    const info = detectExecPathMismatch({
+      execPath: '/nvm/v22.22.2/bin/node',
+      argv: ['/nvm/v22.21.1/bin/node', '/nvm/v22.21.1/bin/apple-tools-mcp', 'permissions'],
+      existsSync: () => false,
+      realpathSync: identity,
+      readFileSync: () => '#!/usr/bin/env node\n'
+    })
+    expect(info.mismatch).toBe(true)
+    expect(info.reasons).toContain('argv0')
+    const warn = formatExecPathMismatchWarn(info).join('\n')
+    expect(warn).toContain('WARN:')
+    expect(warn).toContain('/nvm/v22.22.2/bin/node')
+    expect(warn).toContain('/nvm/v22.21.1/bin/node')
+  })
+
+  it('fires when the node next to apple-tools-mcp differs from execPath', () => {
+    const cli = '/nvm/v22.21.1/bin/apple-tools-mcp'
+    const sibling = '/nvm/v22.21.1/bin/node'
+    const execPath = '/nvm/v22.22.2/bin/node'
+    const info = detectExecPathMismatch({
+      execPath,
+      argv: [execPath, cli, 'permissions'],
+      existsSync: (p) => p === sibling,
+      realpathSync: identity,
+      readFileSync: () => '#!/usr/bin/env node\n'
+    })
+    expect(info.mismatch).toBe(true)
+    expect(info.reasons).toContain('sibling')
+    expect(info.siblingNode).toBe(sibling)
+    expect(formatExecPathMismatchWarn(info).join('\n')).toContain(sibling)
+  })
+
+  it('fires when the CLI shebang target differs from execPath', () => {
+    const cli = '/usr/local/bin/apple-tools-mcp'
+    const info = detectExecPathMismatch({
+      execPath: '/nvm/v22.22.2/bin/node',
+      argv: ['/nvm/v22.22.2/bin/node', cli, 'permissions'],
+      existsSync: () => false,
+      realpathSync: identity,
+      readFileSync: (p) => (p === cli ? '#!/nvm/v22.21.1/bin/node\n' : '')
+    })
+    expect(info.mismatch).toBe(true)
+    expect(info.reasons).toContain('shebang')
+    expect(info.shebangTarget).toBe('/nvm/v22.21.1/bin/node')
+  })
+
+  it('does not warn when argv[0], sibling node, and execPath resolve equal', () => {
+    const execPath = '/nvm/v22.21.1/bin/node'
+    const cli = '/nvm/v22.21.1/bin/apple-tools-mcp'
+    const info = detectExecPathMismatch({
+      execPath,
+      argv: [execPath, cli, 'permissions'],
+      existsSync: (p) => p === execPath,
+      realpathSync: identity,
+      readFileSync: () => '#!/usr/bin/env node\n'
+    })
+    expect(info.mismatch).toBe(false)
+    expect(formatExecPathMismatchWarn(info)).toEqual([])
+  })
 })
 
 describe('postinstall reminder', () => {
@@ -240,6 +344,7 @@ describe('postinstall reminder', () => {
     const text = postinstallReminderText()
     expect(text).toContain('apple-tools-mcp permissions')
     expect(text).toContain('npx apple-tools-mcp permissions')
+    expect(text).toContain('$(which node) $(which apple-tools-mcp) permissions')
     expect(text).toContain('does not grant anything')
     expect(text).toContain('does not run the probes')
     expect(text).not.toMatch(/Grok/i)
