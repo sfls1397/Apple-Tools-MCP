@@ -4,6 +4,10 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import {
+  buildComposeScript,
+  buildMailBodyPasteHandler
+} from '../../../lib/mailWrite.js'
 
 describe('AppleScript Injection Prevention', () => {
   // Simulated AppleScript sanitization function
@@ -429,5 +433,57 @@ describe('AppleScript Injection Prevention', () => {
       expect(validateCommand('Mail', 'delete', 'message')).toBe(false)
       expect(validateCommand('Mail', 'open', 'msg\nend tell')).toBe(false)
     })
+  })
+})
+
+describe('mail compose paste focus (2.0.8)', () => {
+  it('does not paste until body focus is confirmed, and never treats To/Cc/Bcc/Subject as the body', () => {
+    const handler = buildMailBodyPasteHandler()
+    const guardAt = handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    const pasteAt = handler.indexOf('keystroke "v" using command down')
+    expect(guardAt).toBeGreaterThan(-1)
+    expect(pasteAt).toBeGreaterThan(guardAt)
+    expect(handler).toContain('To:')
+    expect(handler).toContain('Cc:')
+    expect(handler).toContain('Bcc:')
+    expect(handler).toContain('Subject')
+    expect(handler).toContain('AXWebArea')
+    expect(handler).not.toMatch(/\bweb area\b/)
+  })
+
+  it('deletes the outgoing message before send when paste is misdirected or focus missed the body', () => {
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi',
+      body: 'Hello',
+      send: true
+    })
+    const pasteAt = script.indexOf('atmPasteMailBody')
+    const deleteAt = script.indexOf('delete newMessage')
+    const sendAt = script.lastIndexOf('send newMessage')
+    expect(pasteAt).toBeGreaterThan(-1)
+    expect(deleteAt).toBeGreaterThan(pasteAt)
+    expect(sendAt).toBeGreaterThan(deleteAt)
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_PASTE_MISDIRECTED')
+  })
+
+  it('treats compose body and subject as escaped data, never AppleScript or a content setter', () => {
+    const body = '" & do shell script "whoami" & "'
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi" & beep',
+      body,
+      send: true
+    })
+    expect(script).not.toContain('do shell script "whoami"')
+    expect(script).not.toMatch(/subject:"Hi" & beep"/)
+    expect(script).not.toMatch(/content:/)
+    expect(script).not.toContain('set content of newMessage')
+    expect(script).not.toContain('html content')
   })
 })
