@@ -200,7 +200,7 @@ describe.skipIf(!sources.calendar)('Calendar Indexing (Real Data)', () => {
   }, 30000)
 })
 
-describe('Real Embedding Quality', () => {
+describe.skipIf(!sources.embedder)('Real Embedding Quality', () => {
   it('should generate consistent 384-dim embeddings', async () => {
     const text = 'This is a test email about a meeting'
     const vector = await embed(text)

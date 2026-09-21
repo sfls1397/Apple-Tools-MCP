@@ -10,6 +10,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import {
+  MAIL_TCC_GUIDANCE,
+  MAIL_SEND_TIMEOUT_GUIDANCE,
+  CONTACTS_TCC_GUIDANCE,
+  CONTACTS_APP_NOT_RUNNING_GUIDANCE,
+  MAIL_APP_NOT_RUNNING_GUIDANCE,
+  MESSAGES_APP_NOT_RUNNING_GUIDANCE,
+  CALENDAR_APP_NOT_RUNNING_GUIDANCE,
+  CALENDAR_TCC_GUIDANCE,
+  MESSAGES_TCC_GUIDANCE,
+  ATTRIBUTION_GUIDANCE
+} from '../../lib/appleScript.js'
 
 const osascript = vi.hoisted(() => vi.fn(() => ''))
 
@@ -27,7 +39,13 @@ import {
   mailTrash,
   resolveMailMessageId,
   probeMailAutomation,
-  buildMailAutomationProbeScript
+  buildMailAutomationProbeScript,
+  buildFindSentByInReplyToScript,
+  buildFindSentBySubjectScript,
+  buildFindSentForwardScript,
+  recoverIfInSent,
+  isMailHardTcc,
+  isMailSendTimeout
 } from '../../lib/mailWrite.js'
 import { messagesSend, validateAttachmentPath, lookupChat, probeMessagesAutomation, buildMessagesAutomationProbeScript } from '../../lib/messagesWrite.js'
 import {
@@ -36,6 +54,8 @@ import {
   calendarRemove,
   calendarRsvp,
   calendarListCalendars,
+  probeCalendarAutomation,
+  buildCalendarAutomationProbeScript,
   buildRecurrenceRule,
   buildRemoveEventScript,
   buildEventKitRemoveScript,
@@ -49,7 +69,25 @@ import {
   defaultEndParts
 } from '../../lib/calendarWrite.js'
 import { setEventKitSession } from '../../lib/eventKitSession.js'
-import { contactsAdd, contactsEdit, contactsRemove } from '../../lib/contactsWrite.js'
+import {
+  contactsAdd,
+  contactsEdit,
+  contactsRemove,
+  probeContactsAutomation,
+  buildContactsAutomationProbeScript,
+  buildContactsProbeCleanupScript,
+  buildContactsLaunchScript,
+  buildContactsReadyScript,
+  ensureContactsAppReady,
+  contactsAppIsReady,
+  CONTACTS_READY_ATTEMPTS,
+  CONTACTS_READY_INTERVAL_MS,
+  CONTACTS_READY_BUDGET_MS,
+  CONTACTS_LAUNCH_TIMEOUT_MS,
+  CONTACTS_READY_SCRIPT_TIMEOUT_MS
+} from '../../lib/contactsWrite.js'
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../../lib/writeBridge.js'
+import { safeOpenApp, OPEN_APP_ALLOWLIST } from '../../lib/shell.js'
 import {
   WRITE_TOOL_DEFINITIONS,
   WRITE_TOOL_NAMES,
@@ -71,6 +109,16 @@ beforeEach(() => {
 function lastScript() {
   expect(osascript).toHaveBeenCalled()
   return osascript.mock.calls[osascript.mock.calls.length - 1][0]
+}
+
+function mockContactsAppleScript(writeOutput = '') {
+  osascript.mockImplementation((script) => {
+    const s = String(script)
+    if ((s.includes('to launch') || s.includes('to activate')) && !s.includes('make new person')) return ''
+    if (s.includes('to get name') && !s.includes('make new person')) return 'Contacts'
+    if (typeof writeOutput === 'function') return writeOutput(s)
+    return writeOutput
+  })
 }
 
 // ============ MAIL ============
@@ -178,16 +226,56 @@ describe('mail_send', () => {
     expect(result.message).toContain('mail_send failed')
   })
 
-  it('reports a hung compose timeout as TCC / Automation denied, not app unavailable', () => {
+  it('treats a hung send as a timeout, verifies Sent, and does not label it TCC', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'NOT_FOUND')
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).toContain('find/reply/send hang')
+    expect(result.message).toContain('not a TCC / Automation deny')
+    expect(result.message).toContain('Check Sent')
+    expect(result.message).toContain('before retrying')
+    expect(result.message).not.toContain('macOS denied Mail automation')
+    expect(result.message).not.toContain('could not be reached')
+    expect(osascript).toHaveBeenCalledTimes(2)
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('subject is "Hi"')
+    expect(verifyScript).toContain('sent mailbox')
+  })
+
+  it('returns success when a hung send is already in Sent', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'FOUND')
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(true)
+    expect(result.recovered).toBe(true)
+    expect(result.message).toContain('mail_send: sent')
+    expect(result.message).toContain('verified in Sent')
+    expect(result.message).not.toContain('TCC')
+    expect(result.message).not.toContain('timed out')
+  })
+
+  it('labels a hard Mail deny as TCC and does not Sent-check', () => {
     osascript.mockImplementation(() => {
-      throw new Error('spawnSync osascript ETIMEDOUT')
+      throw new Error('Not authorized to send Apple events to Mail. (-1743)')
     })
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).toContain('TCC / Automation deny')
-    expect(result.message).toContain('dry_run never talks to Mail')
-    expect(result.message).not.toContain('could not be reached')
+    expect(result.message).not.toContain('find/reply/send hang')
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
+
 })
 
 describe('mail_automation_probe', () => {
@@ -203,15 +291,78 @@ describe('mail_automation_probe', () => {
     expect(result.message).toContain('nothing was sent')
   })
 
-  it('maps a compose hang to Mail Automation denied', () => {
+  it('maps a compose hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
     const result = probeMailAutomation()
     expect(result.ok).toBe(false)
+    expect(result.kind).toBe('timeout')
     expect(result.message).toContain('mail_automation_probe failed')
-    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain('could not be reached')
+  })
+})
+
+describe('contacts_automation_probe', () => {
+  it('creates then deletes a throwaway person and never leaves the probe name without cleanup', () => {
+    const script = buildContactsAutomationProbeScript()
+    expect(script).toContain('tell application "Contacts"')
+    expect(script).toContain('make new person')
+    expect(script).toContain('delete probe')
+    expect(script).toContain('save')
+    expect(script).not.toContain('dry_run')
+
+    const cleanup = buildContactsProbeCleanupScript()
+    expect(cleanup).toContain('every person whose first name is "ATM"')
+    expect(cleanup).toContain('Permissions Probe')
+
+    mockContactsAppleScript('')
+    const result = probeContactsAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(4)
+    expect(osascript.mock.calls[0][0]).toContain('to launch')
+    expect(osascript.mock.calls[1][0]).toContain('get name')
+    expect(result.message).toContain('throwaway contact')
+  })
+
+  it('maps a hang to Contacts Automation denied', () => {
+    osascript.mockImplementation((script) => {
+      const s = String(script)
+      if (s.includes('to launch') || s.includes('to get name')) return 'Contacts'
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeContactsAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('contacts_automation_probe failed')
+    expect(result.kind).toBe('timeout')
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+  })
+})
+
+describe('calendar_automation_probe', () => {
+  it('lists calendars and never creates an event', () => {
+    const script = buildCalendarAutomationProbeScript()
+    expect(script).toContain('tell application "Calendar"')
+    expect(script).toContain('get name of every calendar')
+    expect(script).not.toContain('make new event')
+    expect(script).not.toContain('dry_run')
+
+    const result = probeCalendarAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(result.message).toContain('no events created')
+  })
+
+  it('maps a hang to Calendar Automation denied', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeCalendarAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('calendar_automation_probe failed')
+    expect(result.kind).toBe('timeout')
   })
 })
 
@@ -234,6 +385,7 @@ describe('messages_automation_probe', () => {
     })
     const result = probeMessagesAutomation()
     expect(result.ok).toBe(false)
+    expect(result.kind).toBe('timeout')
     expect(result.message).toContain('messages_automation_probe failed')
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('could not be reached')
@@ -250,6 +402,20 @@ describe('mail_draft', () => {
     const script = lastScript()
     expect(script).toContain('save newMessage')
     expect(script).not.toContain('send newMessage')
+  })
+
+  it('maps a hung draft compose to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailCompose(
+      { to: ['a@example.com'], subject: 'Hi', body: 'Hello' },
+      { draft: true }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -276,12 +442,171 @@ describe('mail_reply and mail_forward', () => {
     expect(result.message).toContain('message_id is required')
   })
 
+  it('returns success when a hung reply is already in Sent', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'FOUND')
+    const result = mailReply({ message_id: '<abc@example.com>', body: 'Thanks' })
+    expect(result.ok).toBe(true)
+    expect(result.recovered).toBe(true)
+    expect(result.message).toContain('mail_reply: reply sent')
+    expect(result.message).toContain('verified in Sent')
+    expect(result.message).not.toContain('TCC')
+    expect(result.message).not.toContain('timed out')
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('In-Reply-To:')
+    expect(verifyScript).toContain('abc@example.com')
+    expect(verifyScript).toContain('"Re: "')
+    expect(verifyScript).toContain('atmFindMessage')
+    expect(verifyScript).toContain('sent mailbox')
+    expect(verifyScript).toContain('outgoing mailbox')
+  })
+
+  it('does not label a missed Sent-verify hang as TCC and tells clients to Sent-check', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
+      })
+      .mockImplementationOnce(() => 'NOT_FOUND')
+    const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('mail_reply failed')
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).toContain('find/reply/send hang')
+    expect(result.message).toContain('-1743')
+    expect(result.message).toContain('-10004')
+    expect(result.message).toContain('Check Sent')
+    expect(result.message).toContain('before retrying')
+    expect(result.message).toContain('not a TCC / Automation deny')
+    expect(result.message).not.toContain('macOS denied Mail automation')
+  })
+
+  it('labels a hard Mail deny on reply as TCC and skips Sent-verify', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Mail. (-10004)')
+    })
+    const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).toContain('TCC / Automation deny')
+    expect(result.message).not.toContain('verified in Sent')
+    expect(result.message).not.toContain('find/reply/send hang')
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
+  it('maps a pre-send find/reply hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks', save_as_draft: true })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).toContain('find/reply/open before send')
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
   it('forwards to a validated recipient', () => {
     const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
     expect(result.ok).toBe(true)
     const script = lastScript()
     expect(script).toContain('forward theMessage without opening window')
     expect(script).toContain('address:"c@example.com"')
+  })
+
+  it('returns success when a hung forward is already in Sent', () => {
+    osascript
+      .mockImplementationOnce(() => {
+        throw new Error('spawnSync osascript ETIMEDOUT')
+      })
+      .mockImplementationOnce(() => 'FOUND')
+    const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
+    expect(result.ok).toBe(true)
+    expect(result.recovered).toBe(true)
+    expect(result.message).toContain('mail_forward: forwarded')
+    expect(result.message).toContain('verified in Sent')
+    const verifyScript = osascript.mock.calls[1][0]
+    expect(verifyScript).toContain('Fwd:')
+    expect(verifyScript).toContain('Begin forwarded message')
+    expect(verifyScript).toContain('c@example.com')
+    expect(verifyScript).toContain('A reply to the original is not this forward')
+  })
+
+  it('maps a pre-send forward/open hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
+    })
+    const result = mailForward({
+      message_id: 'abc@example.com',
+      to: ['c@example.com'],
+      body: 'FYI',
+      save_as_draft: true
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('mail Sent verify helpers', () => {
+  it('builds an In-Reply-To Sent scan, a Re: fallback scan, and a subject Sent scan', () => {
+    const byReply = buildFindSentByInReplyToScript('abc@example.com')
+    expect(byReply).toContain('In-Reply-To:')
+    expect(byReply).toContain('<abc@example.com>')
+    expect(byReply).toContain('"Re: "')
+    expect(byReply).toContain('subj is ("Re: " & origSubject)')
+    expect(byReply).toContain('The original, not the reply we just sent')
+    expect(byReply).toContain('atmFindMessage')
+    expect(byReply).toContain('sent mailbox')
+    expect(byReply).toContain('outgoing mailbox')
+    expect(byReply).toContain('source of msg')
+    expect(byReply).not.toContain('subj contains origSubject')
+    expect(byReply).not.toContain('Begin forwarded message')
+
+    const bySubject = buildFindSentBySubjectScript('Status update')
+    expect(bySubject).toContain('subject is "Status update"')
+    expect(bySubject).toContain('sent mailbox')
+  })
+
+  it('builds a forward Sent scan that skips reply headers', () => {
+    const byForward = buildFindSentForwardScript('abc@example.com', ['c@example.com'])
+    expect(byForward).toContain('Fwd:')
+    expect(byForward).toContain('Begin forwarded message')
+    expect(byForward).toContain('c@example.com')
+    expect(byForward).toContain('A reply to the original is not this forward')
+    expect(byForward).toContain('The original, not the forward we just sent')
+    expect(byForward).toContain('if exactFwd then return')
+    expect(byForward).toContain('if looksForward and mentionsOrigId then return')
+    expect(byForward).toContain('atmFindMessage')
+    expect(byForward).not.toContain('subj contains origSubject')
+    expect(byForward).not.toContain('looksForward and (mentionsOrig or hitTo)')
+  })
+
+  it('treats FOUND as a recovery hit and verify failure as not recovered', () => {
+    osascript.mockImplementationOnce(() => 'FOUND')
+    expect(recoverIfInSent({ inReplyTo: 'abc@example.com' })).toEqual({ found: true })
+
+    osascript.mockImplementationOnce(() => 'FOUND')
+    expect(recoverIfInSent({ inReplyTo: 'abc@example.com', forwardTo: ['c@example.com'] })).toEqual({ found: true })
+    expect(osascript.mock.calls[osascript.mock.calls.length - 1][0]).toContain('Begin forwarded message')
+
+    osascript.mockImplementationOnce(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    expect(recoverIfInSent({ subject: 'Hi' })).toBeNull()
+  })
+
+  it('distinguishes hard TCC deny codes from send timeouts', () => {
+    expect(isMailHardTcc({ kind: 'tcc', error: 'Not authorized (-1743)' })).toBe(true)
+    expect(isMailHardTcc({ kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT' })).toBe(false)
+    expect(isMailSendTimeout({ kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT' })).toBe(true)
+    expect(isMailSendTimeout({ kind: 'tcc', error: 'Not authorized (-1743)' })).toBe(false)
+    expect(isMailSendTimeout({ kind: 'timeout', error: 'Not authorized (-1743) and ETIMEDOUT' })).toBe(false)
   })
 })
 
@@ -298,6 +623,16 @@ describe('mail_mark, mail_archive, mail_trash', () => {
     const result = mailMark({ message_id: 'abc@example.com', status: 'starred' })
     expect(result.ok).toBe(false)
     expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('maps a find/open hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailMark({ message_id: 'abc@example.com' })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
   })
 
   it('moves to Archive', () => {
@@ -357,6 +692,7 @@ describe('messages_send', () => {
     expect(result.message).toContain('node → Messages')
     expect(result.message).not.toContain('could not be reached')
   })
+
 
   it('refuses an invalid handle rather than guessing', () => {
     const result = messagesSend({ to: ['not a phone'], text: 'hi' })
@@ -890,13 +1226,14 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     ])
     expect(result.message).toContain('Holidays (read-only)')
   })
+
 })
 
 // ============ CONTACTS ============
 
 describe('contacts writes', () => {
   it('creates a contact and returns its id', () => {
-    osascript.mockReturnValue('ABCD-1234:ABPerson')
+    mockContactsAppleScript('ABCD-1234:ABPerson')
     const result = contactsAdd({
       first_name: 'Ada',
       last_name: 'Lovelace',
@@ -926,7 +1263,7 @@ describe('contacts writes', () => {
   })
 
   it('edits a contact by id', () => {
-    osascript.mockReturnValue('Ada Lovelace')
+    mockContactsAppleScript('Ada Lovelace')
     const result = contactsEdit({ contact_id: 'ABCD-1234:ABPerson', organization: 'Analytical Engines' })
     expect(result.ok).toBe(true)
     expect(lastScript()).toContain('set organization of thePerson to "Analytical Engines"')
@@ -945,7 +1282,7 @@ describe('contacts writes', () => {
     expect(blocked.message).toContain('CONFIRMATION REQUIRED')
     expect(osascript).not.toHaveBeenCalled()
 
-    osascript.mockReturnValue('Ada Lovelace')
+    mockContactsAppleScript('Ada Lovelace')
     const confirmed = contactsRemove({ contact_id: 'ABCD-1234:ABPerson', confirm: true })
     expect(confirmed.ok).toBe(true)
     expect(lastScript()).toContain('delete thePerson')
@@ -955,6 +1292,217 @@ describe('contacts writes', () => {
     const result = contactsRemove({})
     expect(result.ok).toBe(false)
     expect(result.message).toContain('contact_id is required')
+  })
+
+  it('opens Contacts with open -a, then polls get name before CRUD', () => {
+    expect(buildContactsLaunchScript()).toBe('tell application "Contacts" to launch')
+    expect(buildContactsLaunchScript()).not.toContain('activate')
+    expect(buildContactsReadyScript()).toBe('tell application "Contacts" to get name')
+    expect(contactsAppIsReady('Contacts')).toBe(true)
+    expect(contactsAppIsReady('READY')).toBe(true)
+    expect(contactsAppIsReady('NOT_READY')).toBe(false)
+
+    const opened = []
+    const calls = []
+    const result = ensureContactsAppReady({
+      attempts: 3,
+      intervalMs: 1,
+      openRetryEvery: 4,
+      sleep: () => {},
+      openApp: (name) => { opened.push(name) },
+      run: (script) => {
+        calls.push(script)
+        if (script.includes('to launch')) return { ok: true, output: '', kind: null }
+        if (calls.filter((s) => s.includes('get name')).length < 2) {
+          return { ok: false, kind: 'app_not_running', error: 'Application isn\'t running. (-600)', output: '' }
+        }
+        return { ok: true, output: 'Contacts', kind: null }
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(opened[0]).toBe('Contacts')
+    expect(calls[0]).toContain('to launch')
+    expect(calls.some((s) => s.includes('get name'))).toBe(true)
+  })
+
+  it('does not treat a launch/activate timeout as TCC; keeps polling get name', () => {
+    const kinds = []
+    const result = ensureContactsAppReady({
+      attempts: 3,
+      intervalMs: 1,
+      openRetryEvery: 0,
+      sleep: () => {},
+      openApp: () => {},
+      run: (script) => {
+        if (script.includes('to launch')) {
+          kinds.push('launch-timeout')
+          return { ok: false, kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT', output: '' }
+        }
+        kinds.push('get-name')
+        return { ok: true, output: 'Contacts', kind: null }
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(kinds).toContain('launch-timeout')
+    expect(kinds).toContain('get-name')
+  })
+
+  it('maps an exhausted launch timeout to app_not_running, not TCC', () => {
+    const result = ensureContactsAppReady({
+      attempts: 2,
+      intervalMs: 1,
+      openRetryEvery: 0,
+      sleep: () => {},
+      openApp: () => {},
+      run: () => ({ ok: false, kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT', output: '' })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('app_not_running')
+    expect(result.error).toContain('ETIMEDOUT')
+  })
+
+  it('retries open -a Contacts during a longer ready poll', () => {
+    const opened = []
+    let nameTries = 0
+    const result = ensureContactsAppReady({
+      attempts: 8,
+      intervalMs: 1,
+      openRetryEvery: 4,
+      sleep: () => {},
+      openApp: (name) => { opened.push(name) },
+      run: (script) => {
+        if (script.includes('get name')) {
+          nameTries += 1
+          if (nameTries < 6) {
+            return { ok: false, kind: 'app_not_running', error: 'Application isn\'t running. (-600)', output: '' }
+          }
+          return { ok: true, output: 'Contacts', kind: null }
+        }
+        return { ok: true, output: '', kind: null }
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(opened[0]).toBe('Contacts')
+    expect(opened.length).toBeGreaterThanOrEqual(2)
+    expect(nameTries).toBeGreaterThanOrEqual(6)
+  })
+
+  it('does not label a Contacts -600 cold launch as Automation / attribution', () => {
+    const result = contactsAdd(
+      { first_name: 'Ada' },
+      {
+        attempts: 1,
+        sleep: () => {},
+        run: () => ({
+          ok: false,
+          kind: 'app_not_running',
+          error: 'Contacts got an error: Application isn\'t running. (-600)',
+          output: ''
+        })
+      }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CONTACTS_APP_NOT_RUNNING_GUIDANCE)
+    expect(result.message).toContain('kind=app_not_running')
+    expect(result.message).toContain('-600')
+    expect(result.message).not.toContain(ATTRIBUTION_GUIDANCE)
+    expect(result.message).not.toContain(CONTACTS_TCC_GUIDANCE)
+  })
+
+  it('mail, messages, and calendar failure paths handle app_not_running', () => {
+    const mail = fs.readFileSync(path.join(root, 'lib/mailWrite.js'), 'utf8')
+    const messages = fs.readFileSync(path.join(root, 'lib/messagesWrite.js'), 'utf8')
+    const calendar = fs.readFileSync(path.join(root, 'lib/calendarWrite.js'), 'utf8')
+    expect(mail).toContain('kind === "app_not_running"')
+    expect(mail).toContain('MAIL_APP_NOT_RUNNING_GUIDANCE')
+    expect(messages).toContain('kind === "app_not_running"')
+    expect(messages).toContain('MESSAGES_APP_NOT_RUNNING_GUIDANCE')
+    expect(calendar).toContain('kind === "app_not_running"')
+    expect(calendar).toContain('CALENDAR_APP_NOT_RUNNING_GUIDANCE')
+    expect(MAIL_APP_NOT_RUNNING_GUIDANCE).toContain('Keep Mail, Messages, and Contacts running')
+    expect(MESSAGES_APP_NOT_RUNNING_GUIDANCE).toContain('Keep Mail, Messages, and Contacts running')
+    expect(CALENDAR_APP_NOT_RUNNING_GUIDANCE).toContain('do not require Calendar.app to stay open')
+  })
+
+  it('does not remap a launch attribution deny to app_not_running', () => {
+    const result = ensureContactsAppReady({
+      attempts: 3,
+      sleep: () => {},
+      openApp: () => {},
+      run: () => ({
+        ok: false,
+        kind: 'attribution',
+        error: 'Can\'t get application "Contacts". (-1728)',
+        output: ''
+      })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('attribution')
+    expect(result.error).toContain('-1728')
+  })
+
+  it('keeps Contacts ensure-running in the write handlers, not the stdio client', () => {
+    const contactsSrc = fs.readFileSync(path.join(root, 'lib/contactsWrite.js'), 'utf8')
+    const toolsSrc = fs.readFileSync(path.join(root, 'lib/writeTools.js'), 'utf8')
+    const bridgeSrc = fs.readFileSync(path.join(root, 'lib/writeBridge.js'), 'utf8')
+    expect(contactsSrc).toContain('ensureContactsAppReady')
+    expect(contactsSrc).toContain('safeOpenApp')
+    expect(toolsSrc).not.toContain('ensureContactsAppReady')
+    expect(bridgeSrc).not.toContain('ensureContactsAppReady')
+    expect(CONTACTS_READY_ATTEMPTS * CONTACTS_READY_INTERVAL_MS).toBeGreaterThanOrEqual(8000)
+    expect(CONTACTS_READY_BUDGET_MS).toBeLessThanOrEqual(20000)
+    expect(CONTACTS_LAUNCH_TIMEOUT_MS).toBeLessThanOrEqual(4000)
+    expect(CONTACTS_READY_SCRIPT_TIMEOUT_MS).toBeLessThanOrEqual(2000)
+    expect(CONTACTS_READY_BUDGET_MS + 60000).toBeLessThan(DEFAULT_REQUEST_TIMEOUT_MS)
+  })
+
+  it('stops the ready poll when the wall-clock budget is exhausted', () => {
+    let t = 0
+    let nameTries = 0
+    const result = ensureContactsAppReady({
+      attempts: 16,
+      intervalMs: 1,
+      budgetMs: 50,
+      launchTimeoutMs: 20,
+      readyTimeoutMs: 20,
+      openRetryEvery: 0,
+      sleep: () => {},
+      openApp: () => {},
+      now: () => t,
+      run: (script, opts) => {
+        expect(opts.timeout).toBeLessThanOrEqual(20)
+        t += 30
+        if (script.includes('get name')) nameTries += 1
+        return { ok: false, kind: 'timeout', error: 'spawnSync osascript ETIMEDOUT', output: '' }
+      }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('app_not_running')
+    expect(nameTries).toBeLessThan(16)
+  })
+
+  it('safeOpenApp only allows Contacts/Mail/Messages via open -a argv', () => {
+    expect(OPEN_APP_ALLOWLIST).toEqual(['Contacts', 'Mail', 'Messages'])
+    expect(() => safeOpenApp('Contacts; rm -rf /')).toThrow(/not allowed/)
+    expect(() => safeOpenApp('../Mail')).toThrow(/not allowed/)
+    const seen = []
+    safeOpenApp('Contacts', {
+      spawn: (cmd, args, opts) => {
+        seen.push({ cmd, args, shell: opts.shell })
+        return { status: 0, stdout: '', stderr: '', error: null }
+      }
+    })
+    expect(seen[0]).toEqual({ cmd: 'open', args: ['-a', 'Contacts'], shell: false })
+  })
+
+  it('still maps a hard Contacts deny (-1743) to TCC, not cold-launch', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Contacts. (-1743)')
+    })
+    const result = contactsAdd({ first_name: 'Ada' }, { attempts: 1, sleep: () => {} })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+    expect(result.message).not.toContain(CONTACTS_APP_NOT_RUNNING_GUIDANCE)
   })
 })
 
@@ -1131,6 +1679,11 @@ describe('write smoke script routing (ship gate)', () => {
     // Mail + Messages are the same first-run Automation pass as Contacts/Calendar.
     expect(readme).toContain('One-pass first-run')
     expect(readme).toContain('control **Mail**, **Messages**, **Contacts**, and **Calendar**')
+    expect(readme).toContain('Keep Contacts, Mail, and Messages running')
+    expect(readme).toContain('Calendar does not need to stay open')
+    expect(readme).toContain('EventKit')
+    expect(smoke).toContain('Keep Contacts, Mail, and Messages running')
+    expect(smoke).toContain('Calendar does not need to stay open (EventKit)')
     expect(readme).toContain('node → Mail')
     expect(readme).toContain('node → Messages')
     expect(readme).toContain('dry_run never talks to Mail')
@@ -1138,6 +1691,20 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('Watch the host — Allow **`node`**')
     expect(readme).toContain('not “Mail.app could not be reached”')
     expect(readme).toContain('fails closed if Mail, Messages, Contacts, or Calendar')
+    expect(readme).toContain('apple-tools-mcp permissions')
+    expect(readme).toContain('npx apple-tools-mcp permissions')
+    expect(readme).toContain('npm run permissions')
+    expect(readme).toContain('$(which node) $(which apple-tools-mcp) permissions')
+    expect(readme).toContain('process.execPath')
+    expect(readme).toContain('MacBook (default for `permissions`)')
+    expect(readme).toContain('Do **not** start `apple-tools-indexer`')
+    expect(readme).toContain('Terminal.app')
+    expect(readme).toContain('/Users/petercoates/.nvm/versions/node/v22.21.1/bin/node')
+    expect(readme).toContain('not Homebrew')
+    expect(readme).toContain('after first global install')
+    expect(readme).toContain('after upgrade')
+    expect(readme).toContain('postinstall')
+    expect(readme).toContain('prints a reminder')
     expect(readme).toContain('osascript kind=')
     expect(readme).toContain('Calendar.app’s dictionary has **`delete` only**')
 
@@ -1262,7 +1829,7 @@ describe('contacts write denial names the host entitlement limit', () => {
     const result = contactsAdd({ first_name: 'Ada', confirm: true })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('com.apple.security.personal-information.addressbook')
-    expect(result.message).toContain('apple-tools-indexer')
+    expect(result.message).not.toContain('apple-tools-indexer')
     expect(result.message).toContain('reads')
   })
 
@@ -1273,7 +1840,7 @@ describe('contacts write denial names the host entitlement limit', () => {
     const result = calendarRemove({ event_id: 'EVT-1', confirm: true })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('com.apple.security.personal-information.calendars')
-    expect(result.message).toContain('apple-tools-indexer')
+    expect(result.message).not.toContain('apple-tools-indexer')
     expect(result.message).not.toContain('addressbook')
   })
 })
@@ -1328,8 +1895,80 @@ describe('dispatchWriteTool routing', () => {
       })
     })
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('No indexer daemon is running')
-    expect(result.message).toContain('apple-tools-indexer')
+    expect(result.message).toContain('Terminal.app')
+    expect(result.message).toContain('process.execPath')
+    expect(result.message).toContain('Do not start apple-tools-indexer')
+    expect(result.message).not.toMatch(/LaunchAgent/)
+  })
+
+  it('appends Terminal host advice after handlers rewrite Contacts/Calendar/Messages/attribution copy', async () => {
+    const cases = [
+      ['contacts_add', CONTACTS_TCC_GUIDANCE],
+      ['calendar_list_calendars', CALENDAR_TCC_GUIDANCE],
+      ['messages_send', MESSAGES_TCC_GUIDANCE],
+      ['contacts_add', ATTRIBUTION_GUIDANCE]
+    ]
+    for (const [tool, guidance] of cases) {
+      const result = await dispatchWriteTool(tool, {}, {
+        indexerMode: false,
+        probe: async () => false,
+        runLocally: () => ({
+          ok: false,
+          message: `${tool} failed — attempted to write. ${guidance}`
+        })
+      })
+      expect(result.ok).toBe(false)
+      expect(result.message).toContain(guidance)
+      expect(result.message).toContain('Terminal.app')
+      expect(result.message).toContain('Do not start apple-tools-indexer')
+      expect(result.message).not.toMatch(/LaunchAgent/)
+    }
+  })
+
+  it('appends Terminal host advice when a real contacts_add rewrite has no -1743 left', async () => {
+    osascript.mockImplementation(() => {
+      throw new Error('Not authorized to send Apple events to Contacts. (-1743)')
+    })
+    const result = await dispatchWriteTool('contacts_add', { first_name: 'Ada' }, {
+      indexerMode: false,
+      probe: async () => false
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+    expect(result.message).not.toContain('(-1743)')
+    expect(result.message).toContain('Terminal.app')
+    expect(result.message).toContain('Do not start apple-tools-indexer')
+  })
+
+  it('does not append host TCC advice to a Mail send timeout', async () => {
+    const result = await dispatchWriteTool('mail_reply', {}, {
+      indexerMode: false,
+      probe: async () => false,
+      runLocally: () => ({
+        ok: false,
+        message: `mail_reply failed — attempted to reply. ${MAIL_SEND_TIMEOUT_GUIDANCE}`
+      })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain('Terminal.app')
+    expect(result.message).not.toContain('Do not start apple-tools-indexer')
+    expect(result.message).not.toContain('LaunchAgent')
+  })
+
+  it('appends Mini write-bridge copy when rewritten Contacts deny happens with a live socket', async () => {
+    const result = await dispatchWriteTool('contacts_add', {}, {
+      indexerMode: false,
+      probe: async () => true,
+      request: async () => ({ delivered: false, response: null, error: 'ECONNREFUSED' }),
+      runLocally: () => ({
+        ok: false,
+        message: `contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`
+      })
+    })
+    expect(result.message).toContain(CONTACTS_TCC_GUIDANCE)
+    expect(result.message).toContain('indexer daemon was reachable')
+    expect(result.message).not.toContain('Do not start apple-tools-indexer')
   })
 
   it('does not append TCC fallback advice when calendar_remove suppresses it', async () => {

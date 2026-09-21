@@ -12,7 +12,6 @@ import fs from 'fs'
 import { execSync } from 'child_process'
 import {
   checkDataSources,
-  buildProductionIndex,
   isProductionIndexReady,
   searchProductionIndex,
   embed,
@@ -211,7 +210,7 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
   }
 )
 
-describe('Embedding Accuracy', () => {
+describe.skipIf(!sources.embedder)('Embedding Accuracy', () => {
   it('should produce consistent embeddings for same text', async () => {
     const text = 'Important meeting about quarterly review'
 

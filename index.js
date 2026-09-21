@@ -10,7 +10,8 @@ import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
 import { cycleEndFlags, indexUnavailableMessage, indexQueryGate } from "./lib/indexGate.js";
-import { isIndexerMode } from "./lib/processMode.js";
+import { isIndexerMode, isPermissionsMode } from "./lib/processMode.js";
+import { runPermissionsCommand } from "./lib/permissions.js";
 import { loadResolvedIndexInterval, logResolvedInterval } from "./lib/config.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
 import {
@@ -37,6 +38,8 @@ const PACKAGE_VERSION = JSON.parse(
 ).version;
 
 // Canonical indexer entrypoint: `node index.js --mode=indexer` or `apple-tools-indexer`.
+// Permissions CLI: `apple-tools-mcp permissions` — short-lived, no MCP / indexer.
+const PERMISSIONS_MODE = isPermissionsMode();
 const INDEXER_MODE = isIndexerMode();
 const resolvedIndexInterval = loadResolvedIndexInterval();
 const INDEX_INTERVAL = resolvedIndexInterval.ms;
@@ -151,7 +154,7 @@ process.on("unhandledRejection", (reason, promise) => {
 
 // MCP stdio clients exit when the host closes stdin. The indexer daemon must
 // not — LaunchAgent / KeepAlive often attaches stdin to /dev/null.
-bindStdinCloseExit(process.stdin, INDEXER_MODE, () => {
+bindStdinCloseExit(process.stdin, INDEXER_MODE || PERMISSIONS_MODE, () => {
   console.error("Client disconnected. Exiting.");
   shutdownIndexing(0);
 });
@@ -318,6 +321,7 @@ function startBackgroundIndexing() {
 
 // Stop background indexing and clean up timers
 function stopBackgroundIndexing() {
+  const wasRunning = Boolean(indexTimer || progressCheckTimer);
   if (indexTimer) {
     clearInterval(indexTimer);
     indexTimer = null;
@@ -326,7 +330,9 @@ function stopBackgroundIndexing() {
     clearInterval(progressCheckTimer);
     progressCheckTimer = null;
   }
-  console.error("Background indexing stopped");
+  if (wasRunning) {
+    console.error("Background indexing stopped");
+  }
 }
 
 // Unblock searches after a cycle ends. Must run on failure as well as success
@@ -440,9 +446,22 @@ async function initializeIndexing() {
 // Start indexing immediately on server startup. A startup failure is logged
 // rather than rejected: an unhandled rejection would tear down the daemon,
 // taking the write bridge with it.
-initializeIndexing().catch((e) => {
-  console.error(`Indexing startup failed: ${e.message}`);
-});
+if (PERMISSIONS_MODE) {
+  runPermissionsCommand({
+    execPath: process.execPath,
+    argv: process.argv,
+    version: PACKAGE_VERSION
+  }).then((code) => {
+    process.exit(code);
+  }).catch((e) => {
+    console.error(`Permissions command error: ${e.message}`);
+    process.exit(1);
+  });
+} else {
+  initializeIndexing().catch((e) => {
+    console.error(`Indexing startup failed: ${e.message}`);
+  });
+}
 
 // ============ SEMANTIC SEARCH FUNCTIONS ============
 
@@ -1584,6 +1603,6 @@ async function main() {
   // fallback on this stdio process only if indexer.lock is free.
 }
 
-if (shouldConnectMcpStdio(INDEXER_MODE)) {
+if (!PERMISSIONS_MODE && shouldConnectMcpStdio(INDEXER_MODE)) {
   main().catch(console.error);
 }

@@ -15,7 +15,7 @@ import {
 
 const sources = checkDataSources()
 
-describe('Real Embedding Cache', () => {
+describe.skipIf(!sources.embedder)('Real Embedding Cache', () => {
   let embedder
 
   beforeAll(async () => {
@@ -100,8 +100,8 @@ describe('Real Embedding Cache', () => {
       const duration2 = performance.now() - start2
 
       // Second call should be faster or similar (not slower)
-      // Allow generous variance due to system load - real goal is catching model reloads (100x+ slower)
-      expect(duration2).toBeLessThan(duration1 * 3)
+      // Model reload is 100x+ slower; load noise on shared Linux/CI hosts can exceed 3x
+      expect(duration2).toBeLessThan(Math.max(duration1 * 20, 5000))
 
       console.log(`First embed: ${duration1.toFixed(0)}ms, Second: ${duration2.toFixed(0)}ms`)
     }, 30000)

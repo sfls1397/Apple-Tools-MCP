@@ -25,11 +25,15 @@ import {
   planWriteRoute,
   planAfterDelegation,
   isTccSensitiveWrite,
-  tccFallbackAdvice
+  tccFallbackAdvice,
+  hostAutomationAdvice,
+  terminalAutomationAdvice,
+  detectLaunchAgentContext
 } from '../../lib/writeRouting.js'
 import {
   classifyAppleScriptError,
   isTccDenial,
+  needsHostTccAdvice,
   isHardTccDenial,
   formatOsascriptDiagnostic,
   extractAppleEventCodes,
@@ -39,8 +43,13 @@ import {
   tccGuidanceFor,
   appBundleInstalled,
   CONTACTS_TCC_GUIDANCE,
+  CONTACTS_APP_NOT_RUNNING_GUIDANCE,
+  MAIL_APP_NOT_RUNNING_GUIDANCE,
+  MESSAGES_APP_NOT_RUNNING_GUIDANCE,
+  CALENDAR_APP_NOT_RUNNING_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
   MAIL_TCC_GUIDANCE,
+  MAIL_SEND_TIMEOUT_GUIDANCE,
   MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE,
   TCC_GUIDANCE
@@ -181,14 +190,26 @@ describe('write routing policy', () => {
     expect(planAfterDelegation({ delivered: true, response: { ok: true, message: 'x' } }).fallbackLocal).toBe(false)
   })
 
-  it('advises starting the daemon when none is running', () => {
-    expect(tccFallbackAdvice({ bridgeAvailable: false })).toContain('apple-tools-indexer')
+  it('uses Terminal/Automation copy when no LaunchAgent / write bridge is present', () => {
+    const execPath = '/Users/peter/.nvm/versions/node/v22.21.1/bin/node'
+    const terminal = tccFallbackAdvice({ bridgeAvailable: false, execPath })
+    expect(terminal).toContain('Terminal.app')
+    expect(terminal).toContain('process.execPath')
+    expect(terminal).toContain(execPath)
+    expect(terminal).toContain('Automation')
+    expect(terminal).toContain('Do not start apple-tools-indexer')
+    expect(terminal).not.toMatch(/LaunchAgent/)
+    expect(terminal).not.toContain('Start apple-tools-indexer')
+    expect(hostAutomationAdvice({ launchAgent: false, execPath })).toBe(terminal)
+    expect(terminalAutomationAdvice(execPath)).toBe(terminal)
+    expect(detectLaunchAgentContext({ existsSync: () => false })).toBe(false)
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Full Disk Access')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Automation')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Do not add node via +')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Mail.app')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Messages.app')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('TCC / Automation denied')
+    expect(hostAutomationAdvice({ launchAgent: true })).toContain('write-bridge / LaunchAgent')
   })
 })
 
@@ -200,9 +221,36 @@ describe('AppleScript error classification', () => {
     expect(isTccDenial('some other failure')).toBe(false)
   })
 
+  it('attaches host recovery advice to rewritten TCC / attribution copy, not Mail timeouts', () => {
+    expect(isTccDenial(CONTACTS_TCC_GUIDANCE)).toBe(false)
+    expect(isTccDenial(CALENDAR_TCC_GUIDANCE)).toBe(false)
+    expect(isTccDenial(MESSAGES_TCC_GUIDANCE)).toBe(false)
+    expect(isTccDenial(ATTRIBUTION_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(CONTACTS_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(CALENDAR_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(MESSAGES_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(MAIL_TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(ATTRIBUTION_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(TCC_GUIDANCE)).toBe(true)
+    expect(needsHostTccAdvice(`contacts_add failed — attempted to add Ada. ${CONTACTS_TCC_GUIDANCE}`)).toBe(true)
+    expect(needsHostTccAdvice('Not authorized to send Apple events to Contacts. (-1743)')).toBe(true)
+    expect(needsHostTccAdvice(MAIL_SEND_TIMEOUT_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(CONTACTS_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(MAIL_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(MESSAGES_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(CALENDAR_APP_NOT_RUNNING_GUIDANCE)).toBe(false)
+    expect(needsHostTccAdvice(`mail_reply failed — ${MAIL_SEND_TIMEOUT_GUIDANCE}`)).toBe(false)
+    expect(needsHostTccAdvice('some other failure')).toBe(false)
+  })
+
   it('separates not-found, app-unavailable, and unknown failures', () => {
     expect(classifyAppleScriptError('script error: EVENT_NOT_FOUND')).toBe('not_found')
     expect(classifyAppleScriptError("Mail got an error: Application isn't running. (-600)")).toBe('app_unavailable')
+    expect(classifyAppleScriptError("Contacts got an error: Application isn't running. (-600)", { appInstalled: true })).toBe('app_not_running')
+    expect(classifyAppleScriptError("Mail got an error: Application isn't running. (-600)", { appInstalled: true })).toBe('app_not_running')
+    expect(classifyAppleScriptError("Messages got an error: Application isn't running. (-600)", { appInstalled: true })).toBe('app_not_running')
+    expect(classifyAppleScriptError("Calendar got an error: Application isn't running. (-600)", { appInstalled: true })).toBe('app_not_running')
+    expect(classifyAppleScriptError("Not authorized to send Apple events to Contacts. (-1743)", { appInstalled: true })).toBe('tcc')
     expect(classifyAppleScriptError('weird failure')).toBe('unknown')
     // Detached Calendar delete specifier — not a missing Calendar.app.
     expect(classifyAppleScriptError(
@@ -235,9 +283,9 @@ describe('TCC guidance separates reads from writes', () => {
     expect(CALENDAR_TCC_GUIDANCE).toContain('Full Disk Access or tccutil cannot change it')
   })
 
-  it('points Contacts and Calendar denials at the daemon', () => {
-    expect(CONTACTS_TCC_GUIDANCE).toContain('apple-tools-indexer')
-    expect(CALENDAR_TCC_GUIDANCE).toContain('apple-tools-indexer')
+  it('keeps Contacts and Calendar deny copy host-neutral (no Mini indexer)', () => {
+    expect(CONTACTS_TCC_GUIDANCE).not.toContain('apple-tools-indexer')
+    expect(CALENDAR_TCC_GUIDANCE).not.toContain('apple-tools-indexer')
     expect(tccGuidanceFor('mail')).toBe(MAIL_TCC_GUIDANCE)
     expect(tccGuidanceFor('messages')).toBe(MESSAGES_TCC_GUIDANCE)
     expect(tccGuidanceFor('other')).toBe(TCC_GUIDANCE)
@@ -252,9 +300,19 @@ describe('TCC guidance separates reads from writes', () => {
     expect(classifyAppleScriptError('Mail got an error: AppleEvent timed out. (-1712)')).toBe('timeout')
     expect(isTccDenial('spawnSync osascript ETIMEDOUT')).toBe(false)
     expect(isTccDenial('AppleEvent timed out. (-1712)')).toBe(false)
-    expect(MAIL_TCC_GUIDANCE).toContain('hang or timeout')
+    expect(MAIL_TCC_GUIDANCE).toContain('TCC / Automation deny')
     expect(MAIL_TCC_GUIDANCE).toContain('dry_run never talks to Mail')
+    expect(MAIL_TCC_GUIDANCE).toContain('-1743')
     expect(MAIL_TCC_GUIDANCE).not.toMatch(/could not be reached/)
+    expect(MAIL_TCC_GUIDANCE).not.toContain('find/reply/send hang')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('find/reply/send hang')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('find/reply/open before send')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('not a TCC / Automation deny')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('Check Sent')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('before retrying')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('-1743')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).toContain('-10004')
+    expect(MAIL_SEND_TIMEOUT_GUIDANCE).not.toContain('macOS denied Mail automation')
     expect(MESSAGES_TCC_GUIDANCE).toContain('node → Messages')
   })
 
@@ -288,8 +346,7 @@ describe('TCC guidance separates reads from writes', () => {
     expect(classifyAppleScriptError(message)).toBe('app_unavailable')
 
     expect(ATTRIBUTION_GUIDANCE).toContain('Automation / responsible-process')
-    expect(ATTRIBUTION_GUIDANCE).toContain('apple-tools-indexer')
-    expect(ATTRIBUTION_GUIDANCE).toContain('Terminal.app')
+    expect(ATTRIBUTION_GUIDANCE).not.toContain('apple-tools-indexer')
   })
 
   it('finds the first-party apps where macOS actually keeps them', () => {
