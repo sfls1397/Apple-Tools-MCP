@@ -44,6 +44,8 @@ import {
   probeSystemEventsAutomation,
   buildMailAutomationProbeScript,
   buildSystemEventsProbeScript,
+  buildSystemEventsAutomationProbeScript,
+  isSystemEventsAutomationProbeScript,
   buildComposeScript,
   composeNativeBody,
   composeBodyNeedle,
@@ -848,23 +850,35 @@ describe('mail_automation_probe', () => {
 })
 
 describe('system_events_automation_probe', () => {
-  it('talks to System Events without typing or sending', () => {
-    const script = buildSystemEventsProbeScript()
+  it('uses process / GUI scripting, not a soft application name get', () => {
+    const cheap = buildSystemEventsProbeScript()
+    expect(cheap).toContain('set atmName to name')
+    expect(isSystemEventsProbeScript(cheap)).toBe(true)
+    expect(isSystemEventsAutomationProbeScript(cheap)).toBe(false)
+
+    const script = buildSystemEventsAutomationProbeScript()
     expect(script).toContain('tell application "System Events"')
-    expect(script).toContain('set atmName to name')
+    expect(script).toContain('tell process "System Events"')
+    expect(script).toContain('unix id')
+    expect(script).toContain('count of UI elements')
     expect(script).toContain('UI elements enabled')
+    expect(script).not.toContain('set atmName to name')
     expect(script).not.toContain('keystroke')
     expect(script).not.toContain('key code')
     expect(script).not.toContain('send ')
     expect(script).not.toContain('dry_run')
+    expect(isSystemEventsAutomationProbeScript(script)).toBe(true)
+    expect(isSystemEventsProbeScript(script)).toBe(false)
     expect(SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(30000)
     expect(SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS).toBeGreaterThan(MAIL_SE_PROBE_TIMEOUT_MS)
 
     const result = probeSystemEventsAutomation()
     expect(result.ok).toBe(true)
     expect(osascript).toHaveBeenCalledTimes(1)
-    expect(isSystemEventsProbeScript(osascript.mock.calls[0][0])).toBe(true)
+    expect(isSystemEventsAutomationProbeScript(osascript.mock.calls[0][0])).toBe(true)
+    expect(isSystemEventsProbeScript(osascript.mock.calls[0][0])).toBe(false)
     expect(result.message).toContain('nothing was typed')
+    expect(result.message).toContain('process GUI scripting verified')
   })
 
   it('maps a hang to missing GUI scripting, not a Mail send timeout', () => {
@@ -876,8 +890,20 @@ describe('system_events_automation_probe', () => {
     expect(result.kind).toBe('timeout')
     expect(result.message).toContain('system_events_automation_probe failed')
     expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).toContain('sticky Deny')
     expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+  })
+
+  it('maps a hard AppleEvents deny to missing, not granted', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('not authorized to send Apple events (-1743)')
+    })
+    const result = probeSystemEventsAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('tcc')
+    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).toContain('re-run apple-tools-mcp permissions after Allow')
   })
 })
 
@@ -2336,6 +2362,10 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('node → Mail')
     expect(readme).toContain('node → Messages')
     expect(readme).toContain('node → System Events')
+    expect(readme).toContain('process / GUI scripting')
+    expect(readme).toContain('tell application "System Events" to get name')
+    expect(readme).toContain('sticky Deny')
+    expect(readme).toContain('re-run `apple-tools-mcp permissions` after Allow')
     expect(readme).toContain('dry_run never talks to Mail')
     expect(readme).toContain('Automation denied')
     expect(readme).toContain('Watch the host — Allow **`node`**')

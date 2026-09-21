@@ -8,6 +8,7 @@ import {
   buildComposeScript,
   buildMailBodyPasteHandler,
   buildAtmFocusedElementHandler,
+  buildSystemEventsAutomationProbeScript,
   ATM_FOCUSED_WHOSE_QUERY,
   ATM_FOCUSED_AX_QUERY,
   ATM_APPLESCRIPT_RESERVED_SHORTS
@@ -570,6 +571,23 @@ describe('mail compose reserved AppleScript identifiers (2.0.10)', () => {
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
     expect(handler).toContain('atmEndPos')
+  })
+})
+
+describe('System Events permissions probe (2.1.2)', () => {
+  it('requires process GUI scripting and never types or shells out', () => {
+    const script = buildSystemEventsAutomationProbeScript()
+    expect(script).toContain('tell process "System Events"')
+    expect(script).toContain('unix id')
+    expect(script).not.toContain('set atmName to name')
+    expect(script).not.toContain('keystroke')
+    expect(script).not.toContain('key code')
+    expect(script).not.toContain('do shell script')
+    expect(script).not.toContain('the clipboard')
+    for (const name of ATM_APPLESCRIPT_RESERVED_SHORTS) {
+      const bindings = [...script.matchAll(/set\s+(\w+)\s+to/g)].map((m) => m[1])
+      expect(bindings).not.toContain(name)
+    }
   })
 })
 
