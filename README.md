@@ -317,7 +317,7 @@ The indexer does **not** post product Notification Center / `display notificatio
 The bridge is created before the daemon touches the vector index, so writes stay available even when the index is missing, locked, or mid-rebuild. Confirm it after an upgrade with `ls -l ~/.apple-tools-mcp/writer.sock` (it should be a `srw-------` socket); the daemon removes it on shutdown.
 
 **Entrypoint:** `node index.js --mode=indexer`  
-**Convenience bin:** `apple-tools-indexer` (same file; npm global install provides it)  
+**Convenience bin:** `apple-tools-indexer` (`bin/apple-tools-indexer.js`; npm global install provides it)  
 **npm script (clone only):** `npm run indexer`  
 **One-shot rebuild:** `npm run build-index` (stop the indexer daemon first)
 
