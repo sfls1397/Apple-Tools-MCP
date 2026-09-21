@@ -529,8 +529,10 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).toContain(`if r is "AXTextArea" and atmH > 0 and atmH < ${MAIL_BODY_MIN_AX_HEIGHT} then return false`)
     expect(handler).toContain('if my atmSafeToPaste() then return')
     expect(handler).toContain('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
-    expect(handler.indexOf('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
-      handler.indexOf('atmTypeMailBody(bodyText)')
+    const fillAt = handler.indexOf('on atmFillMailBody')
+    expect(fillAt).toBeGreaterThan(-1)
+    expect(handler.indexOf('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"', fillAt)).toBeLessThan(
+      handler.indexOf('atmTypeMailBody(bodyText)', fillAt)
     )
     expect(handler).not.toContain('atmMailBodyContains')
     expect(handler).not.toMatch(/content of msg/)
@@ -572,10 +574,13 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).not.toContain('atmMailBodyContains')
     expect(handler).not.toMatch(/content of msg/)
     expect(handler).not.toContain('set content')
-    expect(handler.indexOf('atmTabIntoMailBody')).toBeLessThan(handler.indexOf('atmTypeMailBody'))
-    expect(handler.indexOf('atmTypeMailBody')).toBeLessThan(handler.indexOf('keystroke "v" using command down'))
-    expect(handler.indexOf('if atmAxVal is not ""')).toBeGreaterThan(handler.indexOf('atmTypeMailBody'))
-    expect(handler.indexOf('if atmAxVal is not ""')).toBeLessThan(handler.indexOf('atmPasteMailBodyFallback'))
+    expect(handler.indexOf('atmTabIntoMailBody')).toBeLessThan(handler.indexOf('on atmTypeMailBody'))
+    expect(handler.indexOf('on atmTypeMailBody')).toBeLessThan(handler.indexOf('keystroke "v" using command down'))
+    const fillAt = handler.indexOf('on atmFillMailBody')
+    expect(fillAt).toBeGreaterThan(-1)
+    expect(handler.indexOf('atmTypeMailBody(bodyText)', fillAt)).toBeGreaterThan(fillAt)
+    expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeGreaterThan(handler.indexOf('atmTypeMailBody(bodyText)', fillAt))
+    expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeLessThan(handler.indexOf('atmPasteMailBodyFallback(bodyText)', fillAt))
   })
 
   it('types/pastes only after body focus, then refuses send if headers changed', () => {
