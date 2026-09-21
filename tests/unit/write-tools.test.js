@@ -41,7 +41,9 @@ import {
   mailTrash,
   resolveMailMessageId,
   probeMailAutomation,
+  probeSystemEventsAutomation,
   buildMailAutomationProbeScript,
+  buildSystemEventsProbeScript,
   buildComposeScript,
   composeNativeBody,
   composeBodyNeedle,
@@ -55,7 +57,7 @@ import {
   MAIL_BODY_TAB_MAX,
   MAIL_COMPOSE_TIMEOUT_MS,
   MAIL_SE_PROBE_TIMEOUT_MS,
-  MAIL_BODY_CALIBRATE_PROBE,
+  SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS,
   isSystemEventsProbeScript,
   ATM_FOCUSED_WHOSE_QUERY,
   ATM_FOCUSED_AX_QUERY,
@@ -490,9 +492,8 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
   it('does not use the System Events web area class or window walker', () => {
     const handler = buildMailBodyPasteHandler()
     expect(handler).not.toMatch(/\bweb area\b/)
-    expect(handler).not.toContain('AXWebArea')
-    expect(handler).not.toContain(String(MAIL_BODY_MIN_AX_HEIGHT))
     expect(handler).not.toContain('count of windows')
+    expect(handler).toContain('AXWebArea')
     const script = buildComposeScript({
       to: ['a@example.com'],
       cc: [],
@@ -502,14 +503,13 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       send: true
     })
     expect(script).not.toMatch(/\bweb area\b/)
-    expect(script).not.toContain('AXWebArea')
     expect(script).not.toContain('count of windows')
     expect(script).toContain('make new outgoing message')
     expect(script).not.toMatch(/set newMessage to mailto/)
     expect(script).not.toMatch(/content:/)
   })
 
-  it('keeps the 2.0.9 focused-element helper compile-safe and off the compose path', () => {
+  it('calibrates Tab against AX focused role, not Mail content of', () => {
     const focused = buildAtmFocusedElementHandler()
     expect(focused).toContain('on atmFocusedElement()')
     expect(focused).toContain(ATM_FOCUSED_WHOSE_QUERY)
@@ -520,7 +520,23 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(focused).not.toMatch(/\bweb area\b/)
 
     const handler = buildMailBodyPasteHandler()
-    expect(handler).not.toContain(focused)
+    expect(handler).toContain(focused)
+    expect(handler).toContain('set fe to my atmFocusedElement()')
+    expect(handler).toContain('on atmSafeToPaste()')
+    expect(handler).toContain('on atmAxFocusedValue()')
+    expect(handler).toContain('if r is "AXWebArea" then return true')
+    expect(handler).toContain('if r is "AXTextArea" then return true')
+    expect(handler).toContain(`if r is "AXTextArea" and atmH > 0 and atmH < ${MAIL_BODY_MIN_AX_HEIGHT} then return false`)
+    expect(handler).toContain('if my atmSafeToPaste() then return')
+    expect(handler).toContain('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    const fillAt = handler.indexOf('on atmFillMailBody')
+    expect(fillAt).toBeGreaterThan(-1)
+    expect(handler.indexOf('if my atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"', fillAt)).toBeLessThan(
+      handler.indexOf('atmTypeMailBody(bodyText)', fillAt)
+    )
+    expect(handler).not.toContain('atmMailBodyContains')
+    expect(handler).not.toMatch(/content of msg/)
+    expect(handler).not.toMatch(/content of newMessage/)
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bselected UI element\b/)
 
@@ -532,29 +548,39 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       body: 'All good',
       send: true
     })
-    expect(script).not.toContain('atmFocusedElement')
+    expect(script).toContain('atmFocusedElement')
+    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
+    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).toContain('atmAxFocusedValue')
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toMatch(/\bselected UI element\b/)
     expect(script).not.toMatch(/\bweb area\b/)
+    expect(script).not.toMatch(/content of newMessage/)
+    expect(script).not.toMatch(/content of msg/)
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
     expect(script).not.toMatch(/content:/)
   })
 
-  it('tabs into the body with effect calibration then types Returns', () => {
+  it('tabs into the body until AX role is a body field then types Returns', () => {
     const handler = buildMailBodyPasteHandler()
     expect(handler).toContain('atmTabIntoMailBody')
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).toContain('key code 48')
     expect(handler).toContain('key code 36')
-    expect(handler).toContain('key code 51')
     expect(handler).toContain(`repeat with atmN from 0 to ${MAIL_BODY_TAB_MAX}`)
-    expect(handler).toContain(MAIL_BODY_CALIBRATE_PROBE)
-    expect(handler).toContain('atmMailBodyContains')
-    expect(handler).toContain('content of msg as string')
+    expect(handler).toContain('atmSafeToPaste')
+    expect(handler).toContain('atmAxFocusedValue')
+    expect(handler).not.toContain('atmMailBodyContains')
+    expect(handler).not.toMatch(/content of msg/)
     expect(handler).not.toContain('set content')
-    expect(handler.indexOf('atmTabIntoMailBody')).toBeLessThan(handler.indexOf('atmTypeMailBody'))
-    expect(handler.indexOf('atmTypeMailBody')).toBeLessThan(handler.indexOf('keystroke "v" using command down'))
+    expect(handler.indexOf('atmTabIntoMailBody')).toBeLessThan(handler.indexOf('on atmTypeMailBody'))
+    expect(handler.indexOf('on atmTypeMailBody')).toBeLessThan(handler.indexOf('keystroke "v" using command down'))
+    const fillAt = handler.indexOf('on atmFillMailBody')
+    expect(fillAt).toBeGreaterThan(-1)
+    expect(handler.indexOf('atmTypeMailBody(bodyText)', fillAt)).toBeGreaterThan(fillAt)
+    expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeGreaterThan(handler.indexOf('atmTypeMailBody(bodyText)', fillAt))
+    expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeLessThan(handler.indexOf('atmPasteMailBodyFallback(bodyText)', fillAt))
   })
 
   it('types/pastes only after body focus, then refuses send if headers changed', () => {
@@ -604,9 +630,12 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('subject of newMessage as string')
-    expect(script).toContain('content of newMessage as string')
+    expect(script).toContain('atmAxFocusedValue')
     expect(script).toContain('does not contain "Quick note about your Mac"')
+    expect(script).toContain('if atmAxVal is not ""')
     expect(script).toContain('key code 36')
+    expect(script).not.toMatch(/content of newMessage/)
+    expect(script).not.toMatch(/content of msg/)
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toMatch(/set content of newMessage/)
     expect(script).toContain('delete newMessage')
@@ -694,13 +723,17 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('macOS 26 focus compile (2.0.9)')
     expect(readme).toContain('AppleScript reserved identifiers (2.0.10)')
     expect(readme).toContain('Keystroke compose (2.1.0)')
+    expect(readme).toContain('AX body-focus oracle (2.1.1)')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')
     expect(readme).toContain('System Events')
     expect(readme).toContain('LaunchAgent')
     expect(readme).not.toMatch(/Manual prove \(2\.0\.8 on the Mac host\)/)
     expect(readme).not.toMatch(/Manual prove \(2\.0\.9 on the Mac host\)/)
-    expect(readme).toContain('Manual prove (2.1.0 on the Mac host)')
+    expect(readme).not.toMatch(/Manual prove \(2\.1\.0 on the Mac host\)/)
+    expect(readme).toContain('Manual prove (2.1.1 on the Mac host)')
+    expect(readme).toContain('content of')
+    expect(readme).toContain('AXFocusedUIElement')
   })
 
   it('does not destructure into AppleScript reserved shorts (2.0.10 compile -2741 on th)', () => {
@@ -739,7 +772,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(shellSrc).toContain("killSignal: 'SIGKILL'")
     const mailSrc = fs.readFileSync(path.join(root, 'lib/mailWrite.js'), 'utf8')
     expect(mailSrc).toContain('timeout: MAIL_COMPOSE_TIMEOUT_MS')
-    expect(mailSrc).toContain('timeout: MAIL_SE_PROBE_TIMEOUT_MS')
+    expect(mailSrc).toContain('MAIL_SE_PROBE_TIMEOUT_MS')
     const script = buildComposeScript({
       to: ['a@example.com'],
       cc: [],
@@ -811,6 +844,40 @@ describe('mail_automation_probe', () => {
     expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain('could not be reached')
+  })
+})
+
+describe('system_events_automation_probe', () => {
+  it('talks to System Events without typing or sending', () => {
+    const script = buildSystemEventsProbeScript()
+    expect(script).toContain('tell application "System Events"')
+    expect(script).toContain('set atmName to name')
+    expect(script).toContain('UI elements enabled')
+    expect(script).not.toContain('keystroke')
+    expect(script).not.toContain('key code')
+    expect(script).not.toContain('send ')
+    expect(script).not.toContain('dry_run')
+    expect(SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(30000)
+    expect(SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS).toBeGreaterThan(MAIL_SE_PROBE_TIMEOUT_MS)
+
+    const result = probeSystemEventsAutomation()
+    expect(result.ok).toBe(true)
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(isSystemEventsProbeScript(osascript.mock.calls[0][0])).toBe(true)
+    expect(result.message).toContain('nothing was typed')
+  })
+
+  it('maps a hang to missing GUI scripting, not a Mail send timeout', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = probeSystemEventsAutomation()
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('timeout')
+    expect(result.message).toContain('system_events_automation_probe failed')
+    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
   })
 })
 
@@ -2260,7 +2327,7 @@ describe('write smoke script routing (ship gate)', () => {
 
     // Mail + Messages are the same first-run Automation pass as Contacts/Calendar.
     expect(readme).toContain('One-pass first-run')
-    expect(readme).toContain('control **Mail**, **Messages**, **Contacts**, and **Calendar**')
+    expect(readme).toContain('control **Mail**, **Messages**, **Contacts**, **Calendar**, and **System Events**')
     expect(readme).toContain('Keep Contacts, Mail, and Messages running')
     expect(readme).toContain('Calendar does not need to stay open')
     expect(readme).toContain('EventKit')
@@ -2268,6 +2335,7 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('Calendar does not need to stay open (EventKit)')
     expect(readme).toContain('node → Mail')
     expect(readme).toContain('node → Messages')
+    expect(readme).toContain('node → System Events')
     expect(readme).toContain('dry_run never talks to Mail')
     expect(readme).toContain('Automation denied')
     expect(readme).toContain('Watch the host — Allow **`node`**')
