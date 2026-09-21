@@ -542,7 +542,7 @@ end atmFocusedElement`
   })
 })
 
-describe('mail compose reserved AppleScript identifiers (2.1.0)', () => {
+describe('mail compose reserved AppleScript identifiers (2.0.10)', () => {
   it('does not destructure size/position into reserved shorts like th', () => {
     const handler = buildMailBodyPasteHandler()
     const script = buildComposeScript({

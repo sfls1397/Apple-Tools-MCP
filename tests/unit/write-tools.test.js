@@ -691,7 +691,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('To + subject')
     expect(readme).toContain('Compose body focus (2.0.8)')
     expect(readme).toContain('macOS 26 focus compile (2.0.9)')
-    expect(readme).toContain('AppleScript reserved identifiers (2.1.0)')
+    expect(readme).toContain('AppleScript reserved identifiers (2.0.10)')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')
     expect(readme).toContain('Subject then Tab')
@@ -701,10 +701,10 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('atmH')
     expect(readme).not.toMatch(/Manual prove \(2\.0\.8 on the Mac host\)/)
     expect(readme).not.toMatch(/Manual prove \(2\.0\.9 on the Mac host\)/)
-    expect(readme).not.toMatch(/Manual prove \(2\.0\.10 on the Mac host\)/)
+    expect(readme).not.toMatch(/Manual prove \(2\.1\.0 on the Mac host\)/)
   })
 
-  it('does not destructure into AppleScript reserved shorts (2.1.0 compile -2741 on th)', () => {
+  it('does not destructure into AppleScript reserved shorts (2.0.10 compile -2741 on th)', () => {
     const handler = buildMailBodyPasteHandler()
     const script = buildComposeScript({
       to: ['a@example.com'],
