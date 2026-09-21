@@ -15,6 +15,9 @@ import {
   MAIL_SEND_TIMEOUT_GUIDANCE,
   CONTACTS_TCC_GUIDANCE,
   CONTACTS_APP_NOT_RUNNING_GUIDANCE,
+  MAIL_APP_NOT_RUNNING_GUIDANCE,
+  MESSAGES_APP_NOT_RUNNING_GUIDANCE,
+  CALENDAR_APP_NOT_RUNNING_GUIDANCE,
   CALENDAR_TCC_GUIDANCE,
   MESSAGES_TCC_GUIDANCE,
   ATTRIBUTION_GUIDANCE
@@ -265,6 +268,7 @@ describe('mail_send', () => {
     expect(result.message).not.toContain('find/reply/send hang')
     expect(osascript).toHaveBeenCalledTimes(1)
   })
+
 })
 
 describe('mail_automation_probe', () => {
@@ -678,6 +682,7 @@ describe('messages_send', () => {
     expect(result.message).toContain('node → Messages')
     expect(result.message).not.toContain('could not be reached')
   })
+
 
   it('refuses an invalid handle rather than guessing', () => {
     const result = messagesSend({ to: ['not a phone'], text: 'hi' })
@@ -1211,6 +1216,7 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     ])
     expect(result.message).toContain('Holidays (read-only)')
   })
+
 })
 
 // ============ CONTACTS ============
@@ -1304,12 +1310,18 @@ describe('contacts writes', () => {
   })
 
   it('does not label a Contacts -600 cold launch as Automation / attribution', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('Contacts got an error: Application isn\'t running. (-600)')
-    })
     const result = contactsAdd(
       { first_name: 'Ada' },
-      { attempts: 1, sleep: () => {} }
+      {
+        attempts: 1,
+        sleep: () => {},
+        run: () => ({
+          ok: false,
+          kind: 'app_not_running',
+          error: 'Contacts got an error: Application isn\'t running. (-600)',
+          output: ''
+        })
+      }
     )
     expect(result.ok).toBe(false)
     expect(result.message).toContain(CONTACTS_APP_NOT_RUNNING_GUIDANCE)
@@ -1317,6 +1329,37 @@ describe('contacts writes', () => {
     expect(result.message).toContain('-600')
     expect(result.message).not.toContain(ATTRIBUTION_GUIDANCE)
     expect(result.message).not.toContain(CONTACTS_TCC_GUIDANCE)
+  })
+
+  it('mail, messages, and calendar failure paths handle app_not_running', () => {
+    const mail = fs.readFileSync(path.join(root, 'lib/mailWrite.js'), 'utf8')
+    const messages = fs.readFileSync(path.join(root, 'lib/messagesWrite.js'), 'utf8')
+    const calendar = fs.readFileSync(path.join(root, 'lib/calendarWrite.js'), 'utf8')
+    expect(mail).toContain('kind === "app_not_running"')
+    expect(mail).toContain('MAIL_APP_NOT_RUNNING_GUIDANCE')
+    expect(messages).toContain('kind === "app_not_running"')
+    expect(messages).toContain('MESSAGES_APP_NOT_RUNNING_GUIDANCE')
+    expect(calendar).toContain('kind === "app_not_running"')
+    expect(calendar).toContain('CALENDAR_APP_NOT_RUNNING_GUIDANCE')
+    expect(MAIL_APP_NOT_RUNNING_GUIDANCE).toContain('Keep Mail, Messages, and Contacts running')
+    expect(MESSAGES_APP_NOT_RUNNING_GUIDANCE).toContain('Keep Mail, Messages, and Contacts running')
+    expect(CALENDAR_APP_NOT_RUNNING_GUIDANCE).toContain('do not require Calendar.app to stay open')
+  })
+
+  it('does not remap a launch attribution deny to app_not_running', () => {
+    const result = ensureContactsAppReady({
+      attempts: 3,
+      sleep: () => {},
+      run: () => ({
+        ok: false,
+        kind: 'attribution',
+        error: 'Can\'t get application "Contacts". (-1728)',
+        output: ''
+      })
+    })
+    expect(result.ok).toBe(false)
+    expect(result.kind).toBe('attribution')
+    expect(result.error).toContain('-1728')
   })
 
   it('still maps a hard Contacts deny (-1743) to TCC, not cold-launch', () => {
