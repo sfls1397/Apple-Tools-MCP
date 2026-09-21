@@ -17,7 +17,13 @@ import {
   runPermissionsCommand
 } from '../../lib/permissions.js'
 import { postinstallReminderText } from '../../scripts/postinstall.js'
-import { buildMailAutomationProbeScript, buildSystemEventsProbeScript } from '../../lib/mailWrite.js'
+import { SYSTEM_EVENTS_STICKY_DENY_GUIDANCE } from '../../lib/appleScript.js'
+import {
+  buildMailAutomationProbeScript,
+  buildSystemEventsProbeScript,
+  buildSystemEventsAutomationProbeScript,
+  isSystemEventsAutomationProbeScript
+} from '../../lib/mailWrite.js'
 import { buildMessagesAutomationProbeScript } from '../../lib/messagesWrite.js'
 import { buildContactsAutomationProbeScript } from '../../lib/contactsWrite.js'
 import { buildCalendarAutomationProbeScript } from '../../lib/calendarWrite.js'
@@ -101,11 +107,18 @@ describe('probe scripts are live Apple Events, not dry_run', () => {
     expect(script).not.toContain('dry_run')
   })
 
-  it('System Events asks for its name and never types', () => {
-    const script = buildSystemEventsProbeScript()
+  it('System Events uses process / GUI scripting, not a soft application name get', () => {
+    const cheap = buildSystemEventsProbeScript()
+    expect(cheap).toContain('set atmName to name')
+
+    const script = buildSystemEventsAutomationProbeScript()
+    expect(isSystemEventsAutomationProbeScript(script)).toBe(true)
     expect(script).toContain('tell application "System Events"')
-    expect(script).toContain('set atmName to name')
+    expect(script).toContain('tell process "System Events"')
+    expect(script).toContain('unix id')
+    expect(script).toContain('count of UI elements')
     expect(script).toContain('UI elements enabled')
+    expect(script).not.toContain('set atmName to name')
     expect(script).not.toContain('keystroke')
     expect(script).not.toContain('key code')
     expect(script).not.toContain('dry_run')
@@ -155,6 +168,11 @@ describe('grant classification and fail-closed exit', () => {
     expect(classifyGrantStatus({
       ok: false,
       message: 'GUI_SCRIPTING_UNAVAILABLE'
+    })).toBe('missing')
+    expect(classifyGrantStatus({
+      ok: false,
+      kind: 'tcc',
+      message: `system_events_automation_probe failed — ${SYSTEM_EVENTS_STICKY_DENY_GUIDANCE}`
     })).toBe('missing')
     expect(classifyGrantStatus({ ok: false, kind: 'unknown', message: 'disk full' })).toBe('error')
     expect(classifyGrantStatus({ ok: false, kind: 'app_not_running', message: 'Contacts.app was not running' })).toBe('error')
@@ -251,6 +269,8 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('dry_run of mail_send / messages_send does not count')
     expect(text).toContain('Next dialog: click Allow for node → Contacts')
     expect(text).toContain('Next dialog: click Allow for node → Messages')
+    expect(text).toContain('process / GUI scripting')
+    expect(text).toContain('A soft tell System Events to get name is not enough')
     expect(text).toContain('Next dialog: click Allow for node → System Events')
     expect(text).toContain('[granted] Contacts:')
     expect(text).toContain('[missing] Messages:')
@@ -347,7 +367,7 @@ describe('runPermissionsCommand', () => {
       argv: [execPath, '/Users/petercoates/.nvm/versions/node/v22.21.1/bin/apple-tools-mcp', 'permissions'],
       existsSync: () => false,
       realpathSync: (p) => p,
-      version: '2.1.1',
+      version: '2.1.2',
       stdout: (line) => lines.push(line),
       probes: {
         ...allGrantedProbes,
@@ -360,6 +380,10 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('[missing] System Events:')
     expect(text).toContain('System Events = missing')
     expect(text).toContain('INCOMPLETE')
+    expect(text).toContain(SYSTEM_EVENTS_STICKY_DENY_GUIDANCE)
+    expect(text).toContain('process / GUI scripting')
+    expect(text).toContain('A soft tell System Events to get name is not enough')
+    expect(text).not.toContain('System Events is asked for its process name')
   })
 })
 
