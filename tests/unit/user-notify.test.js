@@ -11,6 +11,7 @@ const PRODUCT_SOURCES = [
   'search.js',
   'contacts.js',
   'lib',
+  'bin',
   'scripts/postinstall.js',
   'scripts/smoke-writes.js',
   'scripts/audit-index.js'
