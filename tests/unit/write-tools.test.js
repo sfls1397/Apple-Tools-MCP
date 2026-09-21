@@ -14,6 +14,7 @@ import {
   MAIL_TCC_GUIDANCE,
   MAIL_SEND_TIMEOUT_GUIDANCE,
   MAIL_ACCESSIBILITY_GUIDANCE,
+  MAIL_GUI_SCRIPTING_GUIDANCE,
   CONTACTS_TCC_GUIDANCE,
   CONTACTS_APP_NOT_RUNNING_GUIDANCE,
   MAIL_APP_NOT_RUNNING_GUIDANCE,
@@ -48,8 +49,14 @@ import {
   isMailAccessibilityDenial,
   isMailBodyFocusFailed,
   isMailBodyPasteMisdirected,
+  isMailGuiScriptingUnavailable,
   BODY_FOCUS_FAILED_SENTINEL,
   MAIL_BODY_MIN_AX_HEIGHT,
+  MAIL_BODY_TAB_MAX,
+  MAIL_COMPOSE_TIMEOUT_MS,
+  MAIL_SE_PROBE_TIMEOUT_MS,
+  MAIL_BODY_CALIBRATE_PROBE,
+  isSystemEventsProbeScript,
   ATM_FOCUSED_WHOSE_QUERY,
   ATM_FOCUSED_AX_QUERY,
   ATM_APPLESCRIPT_RESERVED_SHORTS,
@@ -151,7 +158,21 @@ function lastScript() {
 
 function firstScript() {
   expect(osascript).toHaveBeenCalled()
-  return osascript.mock.calls[0][0]
+  const call = osascript.mock.calls.find(([script]) => !isSystemEventsProbeScript(script))
+  return (call || osascript.mock.calls[0])[0]
+}
+
+function firstVerifyScript() {
+  const call = osascript.mock.calls.find(([script]) => isMailSentVerifyScript(script))
+  expect(call).toBeTruthy()
+  return call[0]
+}
+
+function throwAfterSeProbe(message) {
+  osascript.mockImplementation((script) => {
+    if (isSystemEventsProbeScript(script)) return 'OK'
+    throw new Error(message)
+  })
 }
 
 function mockContactsAppleScript(writeOutput = '') {
@@ -173,22 +194,23 @@ describe('mail_send', () => {
     expect(result.ok).toBe(true)
     expect(result.delivered).toBe(true)
     expect(result.mailbox).toBe('sent')
-    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript).toHaveBeenCalledTimes(3)
     const script = firstScript()
     expect(script).toContain('make new outgoing message')
     expect(script).toContain('address:"peter@example.com"')
     expect(script).toContain('send newMessage')
     expect(script).not.toMatch(/set newMessage to mailto/)
-    expect(script).toContain('atmPasteMailBody')
-    expect(script.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
-      script.indexOf('keystroke "v" using command down')
-    )
+    expect(script).toContain('atmFillMailBody')
+    expect(script).toContain('atmTabIntoMailBody')
+    expect(script).toContain('atmTypeMailBody')
+    expect(script.indexOf('atmTabIntoMailBody')).toBeLessThan(script.indexOf('atmTypeMailBody'))
+    expect(script.indexOf('atmTypeMailBody')).toBeLessThan(script.indexOf('keystroke "v" using command down'))
     expect(result.message).toContain('peter@example.com')
     expect(result.message).toContain('Status')
     expect(result.message).toContain('verified in Sent')
     expect(result.message).toContain('mailbox: sent')
     expect(result.message).toContain('delivery: sent')
-    const verifyScript = osascript.mock.calls[1][0]
+    const verifyScript = firstVerifyScript()
     expect(verifyScript).toContain('peter@example.com')
     expect(verifyScript).toContain('subj is "Status"')
     expect(verifyScript).toContain('hitTo')
@@ -218,7 +240,7 @@ describe('mail_send', () => {
     const confirmed = mailCompose({ ...args, confirm: true })
     expect(confirmed.ok).toBe(true)
     expect(confirmed.delivered).toBe(true)
-    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript).toHaveBeenCalledTimes(3)
   })
 
   it('counts cc and bcc toward the multi-recipient gate', () => {
@@ -257,7 +279,7 @@ describe('mail_send', () => {
     const script = firstScript()
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('\\" & do shell script \\"whoami\\"')
-    expect(script).toContain('atmPasteMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell", "Hi")')
+    expect(script).toContain('atmFillMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell", "x\\" & do shell script \\"whoami\\" & \\"", newMessage)')
   })
 
   it('sends HTML via native paste with tags stripped, never AppleScript html content', () => {
@@ -271,7 +293,7 @@ describe('mail_send', () => {
     expect(result.ok).toBe(true)
     const script = firstScript()
     expect(script).toContain('make new outgoing message')
-    expect(script).toContain('atmPasteMailBody("All good", "Report")')
+    expect(script).toContain('atmFillMailBody("All good", "All good", newMessage)')
     expect(script).not.toContain('html content')
     expect(script).not.toContain('set html content')
     expect(script).not.toContain('<blockquote')
@@ -279,10 +301,10 @@ describe('mail_send', () => {
     expect(script).not.toMatch(/set newMessage to mailto/)
   })
 
-  it('defaults to a plain text body via make new + paste, not AppleScript content', () => {
+  it('defaults to a plain text body via make new + keystroke, not AppleScript content', () => {
     mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
     const script = firstScript()
-    expect(script).toContain('atmPasteMailBody("All good", "Report")')
+    expect(script).toContain('atmFillMailBody("All good", "All good", newMessage)')
     expect(script).not.toContain('html content')
     expect(script).not.toMatch(/content:"All good"/)
     expect(script).toContain('make new outgoing message with properties {subject:"Report", visible:true}')
@@ -296,9 +318,7 @@ describe('mail_send', () => {
   })
 
   it('does not echo the body when Mail fails', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('Mail got an error: secret body text here')
-    })
+    throwAfterSeProbe('Mail got an error: secret body text here')
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'secret body text here' })
     expect(result.ok).toBe(false)
     expect(result.message).not.toContain('secret body text here')
@@ -307,6 +327,7 @@ describe('mail_send', () => {
 
   it('treats a hung send as a timeout, verifies Sent, and does not label it TCC', () => {
     osascript
+      .mockImplementationOnce(() => 'OK')
       .mockImplementationOnce(() => {
         throw new Error('spawnSync osascript ETIMEDOUT')
       })
@@ -315,14 +336,15 @@ describe('mail_send', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
     expect(result.message).toContain('find/reply/send hang')
     expect(result.message).toContain('not a TCC / Automation deny')
     expect(result.message).toContain('Check Sent')
     expect(result.message).toContain('before retrying')
     expect(result.message).not.toContain('macOS denied Mail automation')
     expect(result.message).not.toContain('could not be reached')
-    expect(osascript).toHaveBeenCalledTimes(2)
-    const verifyScript = osascript.mock.calls[1][0]
+    expect(osascript).toHaveBeenCalledTimes(3)
+    const verifyScript = firstVerifyScript()
     expect(verifyScript).toContain('subj is "Hi"')
     expect(verifyScript).toContain('a@example.com')
     expect(verifyScript).toContain('hitTo')
@@ -332,6 +354,7 @@ describe('mail_send', () => {
 
   it('returns success when a hung send is already in Sent', () => {
     osascript
+      .mockImplementationOnce(() => 'OK')
       .mockImplementationOnce(() => {
         throw new Error('spawnSync osascript ETIMEDOUT')
       })
@@ -348,35 +371,29 @@ describe('mail_send', () => {
   })
 
   it('labels a hard Mail deny as TCC and does not Sent-check', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('Not authorized to send Apple events to Mail. (-1743)')
-    })
+    throwAfterSeProbe('Not authorized to send Apple events to Mail. (-1743)')
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('find/reply/send hang')
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
   })
 
   it('maps Accessibility paste deny to MAIL_ACCESSIBILITY_GUIDANCE, not Mail Automation TCC', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('ACCESSIBILITY_DENIED')
-    })
+    throwAfterSeProbe('ACCESSIBILITY_DENIED')
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(isMailAccessibilityDenial({ error: 'ACCESSIBILITY_DENIED' })).toBe(true)
     expect(result.message).toContain(MAIL_ACCESSIBILITY_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
   })
 
   it('aborts without sending when paste lands in To', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('BODY_PASTE_MISDIRECTED')
-    })
+    throwAfterSeProbe('BODY_PASTE_MISDIRECTED')
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(result.delivered).toBe(false)
@@ -387,14 +404,12 @@ describe('mail_send', () => {
     expect(result.message).toContain('nothing was sent')
     expect(result.message).not.toContain('Hello')
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
     expect(mcpWriteResult(result).isError).toBe(true)
   })
 
   it('aborts without pasting when the caret stays in a header field', () => {
-    osascript.mockImplementation(() => {
-      throw new Error(BODY_FOCUS_FAILED_SENTINEL)
-    })
+    throwAfterSeProbe(BODY_FOCUS_FAILED_SENTINEL)
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(result.delivered).toBe(false)
@@ -406,7 +421,7 @@ describe('mail_send', () => {
     expect(result.message).toContain('nothing was sent')
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).not.toContain('Hello')
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
     expect(mcpWriteResult(result).isError).toBe(true)
   })
 
@@ -438,7 +453,7 @@ describe('mail_send', () => {
     expect(result.message).toContain(MAIL_VERIFY_MISS_GUIDANCE)
     expect(result.message).toContain('mail_send failed')
     expect(result.message).not.toContain('Hello')
-    expect(osascript.mock.calls.length).toBe(1 + SENT_VERIFY_ATTEMPTS)
+    expect(osascript.mock.calls.length).toBe(2 + SENT_VERIFY_ATTEMPTS)
     expect(mcpWriteResult(result).isError).toBe(true)
   })
 
@@ -449,7 +464,7 @@ describe('mail_send', () => {
     })
     const result = mailCompose({ to: ['a@example.com'], subject: 'test', body: 'Hello' })
     expect(result.ok).toBe(true)
-    const verifyScript = osascript.mock.calls[1][0]
+    const verifyScript = firstVerifyScript()
     expect(verifyScript).toContain('atm-compose-id.123@example.com')
     expect(verifyScript).toContain('a@example.com')
     expect(verifyScript).toContain('hitTo')
@@ -464,20 +479,20 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).toContain('keystroke "v" using command down')
     expect(handler).toContain('System Events')
     expect(handler).toContain('ACCESSIBILITY_DENIED')
-    expect(handler).toContain('atmPasteMailBody(bodyText, expectedSubject)')
-    expect(handler).toContain('atmFocusMailBody(expectedSubject)')
+    expect(handler).toContain('atmFillMailBody(bodyText, needle, msg)')
+    expect(handler).toContain('atmTabIntoMailBody(msg)')
+    expect(handler).toContain('atmTypeMailBody(bodyText)')
+    expect(handler).toContain('key code 48')
+    expect(handler).toContain('key code 36')
+    expect(handler).not.toContain('count of windows')
   })
 
-  it('does not use the System Events web area class (-2741 on macOS 26)', () => {
+  it('does not use the System Events web area class or window walker', () => {
     const handler = buildMailBodyPasteHandler()
     expect(handler).not.toMatch(/\bweb area\b/)
-    expect(handler).toContain('text area 1')
-    expect(handler).toContain('scroll area 1')
-    expect(handler).toContain('text field')
-    expect(handler).toContain('UI element')
-    expect(handler).toContain('whose role is "AXWebArea"')
-    expect(handler).toContain('is "AXTextArea"')
-    expect(handler).toContain('role of atmElem as string')
+    expect(handler).not.toContain('AXWebArea')
+    expect(handler).not.toContain(String(MAIL_BODY_MIN_AX_HEIGHT))
+    expect(handler).not.toContain('count of windows')
     const script = buildComposeScript({
       to: ['a@example.com'],
       cc: [],
@@ -487,13 +502,14 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       send: true
     })
     expect(script).not.toMatch(/\bweb area\b/)
-    expect(script).toContain('whose role is "AXWebArea"')
+    expect(script).not.toContain('AXWebArea')
+    expect(script).not.toContain('count of windows')
     expect(script).toContain('make new outgoing message')
     expect(script).not.toMatch(/set newMessage to mailto/)
     expect(script).not.toMatch(/content:/)
   })
 
-  it('does not use focused UI element (-2741/-2740 on macOS 26 System Events)', () => {
+  it('keeps the 2.0.9 focused-element helper compile-safe and off the compose path', () => {
     const focused = buildAtmFocusedElementHandler()
     expect(focused).toContain('on atmFocusedElement()')
     expect(focused).toContain(ATM_FOCUSED_WHOSE_QUERY)
@@ -504,14 +520,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(focused).not.toMatch(/\bweb area\b/)
 
     const handler = buildMailBodyPasteHandler()
-    expect(handler).toContain(focused)
-    expect(handler).toContain('set fe to my atmFocusedElement()')
-    expect(handler).toContain('if fe is missing value then return false')
-    expect(handler).toContain('if r is "AXWindow" then return false')
-    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
-    expect(handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
-      handler.indexOf('keystroke "v" using command down')
-    )
+    expect(handler).not.toContain(focused)
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bselected UI element\b/)
 
@@ -523,9 +532,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       body: 'All good',
       send: true
     })
-    expect(script).toContain('set atmFe to my atmFocusedElement()')
-    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
-    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).not.toContain('atmFocusedElement')
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toMatch(/\bselected UI element\b/)
     expect(script).not.toMatch(/\bweb area\b/)
@@ -534,28 +541,23 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).not.toMatch(/content:/)
   })
 
-  it('does not focus a header text area before trying the body web area', () => {
+  it('tabs into the body with effect calibration then types Returns', () => {
     const handler = buildMailBodyPasteHandler()
-    expect(handler).toContain('atmSafeToPaste')
+    expect(handler).toContain('atmTabIntoMailBody')
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).toContain('key code 48')
-    expect(handler).toContain(`atmH < ${MAIL_BODY_MIN_AX_HEIGHT}`)
-    expect(handler).toContain(`atmH >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
-    expect(handler).toContain('AXTextField')
-    expect(handler.indexOf('whose role is "AXWebArea"')).toBeLessThan(handler.indexOf('text area 1 of scroll area 1'))
-    expect(handler).not.toMatch(/set focused of text area 1 of w to true/)
-    expect(handler).not.toContain('first UI element of w whose role is "AXTextArea"')
-    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
-    expect(handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
-      handler.indexOf('keystroke "v" using command down')
-    )
-    expect(handler).toContain('To:')
-    expect(handler).toContain('Cc:')
-    expect(handler).toContain('Bcc:')
-    expect(handler).toContain('Subject')
+    expect(handler).toContain('key code 36')
+    expect(handler).toContain('key code 51')
+    expect(handler).toContain(`repeat with atmN from 0 to ${MAIL_BODY_TAB_MAX}`)
+    expect(handler).toContain(MAIL_BODY_CALIBRATE_PROBE)
+    expect(handler).toContain('atmMailBodyContains')
+    expect(handler).toContain('content of msg as string')
+    expect(handler).not.toContain('set content')
+    expect(handler.indexOf('atmTabIntoMailBody')).toBeLessThan(handler.indexOf('atmTypeMailBody'))
+    expect(handler.indexOf('atmTypeMailBody')).toBeLessThan(handler.indexOf('keystroke "v" using command down'))
   })
 
-  it('pastes only after body focus, then refuses send if headers changed', () => {
+  it('types/pastes only after body focus, then refuses send if headers changed', () => {
     const script = buildComposeScript({
       to: ['a@example.com'],
       cc: [],
@@ -564,11 +566,11 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       body: 'All good',
       send: true
     })
-    const pasteCall = script.indexOf('atmPasteMailBody')
+    const fillCall = script.indexOf('atmFillMailBody')
     const deleteAt = script.indexOf('delete newMessage')
     const sendAt = script.lastIndexOf('send newMessage')
-    expect(pasteCall).toBeGreaterThan(-1)
-    expect(deleteAt).toBeGreaterThan(pasteCall)
+    expect(fillCall).toBeGreaterThan(-1)
+    expect(deleteAt).toBeGreaterThan(fillCall)
     expect(sendAt).toBeGreaterThan(deleteAt)
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
@@ -576,6 +578,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain('count of to recipients of newMessage')
     expect(script).toContain('count of cc recipients of newMessage')
     expect(script).toContain('count of bcc recipients of newMessage')
+    expect(script).toContain('with timeout of')
   })
 
   it('does not inject quote prefixes or a cite-blockquote into a plain compose', () => {
@@ -590,7 +593,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     })
 
     expect(script).toContain('set newMessage to make new outgoing message with properties {subject:"Quick note about your Mac", visible:true}')
-    expect(script).toContain('atmPasteMailBody("Quick note about your Mac\\nSecond line", "Quick note about your Mac")')
+    expect(script).toContain('atmFillMailBody("Quick note about your Mac\\nSecond line", "Quick note about your Mac", newMessage)')
     expect(script).toContain('address:"a@example.com"')
     expect(script).toContain('send newMessage')
     expect(script).toContain('count of to recipients of newMessage')
@@ -603,9 +606,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain('subject of newMessage as string')
     expect(script).toContain('content of newMessage as string')
     expect(script).toContain('does not contain "Quick note about your Mac"')
-    expect(script).toContain('atmFocusedElement')
-    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
-    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).toContain('key code 36')
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toMatch(/set content of newMessage/)
     expect(script).toContain('delete newMessage')
@@ -641,7 +642,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     })
 
     expect(script).toContain('make new outgoing message')
-    expect(script).toContain('atmPasteMailBody("Quick note about your Mac Second line", "Quick note about your Mac")')
+    expect(script).toContain('atmFillMailBody("Quick note about your Mac Second line", "Quick note about your Mac Second line", newMessage)')
     expect(script).toContain('count of to recipients of newMessage')
     expect(script).toContain('subject of newMessage as string')
     expect(script).toContain('does not contain "Quick note about your Mac Second line"')
@@ -674,7 +675,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(forward).toContain('set content to "FYI" & return & content')
   })
 
-  it('documents the Mail cite-blockquote quirk, mailto -2753, and paste compose', () => {
+  it('documents the Mail cite-blockquote quirk, mailto -2753, and keystroke compose', () => {
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
     expect(readme).toContain('Compose is not quoted')
     expect(readme).toContain('FB11734014')
@@ -692,16 +693,14 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('Compose body focus (2.0.8)')
     expect(readme).toContain('macOS 26 focus compile (2.0.9)')
     expect(readme).toContain('AppleScript reserved identifiers (2.0.10)')
+    expect(readme).toContain('Keystroke compose (2.1.0)')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')
-    expect(readme).toContain('Subject then Tab')
-    expect(readme).toContain('first UI element whose focused is true')
-    expect(readme).toContain('AXFocusedUIElement')
-    expect(readme).toContain('atmW')
-    expect(readme).toContain('atmH')
+    expect(readme).toContain('System Events')
+    expect(readme).toContain('LaunchAgent')
     expect(readme).not.toMatch(/Manual prove \(2\.0\.8 on the Mac host\)/)
     expect(readme).not.toMatch(/Manual prove \(2\.0\.9 on the Mac host\)/)
-    expect(readme).not.toMatch(/Manual prove \(2\.1\.0 on the Mac host\)/)
+    expect(readme).toContain('Manual prove (2.1.0 on the Mac host)')
   })
 
   it('does not destructure into AppleScript reserved shorts (2.0.10 compile -2741 on th)', () => {
@@ -718,16 +717,9 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       const bindings = [...src.matchAll(/set\s*\{([^}]+)\}/g)].flatMap((m) =>
         m[1].split(',').map((part) => part.trim())
       )
-      expect(bindings.length).toBeGreaterThan(0)
       for (const name of bindings) {
         expect(ATM_APPLESCRIPT_RESERVED_SHORTS).not.toContain(name)
       }
-      expect(src).toContain('set {atmW, atmH} to size of atmElem')
-      expect(src).toContain('set {atmW, atmH} to size of ta')
-      expect(src).toContain('set {atmW, atmH} to size of fe')
-      expect(src).toContain('set {atmX, atmY} to position of w')
-      expect(src).toContain('set {atmWinW, atmWinH} to size of w')
-      expect(src).toContain(`if atmH >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
       expect(src).not.toMatch(/set \{tw, th\}/)
       expect(src).not.toMatch(/set \{ew, eh\}/)
       expect(src).not.toMatch(/\bif th >=/)
@@ -736,10 +728,62 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       expect(src).not.toMatch(/\bweb area\b/)
       expect(src).not.toMatch(/content:/)
     }
-    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
-    expect(handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')).toBeLessThan(
-      handler.indexOf('keystroke "v" using command down')
+    expect(handler).toContain('atmEndPos')
+    expect(handler).not.toMatch(/\bth\b/)
+  })
+
+  it('bounds compose Apple events and SIGKILLs hung osascript', () => {
+    expect(MAIL_COMPOSE_TIMEOUT_MS).toBeLessThanOrEqual(25000)
+    expect(MAIL_SE_PROBE_TIMEOUT_MS).toBeLessThanOrEqual(5000)
+    const shellSrc = fs.readFileSync(path.join(root, 'lib/shell.js'), 'utf8')
+    expect(shellSrc).toContain("killSignal: 'SIGKILL'")
+    const mailSrc = fs.readFileSync(path.join(root, 'lib/mailWrite.js'), 'utf8')
+    expect(mailSrc).toContain('timeout: MAIL_COMPOSE_TIMEOUT_MS')
+    expect(mailSrc).toContain('timeout: MAIL_SE_PROBE_TIMEOUT_MS')
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi',
+      body: 'Hello',
+      send: true
+    })
+    expect(script).toContain('with timeout of')
+  })
+
+  it('returns unsupported when the write-bridge cannot drive System Events', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailCompose(
+      { to: ['a@example.com'], subject: 'Hi', body: 'Hello' },
+      { indexerMode: true }
     )
+    expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
+    expect(result.unsupported).toBe(true)
+    expect(isMailGuiScriptingUnavailable({ error: 'GUI_SCRIPTING_UNAVAILABLE' })).toBe(true)
+    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(result.message).not.toContain('Hello')
+    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(isSystemEventsProbeScript(osascript.mock.calls[0][0])).toBe(true)
+  })
+
+  it('fails closed locally on a System Events probe hang without MAIL_SEND_TIMEOUT_GUIDANCE', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailCompose(
+      { to: ['a@example.com'], subject: 'Hi', body: 'Hello' },
+      { indexerMode: false, draft: true }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
+    expect(result.unsupported).toBeUndefined()
+    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+    expect(mcpWriteResult(result).isError).toBe(true)
   })
 })
 
@@ -870,9 +914,7 @@ describe('mail_draft', () => {
   })
 
   it('maps a hung draft compose to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('spawnSync osascript ETIMEDOUT')
-    })
+    throwAfterSeProbe('spawnSync osascript ETIMEDOUT')
     const result = mailCompose(
       { to: ['a@example.com'], subject: 'Hi', body: 'Hello' },
       { draft: true }
@@ -880,7 +922,7 @@ describe('mail_draft', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -2424,6 +2466,32 @@ describe('dispatchWriteTool routing', () => {
     })
     expect(runLocally).toHaveBeenCalled()
     expect(result.message).toBe('local')
+  })
+
+  it('falls back in-process when daemon mail_send reports System Events unsupported', async () => {
+    const request = vi.fn(async () => ({
+      delivered: true,
+      response: {
+        ok: false,
+        unsupported: true,
+        delivered: false,
+        message: `mail_send failed — attempted to send. ${MAIL_GUI_SCRIPTING_GUIDANCE}`
+      }
+    }))
+    const runLocally = vi.fn(() => ({ ok: true, delivered: true, message: 'in-process sent' }))
+    const result = await dispatchWriteTool(
+      'mail_send',
+      { to: ['a@example.com'], subject: 'Hi', body: 'Hello' },
+      {
+        indexerMode: false,
+        probe: async () => true,
+        request,
+        runLocally
+      }
+    )
+    expect(runLocally).toHaveBeenCalled()
+    expect(result.message).toBe('in-process sent')
+    expect(result.ok).toBe(true)
   })
 
   it('explains the TCC host constraint when a local write is denied', async () => {

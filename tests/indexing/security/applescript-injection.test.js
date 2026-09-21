@@ -10,8 +10,7 @@ import {
   buildAtmFocusedElementHandler,
   ATM_FOCUSED_WHOSE_QUERY,
   ATM_FOCUSED_AX_QUERY,
-  ATM_APPLESCRIPT_RESERVED_SHORTS,
-  MAIL_BODY_MIN_AX_HEIGHT
+  ATM_APPLESCRIPT_RESERVED_SHORTS
 } from '../../../lib/mailWrite.js'
 
 describe('AppleScript Injection Prevention', () => {
@@ -442,18 +441,18 @@ describe('AppleScript Injection Prevention', () => {
 })
 
 describe('mail compose paste focus (2.0.8)', () => {
-  it('does not paste until body focus is confirmed, and never treats To/Cc/Bcc/Subject as the body', () => {
+  it('does not type or paste until Tab calibration lands in the body', () => {
     const handler = buildMailBodyPasteHandler()
-    const guardAt = handler.indexOf('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    const tabAt = handler.indexOf('atmTabIntoMailBody')
+    const typeAt = handler.indexOf('atmTypeMailBody')
     const pasteAt = handler.indexOf('keystroke "v" using command down')
-    expect(guardAt).toBeGreaterThan(-1)
-    expect(pasteAt).toBeGreaterThan(guardAt)
-    expect(handler).toContain('To:')
-    expect(handler).toContain('Cc:')
-    expect(handler).toContain('Bcc:')
-    expect(handler).toContain('Subject')
-    expect(handler).toContain('AXWebArea')
+    expect(tabAt).toBeGreaterThan(-1)
+    expect(typeAt).toBeGreaterThan(tabAt)
+    expect(pasteAt).toBeGreaterThan(typeAt)
+    expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).not.toMatch(/\bweb area\b/)
+    expect(handler).not.toContain('AXWebArea')
+    expect(handler).not.toContain('count of windows')
   })
 
   it('deletes the outgoing message before send when paste is misdirected or focus missed the body', () => {
@@ -465,7 +464,7 @@ describe('mail compose paste focus (2.0.8)', () => {
       body: 'Hello',
       send: true
     })
-    const pasteAt = script.indexOf('atmPasteMailBody')
+    const pasteAt = script.indexOf('atmFillMailBody')
     const deleteAt = script.indexOf('delete newMessage')
     const sendAt = script.lastIndexOf('send newMessage')
     expect(pasteAt).toBeGreaterThan(-1)
@@ -518,8 +517,7 @@ end atmFocusedElement`
     expect(focused).not.toMatch(/\bselected UI element\b/)
 
     const handler = buildMailBodyPasteHandler()
-    expect(handler).toContain(focused)
-    expect(handler).toContain('set fe to my atmFocusedElement()')
+    expect(handler).not.toContain(focused)
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bweb area\b/)
 
@@ -531,9 +529,7 @@ end atmFocusedElement`
       body: '" & do shell script "whoami" & "',
       send: true
     })
-    expect(script).toContain('set atmFe to my atmFocusedElement()')
-    expect(script).toContain(ATM_FOCUSED_WHOSE_QUERY)
-    expect(script).toContain(ATM_FOCUSED_AX_QUERY)
+    expect(script).not.toContain('atmFocusedElement')
     expect(script).not.toMatch(/\bfocused UI element\b/)
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).not.toMatch(/content:/)
@@ -557,12 +553,9 @@ describe('mail compose reserved AppleScript identifiers (2.0.10)', () => {
       const bindings = [...src.matchAll(/set\s*\{([^}]+)\}/g)].flatMap((m) =>
         m[1].split(',').map((part) => part.trim())
       )
-      expect(bindings.length).toBeGreaterThan(0)
       for (const name of bindings) {
         expect(ATM_APPLESCRIPT_RESERVED_SHORTS).not.toContain(name)
       }
-      expect(src).toContain('set {atmW, atmH} to size')
-      expect(src).toContain(`atmH >= ${MAIL_BODY_MIN_AX_HEIGHT}`)
       expect(src).not.toMatch(/set \{tw, th\}/)
       expect(src).not.toMatch(/\bif th >=/)
       expect(src).not.toMatch(/\bfocused UI element\b/)
@@ -571,6 +564,7 @@ describe('mail compose reserved AppleScript identifiers (2.0.10)', () => {
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
-    expect(handler).toContain('if atmSafeToPaste() is false then error "BODY_FOCUS_FAILED"')
+    expect(handler).toContain('atmEndPos')
   })
 })
+
