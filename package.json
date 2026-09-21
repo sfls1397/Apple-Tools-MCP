@@ -1,6 +1,6 @@
 {
   "name": "apple-tools-mcp",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "MCP server for semantic search and write actions across Apple Mail, Messages, Calendar, and Contacts",
   "type": "module",
   "main": "index.js",
