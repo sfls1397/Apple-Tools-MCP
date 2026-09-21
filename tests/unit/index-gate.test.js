@@ -174,8 +174,8 @@ describe('index.js wiring', () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8')
     )
-    expect(pkg.version).toBe('2.0.1')
-    expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.[01]["']/)
+    expect(pkg.version).toBe('2.0.2')
+    expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.[0-9]["']/)
     expect(indexSrc).toContain('PACKAGE_VERSION')
     expect(indexSrc).toContain('new URL("./package.json", import.meta.url)')
     expect(indexSrc).toContain('version: PACKAGE_VERSION')

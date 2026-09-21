@@ -21,7 +21,7 @@ import fs from 'fs'
 const sources = checkDataSources()
 
 describe('Real Data Throughput', () => {
-  describe('Embedding Throughput', () => {
+  describe.skipIf(!sources.embedder)('Embedding Throughput', () => {
     it('should measure single embedding performance', async () => {
       const texts = [
         'This is a test email about quarterly budget meeting with the finance team',
@@ -153,24 +153,17 @@ describe('Real Data Throughput', () => {
   )
 })
 
-describe.skipIf(!sources.mail && !sources.messages && !sources.calendar)(
+describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sources.productionIndex)(
   'Index Build Performance',
   () => {
-    it('should measure index build time', async () => {
-      // Using production index for realistic performance measurements
+    it('should measure existing production index stats (tests never rebuild)', async () => {
       const ready = await isProductionIndexReady()
-
       if (!ready) {
-        const start = performance.now()
-        await buildProductionIndex()
-        const duration = performance.now() - start
-        console.log(`Production index built in ${(duration/1000).toFixed(1)}s`)
+        throw new Error('System index not found. Run "npm run build-index" first.')
       }
 
       const stats = await getProductionIndexStats()
       const totalItems = stats.emails + stats.messages + stats.calendar
-
-      const throughput = totalItems > 0 ? (totalItems / 1000) : 0 // items per second (estimate)
 
       console.log('Index build performance:')
       console.log(`  Emails: ${stats.emails}`)
@@ -179,7 +172,7 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar)(
       console.log(`  Total: ${totalItems} items`)
 
       expect(totalItems).toBeGreaterThan(0)
-    }, 1200000) // 20 minutes for full build (sequential indexing)
+    }, 30000)
   }
 )
 
