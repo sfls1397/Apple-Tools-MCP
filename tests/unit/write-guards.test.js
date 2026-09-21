@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   planWrite,
+  plannedWriteResult,
   normalizeList,
   isEmailAddress,
   isPhoneNumber,
@@ -92,6 +93,36 @@ describe('planWrite: multi-recipient sends', () => {
   it('allows a multi-recipient send with confirm', () => {
     const plan = planWrite({ action: 'mail_send', summary: 'send mail', recipientCount: 9, confirm: true })
     expect(plan.proceed).toBe(true)
+  })
+})
+
+describe('plannedWriteResult: not a delivery', () => {
+  it('returns ok false so MCP isError cannot be read as sent', () => {
+    const plan = planWrite({
+      action: 'mail_send',
+      summary: 'send mail to a@example.com with subject "Hi"',
+      dryRun: true
+    })
+    const result = plannedWriteResult(plan)
+    expect(result.ok).toBe(false)
+    expect(result.planned).toBe(true)
+    expect(result.delivered).toBe(false)
+    expect(result.mailbox).toBeNull()
+    expect(result.message).toContain('DRY RUN')
+    expect(result.message).toContain('Nothing was changed')
+  })
+
+  it('marks confirm-blocked sends the same way', () => {
+    const plan = planWrite({
+      action: 'mail_send',
+      summary: 'send mail to a@example.com, b@example.com',
+      recipientCount: 2
+    })
+    const result = plannedWriteResult(plan)
+    expect(result.ok).toBe(false)
+    expect(result.planned).toBe(true)
+    expect(result.delivered).toBe(false)
+    expect(result.message).toContain('CONFIRMATION REQUIRED')
   })
 })
 
