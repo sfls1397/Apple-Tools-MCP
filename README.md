@@ -461,7 +461,11 @@ Two arguments are available on **every** write tool:
 | `mail_archive` | `message_id` or `file_path` | none |
 | `mail_trash` | `message_id` or `file_path` | **`confirm` required** |
 
-`body_format: "html"` sets Mail's `html content` and keeps a tag-stripped plain-text alternative in `content`; the default is plain text. HTML support is whatever Mail.app offers — if a Mail version rejects the property, the message still goes out as plain text.
+`body_format: "html"` sets Mail's `html content` after compose and keeps a tag-stripped plain-text alternative in the mailto body; the default is plain text. HTML support is whatever Mail.app offers — if a Mail version rejects the property, the message still goes out as plain text.
+
+**Plain compose is not quoted.** `mail_send` / `mail_draft` create the outgoing message with Mail's `mailto` command (native compose) instead of setting AppleScript `content` on `make new outgoing message`. On current Mail (Ventura+, FB11734014) that `content` path stores the body as a citation: every plain-text line prefixed with `>`, plus a `multipart/alternative` HTML part wrapped in `<blockquote type="cite">`. Desktop Mail often hides the bar with inline styles; iOS Mail paints the whole body purple with a left quote bar — even when the subject is not `Re:`/`Fwd:` and there is no `In-Reply-To`. Reply and forward still quote the original, which is expected.
+
+**Manual prove:** after install, `mail_send` a short plain message (no `Re:`/`Fwd:` subject). Inspect the Sent `.emlx`: the text/plain part must not prefix every body line with `>`, and the HTML alternative (if Mail generates one) must not wrap the whole body in `<blockquote>`.
 
 Emails are addressed by their RFC822 **Message-ID**. Pass `message_id`, or pass the `file_path` from `mail_search` / `mail_recent` and the server reads the Message-ID out of the `.emlx` headers for you. `mail_archive` moves the message to its account's Archive (or All Mail) mailbox; `mail_trash` moves it to that account's Trash.
 
