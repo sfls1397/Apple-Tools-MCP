@@ -225,6 +225,10 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('fail closed')
     expect(text).toContain('[readable] FDA ok')
     expect(text).not.toContain('WARN: Allow dialogs attach to process.execPath')
+    expect(text).toContain('Terminal.app')
+    expect(text).toContain('Do not start apple-tools-indexer')
+    expect(text).not.toMatch(/LaunchAgent/)
+    expect(text).not.toContain('write-bridge')
   })
 
   it('is idempotent when every surface is already granted', async () => {
@@ -271,6 +275,29 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('Allows attach HERE')
     expect(text).toContain(`${execPath} ${cli} permissions`)
     expect(text).toContain('$(which node) $(which apple-tools-mcp) permissions')
+  })
+
+  it('uses Mini write-bridge copy only when writer.sock is present', async () => {
+    const execPath = '/Users/petercoates/.local/node/bin/node'
+    const lines = []
+    await runPermissionsCommand({
+      execPath,
+      argv: [execPath, '/Users/petercoates/.local/node/bin/apple-tools-mcp', 'permissions'],
+      existsSync: (p) => String(p).endsWith('writer.sock'),
+      realpathSync: (p) => p,
+      version: '2.0.2',
+      stdout: (line) => lines.push(line),
+      probes: {
+        Contacts: () => ({ ok: false, kind: 'tcc', message: 'Contacts denied' }),
+        Calendar: () => ({ ok: true, message: 'Calendar ok' }),
+        Mail: () => ({ ok: true, message: 'Mail ok' }),
+        Messages: () => ({ ok: true, message: 'Messages ok' })
+      },
+      fdaProbe: () => ({ status: 'skipped', message: 'no FDA paths' })
+    })
+    const text = lines.join('\n')
+    expect(text).toContain('write-bridge / LaunchAgent')
+    expect(text).toContain('[missing] Contacts:')
   })
 })
 

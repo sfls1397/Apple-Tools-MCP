@@ -25,7 +25,10 @@ import {
   planWriteRoute,
   planAfterDelegation,
   isTccSensitiveWrite,
-  tccFallbackAdvice
+  tccFallbackAdvice,
+  hostAutomationAdvice,
+  terminalAutomationAdvice,
+  detectLaunchAgentContext
 } from '../../lib/writeRouting.js'
 import {
   classifyAppleScriptError,
@@ -182,14 +185,26 @@ describe('write routing policy', () => {
     expect(planAfterDelegation({ delivered: true, response: { ok: true, message: 'x' } }).fallbackLocal).toBe(false)
   })
 
-  it('advises starting the daemon when none is running', () => {
-    expect(tccFallbackAdvice({ bridgeAvailable: false })).toContain('apple-tools-indexer')
+  it('uses Terminal/Automation copy when no LaunchAgent / write bridge is present', () => {
+    const execPath = '/Users/peter/.nvm/versions/node/v22.21.1/bin/node'
+    const terminal = tccFallbackAdvice({ bridgeAvailable: false, execPath })
+    expect(terminal).toContain('Terminal.app')
+    expect(terminal).toContain('process.execPath')
+    expect(terminal).toContain(execPath)
+    expect(terminal).toContain('Automation')
+    expect(terminal).toContain('Do not start apple-tools-indexer')
+    expect(terminal).not.toMatch(/LaunchAgent/)
+    expect(terminal).not.toContain('Start apple-tools-indexer')
+    expect(hostAutomationAdvice({ launchAgent: false, execPath })).toBe(terminal)
+    expect(terminalAutomationAdvice(execPath)).toBe(terminal)
+    expect(detectLaunchAgentContext({ existsSync: () => false })).toBe(false)
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Full Disk Access')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Automation')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Do not add node via +')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Mail.app')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('Messages.app')
     expect(tccFallbackAdvice({ bridgeAvailable: true })).toContain('TCC / Automation denied')
+    expect(hostAutomationAdvice({ launchAgent: true })).toContain('write-bridge / LaunchAgent')
   })
 })
 
@@ -236,9 +251,9 @@ describe('TCC guidance separates reads from writes', () => {
     expect(CALENDAR_TCC_GUIDANCE).toContain('Full Disk Access or tccutil cannot change it')
   })
 
-  it('points Contacts and Calendar denials at the daemon', () => {
-    expect(CONTACTS_TCC_GUIDANCE).toContain('apple-tools-indexer')
-    expect(CALENDAR_TCC_GUIDANCE).toContain('apple-tools-indexer')
+  it('keeps Contacts and Calendar deny copy host-neutral (no Mini indexer)', () => {
+    expect(CONTACTS_TCC_GUIDANCE).not.toContain('apple-tools-indexer')
+    expect(CALENDAR_TCC_GUIDANCE).not.toContain('apple-tools-indexer')
     expect(tccGuidanceFor('mail')).toBe(MAIL_TCC_GUIDANCE)
     expect(tccGuidanceFor('messages')).toBe(MESSAGES_TCC_GUIDANCE)
     expect(tccGuidanceFor('other')).toBe(TCC_GUIDANCE)
@@ -299,8 +314,7 @@ describe('TCC guidance separates reads from writes', () => {
     expect(classifyAppleScriptError(message)).toBe('app_unavailable')
 
     expect(ATTRIBUTION_GUIDANCE).toContain('Automation / responsible-process')
-    expect(ATTRIBUTION_GUIDANCE).toContain('apple-tools-indexer')
-    expect(ATTRIBUTION_GUIDANCE).toContain('Terminal.app')
+    expect(ATTRIBUTION_GUIDANCE).not.toContain('apple-tools-indexer')
   })
 
   it('finds the first-party apps where macOS actually keeps them', () => {
