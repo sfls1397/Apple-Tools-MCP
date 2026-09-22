@@ -17,14 +17,15 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { isIndexerMode, isPermissionsMode } from '../../lib/processMode.js'
+import { isIndexerMode, isPermissionsMode, isHttpMode } from '../../lib/processMode.js'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 const CLI_BINS = {
   'apple-tools-mcp': 'bin/apple-tools-mcp.js',
-  'apple-tools-indexer': 'bin/apple-tools-indexer.js'
+  'apple-tools-indexer': 'bin/apple-tools-indexer.js',
+  'apple-tools-http': 'bin/apple-tools-http.js'
 }
 
 /** Mirror of npm's `@npmcli/package-json` `unixifyPath` + `secureAndUnixifyPath`. */
@@ -102,6 +103,9 @@ describe('npm 12 bin publish contract', () => {
 
     const indexerSrc = fs.readFileSync(path.join(root, CLI_BINS['apple-tools-indexer']), 'utf8')
     expect(indexerSrc).toContain('--mode=indexer')
+
+    const httpSrc = fs.readFileSync(path.join(root, CLI_BINS['apple-tools-http']), 'utf8')
+    expect(httpSrc).toContain('--transport=http')
   })
 
   it('fails if npm 12 normalize would strip or rewrite either bin', () => {
@@ -110,6 +114,7 @@ describe('npm 12 bin publish contract', () => {
     expect(changes.filter((c) => /invalid and removed|empty "bin" was removed/.test(c))).toEqual([])
     expect(bin['apple-tools-mcp']).toBe('bin/apple-tools-mcp.js')
     expect(bin['apple-tools-indexer']).toBe('bin/apple-tools-indexer.js')
+    expect(bin['apple-tools-http']).toBe('bin/apple-tools-http.js')
   })
 
   it('docs name both CLIs and the wrapper paths npm pack must keep', () => {
@@ -138,15 +143,19 @@ describe('npm 12 bin publish contract', () => {
       expect(packedPkg.bin).toEqual(CLI_BINS)
       expect(fs.existsSync(path.join(tmp, 'package', 'bin', 'apple-tools-mcp.js'))).toBe(true)
       expect(fs.existsSync(path.join(tmp, 'package', 'bin', 'apple-tools-indexer.js'))).toBe(true)
+      expect(fs.existsSync(path.join(tmp, 'package', 'bin', 'apple-tools-http.js'))).toBe(true)
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
   })
 
-  it('wrapper argv still distinguishes MCP, indexer, and permissions', () => {
+  it('wrapper argv still distinguishes MCP, indexer, http, and permissions', () => {
     expect(isIndexerMode(['node', path.join(root, CLI_BINS['apple-tools-indexer'])])).toBe(true)
     expect(isIndexerMode(['node', path.join(root, CLI_BINS['apple-tools-mcp'])])).toBe(false)
     expect(isPermissionsMode(['node', path.join(root, CLI_BINS['apple-tools-mcp']), 'permissions'])).toBe(true)
     expect(isIndexerMode(['node', path.join(root, CLI_BINS['apple-tools-indexer']), 'permissions'])).toBe(false)
+    expect(isHttpMode(['node', path.join(root, CLI_BINS['apple-tools-http'])])).toBe(true)
+    expect(isHttpMode(['node', path.join(root, CLI_BINS['apple-tools-mcp'])])).toBe(false)
+    expect(isHttpMode(['node', path.join(root, CLI_BINS['apple-tools-http']), 'permissions'])).toBe(false)
   })
 })

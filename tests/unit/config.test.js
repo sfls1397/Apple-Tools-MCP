@@ -7,12 +7,15 @@ import {
   resolveIndexInterval,
   loadResolvedIndexInterval,
   logResolvedInterval,
+  resolveHttpServerConfig,
   getAppleToolsDir,
   getConfigPath,
   DEFAULT_INDEX_INTERVAL_MS,
   MIN_INDEX_INTERVAL_MS,
   MAX_INDEX_INTERVAL_MS,
-  MINI_RECOMMENDED_INDEX_INTERVAL_MS
+  MINI_RECOMMENDED_INDEX_INTERVAL_MS,
+  DEFAULT_HTTP_HOST,
+  DEFAULT_HTTP_PORT
 } from '../../lib/config.js'
 
 describe('parseDuration', () => {
@@ -260,5 +263,51 @@ describe('logResolvedInterval', () => {
       { log: (msg) => lines.push(msg) }
     )
     expect(lines[0]).toContain('source=env, clamped')
+  })
+})
+
+describe('resolveHttpServerConfig precedence', () => {
+  it('uses product defaults when nothing is set', () => {
+    const result = resolveHttpServerConfig({ env: {}, fileData: {}, warn: () => {} })
+    expect(result.host).toBe(DEFAULT_HTTP_HOST)
+    expect(result.port).toBe(DEFAULT_HTTP_PORT)
+  })
+
+  it('reads httpHost and httpPort from config when env is unset', () => {
+    const result = resolveHttpServerConfig({
+      env: {},
+      fileData: { httpHost: '127.0.0.1', httpPort: 9000 },
+      warn: () => {}
+    })
+    expect(result.host).toBe('127.0.0.1')
+    expect(result.port).toBe(9000)
+  })
+
+  it('lets env vars override the config file', () => {
+    const result = resolveHttpServerConfig({
+      env: { APPLE_TOOLS_HTTP_HOST: '10.0.0.5', APPLE_TOOLS_HTTP_PORT: '9999' },
+      fileData: { httpHost: '127.0.0.1', httpPort: 9000 },
+      warn: () => {}
+    })
+    expect(result.host).toBe('10.0.0.5')
+    expect(result.port).toBe(9999)
+  })
+
+  it('falls back to the default port for an invalid value instead of throwing', () => {
+    const result = resolveHttpServerConfig({
+      env: {},
+      fileData: { httpPort: 'not-a-port' },
+      warn: () => {}
+    })
+    expect(result.port).toBe(DEFAULT_HTTP_PORT)
+  })
+
+  it('rejects out-of-range ports', () => {
+    const result = resolveHttpServerConfig({
+      env: {},
+      fileData: { httpPort: 70000 },
+      warn: () => {}
+    })
+    expect(result.port).toBe(DEFAULT_HTTP_PORT)
   })
 })
