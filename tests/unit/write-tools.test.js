@@ -153,6 +153,35 @@ afterEach(() => {
   resetSentVerifyClock()
 })
 
+function appleScriptHandler(src, name) {
+  const startTok = `on ${name}`
+  const endTok = `end ${name}`
+  const start = src.indexOf(startTok)
+  const end = src.indexOf(endTok, start)
+  expect(start).toBeGreaterThan(-1)
+  expect(end).toBeGreaterThan(start)
+  return src.slice(start, end + endTok.length)
+}
+
+function axTitleReadsInsideSystemEventsTell(block) {
+  const needle = 'value of attribute "AXTitle"'
+  expect(block).toContain(needle)
+  let from = 0
+  let hits = 0
+  while (true) {
+    const i = block.indexOf(needle, from)
+    if (i < 0) break
+    hits += 1
+    const prefix = block.slice(0, i)
+    const lastTell = prefix.lastIndexOf('tell application "System Events"')
+    const lastEnd = prefix.lastIndexOf('end tell')
+    expect(lastTell).toBeGreaterThan(-1)
+    expect(lastTell).toBeGreaterThan(lastEnd)
+    from = i + needle.length
+  }
+  expect(hits).toBeGreaterThan(0)
+}
+
 function isMailSentVerifyScript(script) {
   const s = String(script)
   return s.includes('return "SENT"') || s.includes('return "OUTBOX"') || s.includes('return "NOT_FOUND"')
@@ -627,6 +656,36 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler.indexOf('if atmAxVal is not ""', fillAt)).toBeLessThan(handler.indexOf('atmPasteMailBodyFallback(bodyText)', fillAt))
   })
 
+  it('wraps AXTitle reads inside System Events tell (2.1.4 Mini osacompile -2741)', () => {
+    const handler = buildMailBodyPasteHandler()
+    const bits = appleScriptHandler(handler, 'atmTopElemBits')
+    const exact = appleScriptHandler(handler, 'atmTopElemExactTitle')
+    expect(bits).toContain('tell application "System Events"')
+    expect(exact).toContain('tell application "System Events"')
+    expect(bits).toContain('set atmBits to atmBits & (value of attribute "AXTitle" of atmEl as string) & " "')
+    expect(exact).toContain('if (value of attribute "AXTitle" of atmEl as string) is atmMarker then return true')
+    axTitleReadsInsideSystemEventsTell(bits)
+    axTitleReadsInsideSystemEventsTell(exact)
+
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Status',
+      body: 'All good',
+      send: true
+    })
+    axTitleReadsInsideSystemEventsTell(appleScriptHandler(script, 'atmTopElemBits'))
+    axTitleReadsInsideSystemEventsTell(appleScriptHandler(script, 'atmTopElemExactTitle'))
+    expect(script).toContain('atmComposeFrameByTitle')
+    expect(script).toContain('AXUIElementCopyElementAtPosition')
+    expect(script).toContain('AXTextField')
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).not.toContain('atmTabIntoMailBody')
+    expect(script).not.toContain('click at')
+    expect(script).not.toContain('entire contents')
+  })
+
   it('types/pastes only after body focus, then refuses send if headers changed', () => {
     const script = buildComposeScript({
       to: ['a@example.com'],
@@ -769,6 +828,9 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(readme).toContain('Keystroke compose (2.1.0)')
     expect(readme).toContain('AX body-focus oracle (2.1.1)')
     expect(readme).toContain('Compose body hit-test (2.1.3)')
+    expect(readme).toContain('AXTitle compile (2.1.4)')
+    expect(readme).toContain('SOLUTION-PROBE-REPORT.md')
+    expect(readme).toContain('Compile prove (2.1.4 on the Mini host)')
     expect(readme).toContain('AXUIElementCopyElementAtPosition')
     expect(readme).toContain('BODY_FOCUS_FAILED')
     expect(readme).toContain('BODY_PASTE_MISDIRECTED')

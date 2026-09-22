@@ -626,3 +626,54 @@ describe('mail compose AX hit-test (2.1.3)', () => {
   })
 })
 
+describe('mail compose AXTitle compile (2.1.4)', () => {
+  function appleScriptHandler(src, name) {
+    const startTok = `on ${name}`
+    const endTok = `end ${name}`
+    const start = src.indexOf(startTok)
+    const end = src.indexOf(endTok, start)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    return src.slice(start, end + endTok.length)
+  }
+
+  function axTitleReadsInsideSystemEventsTell(block) {
+    const needle = 'value of attribute "AXTitle"'
+    expect(block).toContain(needle)
+    let from = 0
+    let hits = 0
+    while (true) {
+      const i = block.indexOf(needle, from)
+      if (i < 0) break
+      hits += 1
+      const prefix = block.slice(0, i)
+      const lastTell = prefix.lastIndexOf('tell application "System Events"')
+      const lastEnd = prefix.lastIndexOf('end tell')
+      expect(lastTell).toBeGreaterThan(-1)
+      expect(lastTell).toBeGreaterThan(lastEnd)
+      from = i + needle.length
+    }
+    expect(hits).toBeGreaterThan(0)
+  }
+
+  it('does not emit a bare AXTitle attribute read outside System Events tell', () => {
+    const handler = buildMailBodyPasteHandler()
+    axTitleReadsInsideSystemEventsTell(appleScriptHandler(handler, 'atmTopElemBits'))
+    axTitleReadsInsideSystemEventsTell(appleScriptHandler(handler, 'atmTopElemExactTitle'))
+    const script = buildComposeScript({
+      to: ['a@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi" & beep',
+      body: '" & do shell script "whoami" & "',
+      send: true
+    })
+    expect(script).not.toContain('do shell script "whoami"')
+    axTitleReadsInsideSystemEventsTell(appleScriptHandler(script, 'atmTopElemBits'))
+    axTitleReadsInsideSystemEventsTell(appleScriptHandler(script, 'atmTopElemExactTitle'))
+    expect(script).toContain('AXUIElementCopyElementAtPosition')
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).not.toContain('click at')
+  })
+})
+
