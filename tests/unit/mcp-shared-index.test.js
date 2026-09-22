@@ -514,9 +514,9 @@ describe('AC: regression / packaging / security', () => {
     expect(cacheSrc).toContain('skipIf(!sources.embedder)')
   })
 
-  it('package version is 2.1.3 and dependencies are unchanged', () => {
-    expect(pkg.version).toBe('2.1.3')
-    expect(lock.version).toBe('2.1.3')
+  it('package version is 2.1.4 and dependencies are unchanged', () => {
+    expect(pkg.version).toBe('2.1.4')
+    expect(lock.version).toBe('2.1.4')
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
       '@lancedb/lancedb',
       '@modelcontextprotocol/sdk',
