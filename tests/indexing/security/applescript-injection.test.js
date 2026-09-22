@@ -442,22 +442,26 @@ describe('AppleScript Injection Prevention', () => {
 })
 
 describe('mail compose paste focus (2.0.8)', () => {
-  it('does not type or paste until hit-test lands in the body', () => {
+  it('does not paste until focus is proven on the body web area', () => {
     const handler = buildMailBodyPasteHandler()
-    const hitAt = handler.indexOf('atmAxHitFill')
-    const typeAt = handler.indexOf('atmTypeMailBody')
-    const pasteAt = handler.indexOf('keystroke "v" using command down')
-    expect(hitAt).toBeGreaterThan(-1)
-    expect(typeAt).toBeGreaterThan(hitAt)
-    expect(pasteAt).toBeGreaterThan(typeAt)
+    const fillAt = handler.indexOf('on atmFillMailBody')
+    const proveAt = handler.indexOf('BODY_FOCUS_UNPROVEN', fillAt)
+    const selectAt = handler.indexOf('keystroke "a" using command down', fillAt)
+    const pasteAt = handler.indexOf('keystroke "v" using command down', fillAt)
+    expect(fillAt).toBeGreaterThan(-1)
+    expect(proveAt).toBeGreaterThan(fillAt)
+    expect(selectAt).toBeGreaterThan(proveAt)
+    expect(pasteAt).toBeGreaterThan(selectAt)
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).not.toMatch(/\bweb area\b/)
     expect(handler).toContain('AXWebArea')
-    expect(handler).toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).toContain('set focused of atmBody to true')
+    expect(handler).not.toContain('atmAxHitFill')
+    expect(handler).not.toContain('AXUIElementSetAttributeValue')
     expect(handler).not.toContain('atmSafeToPaste')
     expect(handler).not.toContain('count of windows')
     expect(handler).not.toContain('click at')
-    expect(handler).not.toContain('entire contents')
+    expect(handler).toContain('entire contents')
     expect(handler).not.toMatch(/content of msg/)
   })
 
@@ -477,6 +481,7 @@ describe('mail compose paste focus (2.0.8)', () => {
     expect(deleteAt).toBeGreaterThan(pasteAt)
     expect(sendAt).toBeGreaterThan(deleteAt)
     expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_FOCUS_UNPROVEN')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
   })
 
@@ -524,13 +529,14 @@ end atmFocusedElement`
 
     const handler = buildMailBodyPasteHandler()
     expect(handler).toContain(focused)
-    expect(handler).toContain('atmAxHitFill')
+    expect(handler).toContain('set focused of atmBody to true')
     expect(handler).toContain('atmAxFocusedValue')
-    expect(handler).toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).toContain('AXFocusedUIElement')
+    expect(handler).not.toContain('AXUIElementSetAttributeValue')
     expect(handler).not.toMatch(/\bfocused UI element\b/)
     expect(handler).not.toMatch(/\bweb area\b/)
     expect(handler).not.toContain('click at')
-    expect(handler).not.toContain('entire contents')
+    expect(handler).toContain('entire contents')
     expect(handler).not.toContain('do shell script')
 
     const script = buildComposeScript({
@@ -547,6 +553,7 @@ end atmFocusedElement`
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).not.toMatch(/content:/)
     expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_FOCUS_UNPROVEN')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
   })
 })
@@ -577,7 +584,7 @@ describe('mail compose reserved AppleScript identifiers (2.0.10)', () => {
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('BODY_FOCUS_FAILED')
     expect(script).toContain('BODY_PASTE_MISDIRECTED')
-    expect(handler).toContain('atmEndPos')
+    expect(handler).toContain('atmSaveBx')
   })
 })
 
@@ -598,19 +605,22 @@ describe('System Events permissions probe (2.1.2)', () => {
   })
 })
 
-describe('mail compose AX hit-test (2.1.3)', () => {
-  it('embeds the Mini-proven coordinate hit-test and never deep-walks or clicks', () => {
+describe('mail compose Probe 3 focus paste (2.1.5)', () => {
+  it('proves AXWebArea focus and pastes without a coordinate click or AXValue write', () => {
     const handler = buildMailBodyPasteHandler()
-    expect(handler).toContain('AXUIElementCopyElementAtPosition')
-    expect(handler).toContain('atmComposeFrameByTitle')
-    expect(handler).toContain('message body')
-    expect(handler).toContain('AXTextField')
+    expect(handler).toContain('set focused of atmBody to true')
+    expect(handler).toContain('entire contents of atmWin')
+    expect(handler).toContain('AXWebArea')
     expect(handler).toContain('BODY_FOCUS_FAILED')
+    expect(handler).toContain('BODY_FOCUS_UNPROVEN')
+    expect(handler).toContain('character id 65532')
     expect(handler).not.toContain('click at')
-    expect(handler).not.toContain('entire contents')
+    expect(handler).not.toContain('AXUIElementCopyElementAtPosition')
+    expect(handler).not.toContain('AXUIElementSetAttributeValue')
     expect(handler).not.toContain('UI elements of atmEl')
     expect(handler).not.toContain('atmTabIntoMailBody')
     expect(handler).not.toContain('do shell script')
+    expect(handler).not.toContain('VALUE_MISS')
     const script = buildComposeScript({
       to: ['a@example.com'],
       cc: [],
@@ -621,8 +631,9 @@ describe('mail compose AX hit-test (2.1.3)', () => {
     })
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('atmFillMailBody')
-    expect(script).toContain('AXUIElementCopyElementAtPosition')
+    expect(script).toContain('if my atmFocusedIsProvenBody()')
     expect(script).not.toContain('click at')
+    expect(script).not.toContain('AXUIElementSetAttributeValue')
   })
 })
 
@@ -671,9 +682,11 @@ describe('mail compose AXTitle compile (2.1.4)', () => {
     expect(script).not.toContain('do shell script "whoami"')
     axTitleReadsInsideSystemEventsTell(appleScriptHandler(script, 'atmTopElemBits'))
     axTitleReadsInsideSystemEventsTell(appleScriptHandler(script, 'atmTopElemExactTitle'))
-    expect(script).toContain('AXUIElementCopyElementAtPosition')
+    expect(script).toContain('entire contents')
     expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_FOCUS_UNPROVEN')
     expect(script).not.toContain('click at')
+    expect(script).not.toContain('AXUIElementSetAttributeValue')
   })
 })
 
