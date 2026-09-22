@@ -374,6 +374,69 @@ launchctl load ~/Library/LaunchAgents/com.apple-tools-mcp.indexer.plist
 
 KeepAlive belongs on this indexer job only — not on the MCP stdio process.
 
+## Remote HTTP transport (v3.0.0)
+
+Every tool the stdio server exposes — including the write tools — is also
+available over **Streamable HTTP**, so it's reachable from other machines,
+not just whatever process spawned it locally. This is additive: stdio still
+works exactly as before for local same-machine MCP clients that spawn it
+directly. HTTP is for reaching the same tools from elsewhere — another
+machine on your LAN, or (via Tailscale) your phone.
+
+Because HTTP reaches beyond "whoever spawned this process," which stdio's
+trust model relies on, **every HTTP request needs a bearer token.** stdio
+has no equivalent check — a locally spawned child process is already
+trusted by whoever spawned it.
+
+**Entrypoint:** `node index.js --transport=http`  
+**Convenience bin:** `apple-tools-http` (`bin/apple-tools-http.js`; npm global install provides it)  
+**npm script (clone only):** `npm run http`
+
+### Auth token
+
+The token is a random secret generated on first run and stored in the
+macOS Keychain (service `apple-tools-mcp-http`) — never in a config file,
+the repo, or logs after the one-time generation banner. There's no external
+account and no cost; it's a self-issued password, like an SSH key.
+
+```bash
+apple-tools-mcp http-token   # prints the token, generating one first if needed
+```
+
+Clients send it as `Authorization: Bearer <token>`. Rotate it by deleting
+the Keychain item and restarting the server (it generates a fresh one on
+the next run), then update every client using the old value.
+
+### Config
+
+`~/.apple-tools-mcp/config.json` (same file the index interval uses):
+
+```json
+{
+  "httpHost": "0.0.0.0",
+  "httpPort": 8421
+}
+```
+
+Env overrides: `APPLE_TOOLS_HTTP_HOST`, `APPLE_TOOLS_HTTP_PORT`. Default
+port is 8421 (the indexer's stdio process needs no port; this is only for
+`--transport=http`).
+
+### LaunchAgent
+
+See `examples/com.apple-tools-http.plist` (copy to
+`~/Library/LaunchAgents/`, replace the `REPLACE_ME*` placeholders the same
+way as the indexer plist above, then `launchctl load` it). Runs alongside
+the indexer LaunchAgent, not instead of it — the HTTP server is a second,
+independent process.
+
+### Wiring up clients
+
+See `examples/mcp-client.json` for the full walkthrough. Short version:
+
+- **Same machine or LAN** (Claude Code, Codex, or any other MCP client that supports an HTTP server entry): `claude mcp add --transport http apple-tools http://<host>:8421/mcp -H "Authorization: Bearer $(apple-tools-mcp http-token)" -s user`
+- **iPhone, via Tailscale** (Claude / ChatGPT custom connectors): add through each app's web-based connector settings first (mobile apps don't support adding a new remote MCP server directly), pointing at `http://<tailscale-ip>:8421/mcp` with the same bearer token. Requires Tailscale running on both the host and the phone — this is never exposed to the public internet, only to devices in your own tailnet.
+
 ## Available Tools
 
 Once configured, your MCP client can use these tools:
