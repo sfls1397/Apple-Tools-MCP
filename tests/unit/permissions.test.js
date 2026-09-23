@@ -47,7 +47,7 @@ describe('permissions command wiring', () => {
     expect(indexSrc).toContain('argv: process.argv')
     expect(indexSrc).toContain('PERMISSIONS_MODE')
     expect(indexSrc).toContain('version: PACKAGE_VERSION')
-    expect(indexSrc).toContain('!PERMISSIONS_MODE && shouldConnectMcpStdio')
+    expect(indexSrc).toContain('!PERMISSIONS_MODE && !HTTP_TOKEN_MODE && shouldConnectMcpStdio')
     expect(indexSrc).toContain('const wasRunning = Boolean(indexTimer || progressCheckTimer)')
     expect(indexSrc).toMatch(/if \(PERMISSIONS_MODE\) \{[\s\S]*runPermissionsCommand/)
     expect(indexSrc).toMatch(/if \(PERMISSIONS_MODE\) \{[\s\S]*initializeIndexing/)

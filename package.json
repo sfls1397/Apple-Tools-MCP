@@ -1,12 +1,14 @@
 {
   "name": "apple-tools-mcp",
-  "version": "2.1.5",
-  "description": "MCP server for semantic search and write actions across Apple Mail, Messages, Calendar, and Contacts",
+  "version": "3.0.0",
+  "description": "MCP server for semantic search and write actions across Apple Mail, Messages, Calendar, and Contacts. Speaks stdio (local) or bearer-token-authenticated Streamable HTTP (LAN / Tailscale).",
   "type": "module",
   "main": "index.js",
   "bin": {
     "apple-tools-mcp": "bin/apple-tools-mcp.js",
-    "apple-tools-indexer": "bin/apple-tools-indexer.js"
+    "apple-tools-indexer": "bin/apple-tools-indexer.js",
+    "apple-tools-http": "bin/apple-tools-http.js",
+    "apple-tools-http-proxy": "bin/apple-tools-http-proxy.js"
   },
   "author": "Peter Coates",
   "license": "MIT",
@@ -28,7 +30,10 @@
     "messages",
     "imessage",
     "semantic-search",
-    "macos"
+    "macos",
+    "streamable-http",
+    "remote-mcp",
+    "tailscale"
   ],
   "engines": {
     "node": ">=18.0.0"
@@ -46,6 +51,7 @@
     "contacts.js",
     "lib/",
     "bin/",
+    "examples/",
     "scripts/audit-index.js",
     "scripts/smoke-writes.js",
     "scripts/postinstall.js",
@@ -56,6 +62,8 @@
     "start": "node index.js",
     "indexer": "node index.js --mode=indexer",
     "permissions": "node index.js permissions",
+    "http": "node index.js --transport=http",
+    "http-token": "node index.js http-token",
     "postinstall": "node scripts/postinstall.js",
     "build-index": "node -e \"import('./indexer.js').then(i=>i.rebuildIndex()).catch(e=>{console.error(e.message);process.exit(1)})\"",
     "audit": "node scripts/audit-index.js",
@@ -82,14 +90,14 @@
     "perf:dates": "vitest run tests/perf/date-parsing.perf.test.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "@lancedb/lancedb": "^0.22.3",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@xenova/transformers": "^2.17.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "chrono-node": "^2.9.0"
   },
   "devDependencies": {
-    "vitest": "^2.1.0",
     "@vitest/coverage-v8": "^2.1.0",
-    "fast-check": "^3.22.0"
+    "fast-check": "^3.22.0",
+    "vitest": "^2.1.0"
   }
 }

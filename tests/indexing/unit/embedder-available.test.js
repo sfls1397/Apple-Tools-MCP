@@ -1,5 +1,5 @@
 /**
- * Real Xenova/sharp idx tests must skip on Linux (and any host without
+ * Real Transformers.js/sharp idx tests must skip on Linux (and any host without
  * the platform sharp native). This package is darwin-only.
  */
 

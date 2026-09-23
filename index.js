@@ -2,17 +2,21 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import http from "http";
 import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
 import { cycleEndFlags, indexUnavailableMessage, indexQueryGate } from "./lib/indexGate.js";
-import { isIndexerMode, isPermissionsMode } from "./lib/processMode.js";
+import { isIndexerMode, isPermissionsMode, isHttpMode, isHttpTokenMode } from "./lib/processMode.js";
 import { runPermissionsCommand } from "./lib/permissions.js";
-import { loadResolvedIndexInterval, logResolvedInterval } from "./lib/config.js";
+import { loadResolvedIndexInterval, logResolvedInterval, resolveHttpServerConfig } from "./lib/config.js";
+import { loadOrCreateHttpAuthToken, verifyAuthHeader } from "./lib/httpAuth.js";
+import { createHttpRequestHandler } from "./lib/httpTransport.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
 import {
   shouldConnectMcpStdio,
@@ -40,8 +44,13 @@ const PACKAGE_VERSION = JSON.parse(
 
 // Canonical indexer entrypoint: `node index.js --mode=indexer` or `apple-tools-indexer`.
 // Permissions CLI: `apple-tools-mcp permissions` — short-lived, no MCP / indexer.
+// HTTP transport: `node index.js --transport=http` or `apple-tools-http` — same
+// tools as stdio, but bearer-token authenticated (see lib/httpAuth.js).
+// Token CLI: `apple-tools-mcp http-token` — short-lived, prints the token.
 const PERMISSIONS_MODE = isPermissionsMode();
 const INDEXER_MODE = isIndexerMode();
+const HTTP_MODE = isHttpMode();
+const HTTP_TOKEN_MODE = isHttpTokenMode();
 const resolvedIndexInterval = loadResolvedIndexInterval();
 const INDEX_INTERVAL = resolvedIndexInterval.ms;
 const LOCK_HEARTBEAT_MS = DEFAULT_LOCK_HEARTBEAT_MS;
@@ -153,9 +162,10 @@ process.on("unhandledRejection", (reason, promise) => {
   shutdownIndexing(1);
 });
 
-// MCP stdio clients exit when the host closes stdin. The indexer daemon must
-// not — LaunchAgent / KeepAlive often attaches stdin to /dev/null.
-bindStdinCloseExit(process.stdin, INDEXER_MODE || PERMISSIONS_MODE, () => {
+// MCP stdio clients exit when the host closes stdin. The indexer daemon,
+// HTTP server, and short-lived CLIs must not — LaunchAgent / KeepAlive
+// often attaches stdin to /dev/null, and the CLIs exit on their own.
+bindStdinCloseExit(process.stdin, INDEXER_MODE || PERMISSIONS_MODE || HTTP_MODE || HTTP_TOKEN_MODE, () => {
   console.error("Client disconnected. Exiting.");
   shutdownIndexing(0);
 });
@@ -458,6 +468,18 @@ if (PERMISSIONS_MODE) {
     console.error(`Permissions command error: ${e.message}`);
     process.exit(1);
   });
+} else if (HTTP_TOKEN_MODE) {
+  try {
+    // Token itself goes to stdout only, so `apple-tools-mcp http-token` is
+    // scriptable (`$(apple-tools-mcp http-token)`). Any one-time generation
+    // banner still goes to stderr from loadOrCreateHttpAuthToken() itself.
+    const { token } = loadOrCreateHttpAuthToken();
+    console.log(token);
+    process.exit(0);
+  } catch (e) {
+    console.error(`Could not read/create HTTP auth token: ${e.message}`);
+    process.exit(1);
+  }
 } else {
   initializeIndexing().catch((e) => {
     console.error(`Indexing startup failed: ${e.message}`);
@@ -1036,561 +1058,566 @@ function formatPersonSearchResults(results) {
 
 // ============ MCP SERVER SETUP ============
 
-const server = new Server(
-  { name: "apple-tools-mcp", version: PACKAGE_VERSION },
-  { capabilities: { tools: {} } }
-);
+function createServer() {
+  const server = new Server(
+    { name: "apple-tools-mcp", version: PACKAGE_VERSION },
+    { capabilities: { tools: {} } }
+  );
 
-// Define available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    // ============ SMART SEARCH (AGENTIC) ============
-    {
-      name: "smart_search",
-      description: "Intelligent search across Mail, Messages, and Calendar. Automatically determines which sources to search based on your query. Returns results grouped by time when multiple sources match. Use this for complex queries that might span multiple data sources.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Natural language search query (e.g., 'meeting with John', 'budget discussion', 'what happened yesterday')" },
-          limit: { type: "number", description: "Max results per source (default 5)" },
-          synthesize: { type: "boolean", description: "Group results by time proximity (default true)" }
-        },
-        required: ["query"],
-      },
-    },
-
-    // ============ EMAIL TOOLS ============
-    {
-      name: "mail_search",
-      description: "Semantic search for emails using AI embeddings. Finds emails by meaning, not just keywords. Supports filtering by sender, recipient, attachments, mailbox, sent/received, and flagged.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Natural language search (e.g., 'invoices', 'meeting notes', 'from John about project')" },
-          limit: { type: "number", description: "Maximum results (default 30)" },
-          days_back: { type: "number", description: "Only emails from last N days (0 = all time)" },
-          sender: { type: "string", description: "Filter by sender name or email address" },
-          recipient: { type: "string", description: "Filter by recipient name or email address" },
-          has_attachment: { type: "boolean", description: "Filter to only emails with attachments (true) or without (false)" },
-          mailbox: { type: "string", description: "Filter by mailbox name (e.g., 'INBOX', 'Archive', 'Sent Messages')" },
-          sent_only: { type: "boolean", description: "true = only sent emails, false = only received emails, omit for all" },
-          flagged_only: { type: "boolean", description: "Only show flagged/starred emails" },
-          include_junk: { type: "boolean", description: "Include emails from Junk/Trash folders (excluded by default)" },
-          sort_by: { type: "string", enum: ["relevance", "date"], description: "Sort by relevance (default) or date (newest first)" }
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "mail_recent",
-      description: "Get most recent emails without semantic search. Use this when the user asks for 'recent emails', 'latest emails', 'what emails did I get', or 'unread emails'.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Maximum results (default 30)" },
-          days_back: { type: "number", description: "Only emails from last N days (default 7)" },
-          unread_only: { type: "boolean", description: "Only show unread emails (queries Mail.app for read status)" },
-          include_junk: { type: "boolean", description: "Include emails from Junk/Trash folders (excluded by default)" }
-        },
-      },
-    },
-    {
-      name: "mail_date",
-      description: "Get all emails from a specific date. Supports natural language like 'today', 'yesterday', 'November 13', 'last Friday'. Use this when the user asks for emails on a specific date.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          date: { type: "string", description: "Date to retrieve emails (e.g., 'today', 'yesterday', 'Nov 13', '2025-01-15')" },
-          include_junk: { type: "boolean", description: "Include emails from Junk/Trash folders (excluded by default)" }
-        },
-        required: ["date"],
-      },
-    },
-    {
-      name: "mail_read",
-      description: "Read full email content. Use the file_path from mail_search or mail_recent results.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          file_path: { type: "string", description: "File path from mail_search results" },
-        },
-        required: ["file_path"],
-      },
-    },
-
-    // ============ MESSAGES TOOLS ============
-    {
-      name: "messages_search",
-      description: "Semantic search for iMessages/SMS using AI embeddings. Finds messages by meaning. Supports filtering by contact, group chats, specific group name, and attachments.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Natural language search (e.g., 'dinner plans', 'about the trip', 'address')" },
-          limit: { type: "number", description: "Maximum results (default 30)" },
-          days_back: { type: "number", description: "Only messages from last N days (0 = all time)" },
-          contact: { type: "string", description: "Filter by contact name or phone number" },
-          group_chat_only: { type: "boolean", description: "Only show messages from group chats" },
-          group_chat_name: { type: "string", description: "Filter by specific group chat name" },
-          has_attachment: { type: "boolean", description: "Filter to messages with attachments (photos, files)" },
-          sort_by: { type: "string", enum: ["relevance", "date"], description: "Sort by relevance (default) or date (newest first)" }
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "messages_recent",
-      description: "Get most recent messages without semantic search. Use this when the user asks for 'recent messages', 'latest texts', or 'what messages did I get'.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Maximum results (default 30)" },
-          days_back: { type: "number", description: "Only messages from last N days (default 1)" }
-        },
-      },
-    },
-    {
-      name: "messages_conversation",
-      description: "Get full conversation history with a specific contact. Shows messages in chronological order.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          contact: { type: "string", description: "Contact name or phone number" },
-          limit: { type: "number", description: "Maximum messages to return (default 50)" }
-        },
-        required: ["contact"],
-      },
-    },
-
-    // ============ CALENDAR TOOLS ============
-    {
-      name: "calendar_search",
-      description: "Semantic search for calendar events using AI embeddings. Finds events by meaning. Supports filtering by calendar name and all-day events.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Natural language search (e.g., 'meetings', 'doctor appointments', 'lunch')" },
-          limit: { type: "number", description: "Maximum results (default 30)" },
-          days_back: { type: "number", description: "Include events from last N days (0 = none)" },
-          days_ahead: { type: "number", description: "Include events in next N days (0 = none). Use for 'today', 'this week', etc." },
-          calendar_name: { type: "string", description: "Filter to specific calendar (e.g., 'Work', 'Personal')" },
-          all_day_only: { type: "boolean", description: "Only show all-day events" },
-          sort_by: { type: "string", enum: ["relevance", "date"], description: "Sort by relevance (default) or date (chronological)" }
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "calendar_date",
-      description: "Get all events on a specific date. Supports natural language dates like 'today', 'tomorrow', 'next Tuesday', 'Jan 15'.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          date: { type: "string", description: "Date to check (e.g., 'today', 'tomorrow', 'next Monday', '2025-01-15')" }
-        },
-        required: ["date"],
-      },
-    },
-    {
-      name: "calendar_free_time",
-      description: "Find free time slots on a specific date. Analyzes calendar to find available time windows.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          date: { type: "string", description: "Date to check (e.g., 'today', 'tomorrow', 'next Monday')" },
-          start_hour: { type: "number", description: "Start of working hours (default 9 = 9 AM)" },
-          end_hour: { type: "number", description: "End of working hours (default 17 = 5 PM)" },
-          calendar_name: { type: "string", description: "Only consider events from this calendar" }
-        },
-        required: ["date"],
-      },
-    },
-
-    // ============ NEW TOOLS - PHASE 1 ============
-
-    // Mail tools
-    {
-      name: "mail_senders",
-      description: "List most frequent email senders. Helps identify who you communicate with most.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Maximum senders to return (default 30)" },
-          days_back: { type: "number", description: "Only count emails from last N days (0 = all time)" },
-          include_junk: { type: "boolean", description: "Include senders from Junk/Trash folders (excluded by default)" }
-        },
-      },
-    },
-    {
-      name: "rebuild_index",
-      description: "Rebuild the search index for one or more data sources. This clears the existing index and re-indexes all content from scratch. Use this if search results are stale, missing, or if the index is corrupted. Can rebuild emails, messages, calendar, or all sources at once.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sources: {
-            type: "array",
-            items: { type: "string", enum: ["emails", "messages", "calendar"] },
-            description: "Which sources to rebuild. Defaults to all sources if not specified."
-          }
-        },
-      },
-    },
-    {
-      name: "audit_index",
-      description: "Audit search index against source data with 0% tolerance. Reports missing items, orphaned entries, and duplicates with detailed file paths and remediation suggestions. Validates 100% of source data.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sources: {
-            type: "array",
-            items: { type: "string", enum: ["emails", "messages", "calendar"] },
-            description: "Data sources to audit (default: all)"
+  // Define available tools
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      // ============ SMART SEARCH (AGENTIC) ============
+      {
+        name: "smart_search",
+        description: "Intelligent search across Mail, Messages, and Calendar. Automatically determines which sources to search based on your query. Returns results grouped by time when multiple sources match. Use this for complex queries that might span multiple data sources.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Natural language search query (e.g., 'meeting with John', 'budget discussion', 'what happened yesterday')" },
+            limit: { type: "number", description: "Max results per source (default 5)" },
+            synthesize: { type: "boolean", description: "Group results by time proximity (default true)" }
           },
-          max_items: {
-            type: "number",
-            description: "Max items to list per category (default: 100, use 0 for unlimited)"
-          }
+          required: ["query"],
         },
       },
-    },
 
-    // Messages tools
-    {
-      name: "messages_contacts",
-      description: "List all contacts you've messaged, sorted by most recent. Shows message count and last message date.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Maximum contacts to return (default 50)" }
+      // ============ EMAIL TOOLS ============
+      {
+        name: "mail_search",
+        description: "Semantic search for emails using AI embeddings. Finds emails by meaning, not just keywords. Supports filtering by sender, recipient, attachments, mailbox, sent/received, and flagged.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Natural language search (e.g., 'invoices', 'meeting notes', 'from John about project')" },
+            limit: { type: "number", description: "Maximum results (default 30)" },
+            days_back: { type: "number", description: "Only emails from last N days (0 = all time)" },
+            sender: { type: "string", description: "Filter by sender name or email address" },
+            recipient: { type: "string", description: "Filter by recipient name or email address" },
+            has_attachment: { type: "boolean", description: "Filter to only emails with attachments (true) or without (false)" },
+            mailbox: { type: "string", description: "Filter by mailbox name (e.g., 'INBOX', 'Archive', 'Sent Messages')" },
+            sent_only: { type: "boolean", description: "true = only sent emails, false = only received emails, omit for all" },
+            flagged_only: { type: "boolean", description: "Only show flagged/starred emails" },
+            include_junk: { type: "boolean", description: "Include emails from Junk/Trash folders (excluded by default)" },
+            sort_by: { type: "string", enum: ["relevance", "date"], description: "Sort by relevance (default) or date (newest first)" }
+          },
+          required: ["query"],
         },
       },
-    },
-
-    // Calendar tools
-    {
-      name: "calendar_upcoming",
-      description: "Get next N upcoming events across all calendars. Simpler than calendar_search for quick schedule overview.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Maximum events to return (default 10)" }
+      {
+        name: "mail_recent",
+        description: "Get most recent emails without semantic search. Use this when the user asks for 'recent emails', 'latest emails', 'what emails did I get', or 'unread emails'.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum results (default 30)" },
+            days_back: { type: "number", description: "Only emails from last N days (default 7)" },
+            unread_only: { type: "boolean", description: "Only show unread emails (queries Mail.app for read status)" },
+            include_junk: { type: "boolean", description: "Include emails from Junk/Trash folders (excluded by default)" }
+          },
         },
       },
-    },
-
-    // ============ NEW TOOLS - PHASE 2 ============
-
-    {
-      name: "calendar_week",
-      description: "Get all events for the current week or a future week. Shows events grouped by day.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          week_offset: { type: "number", description: "0 = this week, 1 = next week, 2 = week after, etc. (default 0)" }
+      {
+        name: "mail_date",
+        description: "Get all emails from a specific date. Supports natural language like 'today', 'yesterday', 'November 13', 'last Friday'. Use this when the user asks for emails on a specific date.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "Date to retrieve emails (e.g., 'today', 'yesterday', 'Nov 13', '2025-01-15')" },
+            include_junk: { type: "boolean", description: "Include emails from Junk/Trash folders (excluded by default)" }
+          },
+          required: ["date"],
         },
       },
-    },
-    // ============ NEW TOOLS - PHASE 3 ============
-
-    {
-      name: "mail_thread",
-      description: "Get all emails in a conversation thread. Finds related emails by matching subject lines.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          file_path: { type: "string", description: "File path to any email in the thread" },
-          limit: { type: "number", description: "Maximum emails to return (default 30)" }
-        },
-        required: ["file_path"],
-      },
-    },
-    {
-      name: "calendar_recurring",
-      description: "List recurring events (events that appear multiple times). Shows upcoming occurrences.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Maximum recurring events to return (default 30)" }
+      {
+        name: "mail_read",
+        description: "Read full email content. Use the file_path from mail_search or mail_recent results.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            file_path: { type: "string", description: "File path from mail_search results" },
+          },
+          required: ["file_path"],
         },
       },
-    },
 
-    // ============ CONTACTS TOOLS ============
-
-    {
-      name: "contacts_search",
-      description: "Search your contacts by name, email, phone, or organization. Returns matching contacts with all their details.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search query (e.g., 'John', 'Acme Corp', 'john@example.com')" },
-          limit: { type: "number", description: "Maximum results (default 30)" }
+      // ============ MESSAGES TOOLS ============
+      {
+        name: "messages_search",
+        description: "Semantic search for iMessages/SMS using AI embeddings. Finds messages by meaning. Supports filtering by contact, group chats, specific group name, and attachments.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Natural language search (e.g., 'dinner plans', 'about the trip', 'address')" },
+            limit: { type: "number", description: "Maximum results (default 30)" },
+            days_back: { type: "number", description: "Only messages from last N days (0 = all time)" },
+            contact: { type: "string", description: "Filter by contact name or phone number" },
+            group_chat_only: { type: "boolean", description: "Only show messages from group chats" },
+            group_chat_name: { type: "string", description: "Filter by specific group chat name" },
+            has_attachment: { type: "boolean", description: "Filter to messages with attachments (photos, files)" },
+            sort_by: { type: "string", enum: ["relevance", "date"], description: "Sort by relevance (default) or date (newest first)" }
+          },
+          required: ["query"],
         },
-        required: ["query"],
       },
-    },
-    {
-      name: "contacts_lookup",
-      description: "Look up a specific contact by email, phone number, or name. Returns full contact details including all emails and phone numbers.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          identifier: { type: "string", description: "Email address, phone number, or name to look up" }
+      {
+        name: "messages_recent",
+        description: "Get most recent messages without semantic search. Use this when the user asks for 'recent messages', 'latest texts', or 'what messages did I get'.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum results (default 30)" },
+            days_back: { type: "number", description: "Only messages from last N days (default 1)" }
+          },
         },
-        required: ["identifier"],
       },
-    },
-    {
-      name: "person_search",
-      description: "Search ALL communication with a specific person across Mail, Messages, and Calendar. Automatically finds their emails and phone numbers from Contacts to search all sources.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Person's name to search for (will resolve to all their email addresses and phone numbers)" },
-          limit: { type: "number", description: "Maximum results per source (default 10)" }
+      {
+        name: "messages_conversation",
+        description: "Get full conversation history with a specific contact. Shows messages in chronological order.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            contact: { type: "string", description: "Contact name or phone number" },
+            limit: { type: "number", description: "Maximum messages to return (default 50)" }
+          },
+          required: ["contact"],
         },
-        required: ["name"],
       },
-    },
 
-    // ============ WRITE TOOLS (2.0.0) ============
-    // Mail / Messages / Calendar / Contacts writes with dry_run + confirm.
-    ...WRITE_TOOL_DEFINITIONS,
-  ],
-}));
-
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  try {
-    let result;
-
-    // Writes never wait on the vector index: they talk to Mail / Messages /
-    // Calendar / Contacts directly and must keep working while the indexer
-    // daemon holds the lock.
-    if (isWriteTool(name)) {
-      const writeResult = await dispatchWriteTool(name, args || {}, {
-        indexerMode: INDEXER_MODE,
-        socketPath: WRITE_SOCKET_PATH,
-        log: (msg) => console.error(msg)
-      });
-      return mcpWriteResult(writeResult);
-    }
-
-    switch (name) {
-      // Smart search (agentic)
-      case "smart_search":
-        result = await smartSearch(args.query, {
-          limit: validateLimit(args?.limit, 5, 100),
-          synthesize: args?.synthesize !== false
-        });
-        break;
-
-      // Email tools
-      case "mail_search":
-        result = await mailSearch(args.query, {
-          limit: validateLimit(args?.limit, 30),
-          daysBack: validateDaysBack(args?.days_back),
-          sender: args?.sender || null,
-          recipient: args?.recipient || null,
-          hasAttachment: args?.has_attachment ?? null,
-          mailbox: args?.mailbox || null,
-          sentOnly: args?.sent_only ?? null,
-          flaggedOnly: args?.flagged_only || false,
-          includeJunk: args?.include_junk || false,
-          sortBy: args?.sort_by || "relevance"
-        });
-        break;
-
-      case "mail_recent":
-        result = await mailRecent(
-          validateLimit(args?.limit, 30),
-          validateDaysBack(args?.days_back) || 7,
-          args?.unread_only || false,
-          args?.include_junk || false
-        );
-        break;
-
-      case "mail_date":
-        result = await mailDate(args.date, args?.include_junk || false);
-        break;
-
-      case "mail_read":
-        result = readFullEmail(args.file_path);
-        break;
-
-      // Messages tools
-      case "messages_search":
-        result = await messagesSearch(args.query, {
-          limit: validateLimit(args?.limit, 30),
-          daysBack: validateDaysBack(args?.days_back),
-          contact: args?.contact || null,
-          groupChatOnly: args?.group_chat_only || false,
-          groupChatName: args?.group_chat_name || null,
-          hasAttachment: args?.has_attachment ?? null,
-          sortBy: args?.sort_by || "relevance"
-        });
-        break;
-
-      case "messages_recent":
-        result = await messagesRecent(
-          validateLimit(args?.limit, 30),
-          validateDaysBack(args?.days_back) || 1
-        );
-        break;
-
-      case "messages_conversation":
-        result = await messagesConversation(args.contact, validateLimit(args?.limit, 50));
-        break;
-
-      // Calendar tools
-      case "calendar_search":
-        result = await calendarSearch(args.query, {
-          limit: validateLimit(args?.limit, 30),
-          daysBack: validateDaysBack(args?.days_back),
-          daysAhead: validateDaysBack(args?.days_ahead),
-          calendarName: args?.calendar_name || null,
-          allDayOnly: args?.all_day_only || false,
-          sortBy: args?.sort_by || "relevance"
-        });
-        break;
-
-      case "calendar_date":
-        result = await calendarDate(args.date);
-        break;
-
-      case "calendar_free_time":
-        result = await calendarFreeTime(args.date, {
-          startHour: args?.start_hour || 9,
-          endHour: args?.end_hour || 17,
-          calendarName: args?.calendar_name || null
-        });
-        break;
+      // ============ CALENDAR TOOLS ============
+      {
+        name: "calendar_search",
+        description: "Semantic search for calendar events using AI embeddings. Finds events by meaning. Supports filtering by calendar name and all-day events.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Natural language search (e.g., 'meetings', 'doctor appointments', 'lunch')" },
+            limit: { type: "number", description: "Maximum results (default 30)" },
+            days_back: { type: "number", description: "Include events from last N days (0 = none)" },
+            days_ahead: { type: "number", description: "Include events in next N days (0 = none). Use for 'today', 'this week', etc." },
+            calendar_name: { type: "string", description: "Filter to specific calendar (e.g., 'Work', 'Personal')" },
+            all_day_only: { type: "boolean", description: "Only show all-day events" },
+            sort_by: { type: "string", enum: ["relevance", "date"], description: "Sort by relevance (default) or date (chronological)" }
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "calendar_date",
+        description: "Get all events on a specific date. Supports natural language dates like 'today', 'tomorrow', 'next Tuesday', 'Jan 15'.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "Date to check (e.g., 'today', 'tomorrow', 'next Monday', '2025-01-15')" }
+          },
+          required: ["date"],
+        },
+      },
+      {
+        name: "calendar_free_time",
+        description: "Find free time slots on a specific date. Analyzes calendar to find available time windows.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "Date to check (e.g., 'today', 'tomorrow', 'next Monday')" },
+            start_hour: { type: "number", description: "Start of working hours (default 9 = 9 AM)" },
+            end_hour: { type: "number", description: "End of working hours (default 17 = 5 PM)" },
+            calendar_name: { type: "string", description: "Only consider events from this calendar" }
+          },
+          required: ["date"],
+        },
+      },
 
       // ============ NEW TOOLS - PHASE 1 ============
 
       // Mail tools
-      case "mail_senders":
-        {
-          const blocked = await requireIndex("emails");
-          if (blocked) {
-            result = blocked;
-            break;
-          }
-        }
-        result = formatSendersResults(await getFrequentSenders(
-          validateLimit(args?.limit, 30),
-          validateDaysBack(args?.days_back),
-          args?.include_junk || false
-        ));
-        break;
-
-      case "rebuild_index":
-        // Check if indexing is already in progress in this session
-        if (indexingInProgress) {
-          result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
-          break;
-        }
-
-        // Acquire lock to prevent parallel rebuilds across multiple MCP instances
-        if (!acquireLock()) {
-          result = "Indexing is already in progress in a different session. Please wait for it to complete before starting a rebuild.";
-          break;
-        }
-
-        // Start rebuild in background and return immediately
-        indexingInProgress = true;
-        sessionIndexComplete = false;
-        const rebuildSources = args?.sources || ["emails", "messages", "calendar"];
-
-        // Fire and forget - don't await
-        rebuildIndex(rebuildSources).then((rebuildResult) => {
-          applyCycleEnd(true);
-          console.error("Index rebuild completed:", JSON.stringify({
-            cleared: rebuildResult.cleared,
-            indexed: Object.fromEntries(
-              Object.entries(rebuildResult.indexed).map(([k, v]) => [k, v?.added || 0])
-            ),
-            errors: rebuildResult.errors.length
-          }));
-        }).catch(e => {
-          console.error("Index rebuild error:", e.message);
-          applyCycleEnd(false);
-        });
-
-        result = `🔄 Index rebuild started for: ${rebuildSources.join(", ")}.\n\nThis runs in the background and may take several minutes for large mailboxes. You can continue using other tools - searches will use the new index once complete.`;
-        break;
-
-      case "audit_index":
-        {
-          const auditSources = args?.sources || ["emails", "messages", "calendar"];
-          const maxItems = args?.max_items !== undefined ? args.max_items : 100;
-
-          console.error(`Starting audit for: ${auditSources.join(", ")}`);
-          const auditResults = await auditAll({ sources: auditSources, maxItems });
-          result = formatAuditReport(auditResults);
-        }
-        break;
+      {
+        name: "mail_senders",
+        description: "List most frequent email senders. Helps identify who you communicate with most.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum senders to return (default 30)" },
+            days_back: { type: "number", description: "Only count emails from last N days (0 = all time)" },
+            include_junk: { type: "boolean", description: "Include senders from Junk/Trash folders (excluded by default)" }
+          },
+        },
+      },
+      {
+        name: "rebuild_index",
+        description: "Rebuild the search index for one or more data sources. This clears the existing index and re-indexes all content from scratch. Use this if search results are stale, missing, or if the index is corrupted. Can rebuild emails, messages, calendar, or all sources at once.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sources: {
+              type: "array",
+              items: { type: "string", enum: ["emails", "messages", "calendar"] },
+              description: "Which sources to rebuild. Defaults to all sources if not specified."
+            }
+          },
+        },
+      },
+      {
+        name: "audit_index",
+        description: "Audit search index against source data with 0% tolerance. Reports missing items, orphaned entries, and duplicates with detailed file paths and remediation suggestions. Validates 100% of source data.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sources: {
+              type: "array",
+              items: { type: "string", enum: ["emails", "messages", "calendar"] },
+              description: "Data sources to audit (default: all)"
+            },
+            max_items: {
+              type: "number",
+              description: "Max items to list per category (default: 100, use 0 for unlimited)"
+            }
+          },
+        },
+      },
 
       // Messages tools
-      case "messages_contacts":
-        result = formatMessageContactsResults(getMessageContacts(validateLimit(args?.limit, 50, 500)));
-        break;
+      {
+        name: "messages_contacts",
+        description: "List all contacts you've messaged, sorted by most recent. Shows message count and last message date.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum contacts to return (default 50)" }
+          },
+        },
+      },
 
       // Calendar tools
-      case "calendar_upcoming":
-        result = formatUpcomingEventsResults(getUpcomingEvents(validateLimit(args?.limit, 30, 100)));
-        break;
+      {
+        name: "calendar_upcoming",
+        description: "Get next N upcoming events across all calendars. Simpler than calendar_search for quick schedule overview.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum events to return (default 10)" }
+          },
+        },
+      },
 
       // ============ NEW TOOLS - PHASE 2 ============
 
-      case "calendar_week":
-        result = formatWeekEventsResults(getWeekEvents(validateWeekOffset(args?.week_offset)));
-        break;
-
+      {
+        name: "calendar_week",
+        description: "Get all events for the current week or a future week. Shows events grouped by day.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            week_offset: { type: "number", description: "0 = this week, 1 = next week, 2 = week after, etc. (default 0)" }
+          },
+        },
+      },
       // ============ NEW TOOLS - PHASE 3 ============
 
-      case "mail_thread":
-        {
-          const blocked = await requireIndex("emails");
-          if (blocked) {
-            result = blocked;
-            break;
-          }
-        }
-        result = formatEmailThreadResults(await getEmailThread(args.file_path, validateLimit(args?.limit, 30)));
-        break;
-
-      case "calendar_recurring":
-        result = formatRecurringEventsResults(getRecurringEvents(validateLimit(args?.limit, 30, 100)));
-        break;
+      {
+        name: "mail_thread",
+        description: "Get all emails in a conversation thread. Finds related emails by matching subject lines.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            file_path: { type: "string", description: "File path to any email in the thread" },
+            limit: { type: "number", description: "Maximum emails to return (default 30)" }
+          },
+          required: ["file_path"],
+        },
+      },
+      {
+        name: "calendar_recurring",
+        description: "List recurring events (events that appear multiple times). Shows upcoming occurrences.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum recurring events to return (default 30)" }
+          },
+        },
+      },
 
       // ============ CONTACTS TOOLS ============
 
-      case "contacts_search":
-        result = formatContactsSearchResults(searchContacts(args.query, validateLimit(args?.limit, 30)));
-        break;
+      {
+        name: "contacts_search",
+        description: "Search your contacts by name, email, phone, or organization. Returns matching contacts with all their details.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query (e.g., 'John', 'Acme Corp', 'john@example.com')" },
+            limit: { type: "number", description: "Maximum results (default 30)" }
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "contacts_lookup",
+        description: "Look up a specific contact by email, phone number, or name. Returns full contact details including all emails and phone numbers.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            identifier: { type: "string", description: "Email address, phone number, or name to look up" }
+          },
+          required: ["identifier"],
+        },
+      },
+      {
+        name: "person_search",
+        description: "Search ALL communication with a specific person across Mail, Messages, and Calendar. Automatically finds their emails and phone numbers from Contacts to search all sources.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Person's name to search for (will resolve to all their email addresses and phone numbers)" },
+            limit: { type: "number", description: "Maximum results per source (default 10)" }
+          },
+          required: ["name"],
+        },
+      },
 
-      case "contacts_lookup":
-        result = formatContactLookupResult(lookupContact(args.identifier));
-        break;
+      // ============ WRITE TOOLS (2.0.0) ============
+      // Mail / Messages / Calendar / Contacts writes with dry_run + confirm.
+      ...WRITE_TOOL_DEFINITIONS,
+    ],
+  }));
 
-      case "person_search":
-        result = await personSearch(args.name, validateLimit(args?.limit, 10));
-        break;
+  // Handle tool calls
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
 
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+    try {
+      let result;
+
+      // Writes never wait on the vector index: they talk to Mail / Messages /
+      // Calendar / Contacts directly and must keep working while the indexer
+      // daemon holds the lock.
+      if (isWriteTool(name)) {
+        const writeResult = await dispatchWriteTool(name, args || {}, {
+          indexerMode: INDEXER_MODE,
+          socketPath: WRITE_SOCKET_PATH,
+          log: (msg) => console.error(msg)
+        });
+        return mcpWriteResult(writeResult);
+      }
+
+      switch (name) {
+        // Smart search (agentic)
+        case "smart_search":
+          result = await smartSearch(args.query, {
+            limit: validateLimit(args?.limit, 5, 100),
+            synthesize: args?.synthesize !== false
+          });
+          break;
+
+        // Email tools
+        case "mail_search":
+          result = await mailSearch(args.query, {
+            limit: validateLimit(args?.limit, 30),
+            daysBack: validateDaysBack(args?.days_back),
+            sender: args?.sender || null,
+            recipient: args?.recipient || null,
+            hasAttachment: args?.has_attachment ?? null,
+            mailbox: args?.mailbox || null,
+            sentOnly: args?.sent_only ?? null,
+            flaggedOnly: args?.flagged_only || false,
+            includeJunk: args?.include_junk || false,
+            sortBy: args?.sort_by || "relevance"
+          });
+          break;
+
+        case "mail_recent":
+          result = await mailRecent(
+            validateLimit(args?.limit, 30),
+            validateDaysBack(args?.days_back) || 7,
+            args?.unread_only || false,
+            args?.include_junk || false
+          );
+          break;
+
+        case "mail_date":
+          result = await mailDate(args.date, args?.include_junk || false);
+          break;
+
+        case "mail_read":
+          result = readFullEmail(args.file_path);
+          break;
+
+        // Messages tools
+        case "messages_search":
+          result = await messagesSearch(args.query, {
+            limit: validateLimit(args?.limit, 30),
+            daysBack: validateDaysBack(args?.days_back),
+            contact: args?.contact || null,
+            groupChatOnly: args?.group_chat_only || false,
+            groupChatName: args?.group_chat_name || null,
+            hasAttachment: args?.has_attachment ?? null,
+            sortBy: args?.sort_by || "relevance"
+          });
+          break;
+
+        case "messages_recent":
+          result = await messagesRecent(
+            validateLimit(args?.limit, 30),
+            validateDaysBack(args?.days_back) || 1
+          );
+          break;
+
+        case "messages_conversation":
+          result = await messagesConversation(args.contact, validateLimit(args?.limit, 50));
+          break;
+
+        // Calendar tools
+        case "calendar_search":
+          result = await calendarSearch(args.query, {
+            limit: validateLimit(args?.limit, 30),
+            daysBack: validateDaysBack(args?.days_back),
+            daysAhead: validateDaysBack(args?.days_ahead),
+            calendarName: args?.calendar_name || null,
+            allDayOnly: args?.all_day_only || false,
+            sortBy: args?.sort_by || "relevance"
+          });
+          break;
+
+        case "calendar_date":
+          result = await calendarDate(args.date);
+          break;
+
+        case "calendar_free_time":
+          result = await calendarFreeTime(args.date, {
+            startHour: args?.start_hour || 9,
+            endHour: args?.end_hour || 17,
+            calendarName: args?.calendar_name || null
+          });
+          break;
+
+        // ============ NEW TOOLS - PHASE 1 ============
+
+        // Mail tools
+        case "mail_senders":
+          {
+            const blocked = await requireIndex("emails");
+            if (blocked) {
+              result = blocked;
+              break;
+            }
+          }
+          result = formatSendersResults(await getFrequentSenders(
+            validateLimit(args?.limit, 30),
+            validateDaysBack(args?.days_back),
+            args?.include_junk || false
+          ));
+          break;
+
+        case "rebuild_index":
+          // Check if indexing is already in progress in this session
+          if (indexingInProgress) {
+            result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
+            break;
+          }
+
+          // Acquire lock to prevent parallel rebuilds across multiple MCP instances
+          if (!acquireLock()) {
+            result = "Indexing is already in progress in a different session. Please wait for it to complete before starting a rebuild.";
+            break;
+          }
+
+          // Start rebuild in background and return immediately
+          indexingInProgress = true;
+          sessionIndexComplete = false;
+          const rebuildSources = args?.sources || ["emails", "messages", "calendar"];
+
+          // Fire and forget - don't await
+          rebuildIndex(rebuildSources).then((rebuildResult) => {
+            applyCycleEnd(true);
+            console.error("Index rebuild completed:", JSON.stringify({
+              cleared: rebuildResult.cleared,
+              indexed: Object.fromEntries(
+                Object.entries(rebuildResult.indexed).map(([k, v]) => [k, v?.added || 0])
+              ),
+              errors: rebuildResult.errors.length
+            }));
+          }).catch(e => {
+            console.error("Index rebuild error:", e.message);
+            applyCycleEnd(false);
+          });
+
+          result = `🔄 Index rebuild started for: ${rebuildSources.join(", ")}.\n\nThis runs in the background and may take several minutes for large mailboxes. You can continue using other tools - searches will use the new index once complete.`;
+          break;
+
+        case "audit_index":
+          {
+            const auditSources = args?.sources || ["emails", "messages", "calendar"];
+            const maxItems = args?.max_items !== undefined ? args.max_items : 100;
+
+            console.error(`Starting audit for: ${auditSources.join(", ")}`);
+            const auditResults = await auditAll({ sources: auditSources, maxItems });
+            result = formatAuditReport(auditResults);
+          }
+          break;
+
+        // Messages tools
+        case "messages_contacts":
+          result = formatMessageContactsResults(getMessageContacts(validateLimit(args?.limit, 50, 500)));
+          break;
+
+        // Calendar tools
+        case "calendar_upcoming":
+          result = formatUpcomingEventsResults(getUpcomingEvents(validateLimit(args?.limit, 30, 100)));
+          break;
+
+        // ============ NEW TOOLS - PHASE 2 ============
+
+        case "calendar_week":
+          result = formatWeekEventsResults(getWeekEvents(validateWeekOffset(args?.week_offset)));
+          break;
+
+        // ============ NEW TOOLS - PHASE 3 ============
+
+        case "mail_thread":
+          {
+            const blocked = await requireIndex("emails");
+            if (blocked) {
+              result = blocked;
+              break;
+            }
+          }
+          result = formatEmailThreadResults(await getEmailThread(args.file_path, validateLimit(args?.limit, 30)));
+          break;
+
+        case "calendar_recurring":
+          result = formatRecurringEventsResults(getRecurringEvents(validateLimit(args?.limit, 30, 100)));
+          break;
+
+        // ============ CONTACTS TOOLS ============
+
+        case "contacts_search":
+          result = formatContactsSearchResults(searchContacts(args.query, validateLimit(args?.limit, 30)));
+          break;
+
+        case "contacts_lookup":
+          result = formatContactLookupResult(lookupContact(args.identifier));
+          break;
+
+        case "person_search":
+          result = await personSearch(args.name, validateLimit(args?.limit, 10));
+          break;
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+
+      return { content: [{ type: "text", text: result }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error.message}` }],
+        isError: true,
+      };
     }
+  });
+  return server;
+}
 
-    return { content: [{ type: "text", text: result }] };
-  } catch (error) {
-    return {
-      content: [{ type: "text", text: `Error: ${error.message}` }],
-      isError: true,
-    };
-  }
-});
+const server = createServer();
 
 // Start the server
 async function main() {
@@ -1601,6 +1628,45 @@ async function main() {
   // fallback on this stdio process only if indexer.lock is free.
 }
 
-if (!PERMISSIONS_MODE && shouldConnectMcpStdio(INDEXER_MODE)) {
+/**
+ * Read-only-vs-write is unchanged from stdio mode — every tool the stdio
+ * server exposes is exposed here too, including the write tools. What
+ * changes is reachability (LAN / Tailscale instead of only this process's
+ * parent) and, because of that, every request must carry a bearer token
+ * (see lib/httpAuth.js) — stdio has no equivalent check because a locally
+ * spawned child process is already trusted by whoever spawned it.
+ *
+ * A fresh Server + transport pair is created per request rather than
+ * reusing the module-level `server`: the SDK's StreamableHTTPServerTransport
+ * in stateless mode (sessionIdGenerator: undefined) is single-use — the
+ * Protocol class throws "Already connected to a transport" on a second
+ * connect() before the first has closed, which a shared instance would hit
+ * under any concurrent access. This matches the SDK's own stateless example.
+ */
+async function startHttpServer(host, port) {
+  const { token } = loadOrCreateHttpAuthToken();
+
+  const httpServer = http.createServer(createHttpRequestHandler({
+    token,
+    verifyAuthHeader,
+    createServer,
+    StreamableHTTPServerTransport,
+    packageVersion: PACKAGE_VERSION
+  }));
+
+  await new Promise((resolve) => {
+    httpServer.listen(port, host, resolve);
+  });
+  console.error(`Apple Tools MCP HTTP server (v${PACKAGE_VERSION}) listening on http://${host}:${port}/mcp`);
+  return httpServer;
+}
+
+if (HTTP_MODE) {
+  const { host, port } = resolveHttpServerConfig();
+  startHttpServer(host, port).catch((e) => {
+    console.error(`HTTP server failed to start: ${e.message}`);
+    process.exit(1);
+  });
+} else if (!PERMISSIONS_MODE && !HTTP_TOKEN_MODE && shouldConnectMcpStdio(INDEXER_MODE)) {
   main().catch(console.error);
 }
