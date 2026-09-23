@@ -501,12 +501,12 @@ describe('AC: regression / packaging / security', () => {
     expect(indexSrc).toContain('requireIndex("calendar")')
   })
 
-  it('does not statically import @xenova/transformers (Linux sharp-safe)', () => {
+  it('does not statically import @huggingface/transformers (Linux sharp-safe)', () => {
     expect(indexerSrc).not.toMatch(/^import\s+.*@xenova\/transformers/m)
-    expect(indexerSrc).toContain('await import("@xenova/transformers")')
+    expect(indexerSrc).toContain('await import("@huggingface/transformers")')
   })
 
-  it('real embedding idx tests skip when Xenova/sharp cannot load', () => {
+  it('real embedding idx tests skip when Transformers.js/sharp cannot load', () => {
     const helper = fs.readFileSync(path.join(root, 'tests/indexing/helpers/real-data.js'), 'utf8')
     expect(helper).toContain('export function embedderAvailable')
     expect(helper).toContain("process.platform !== 'darwin'")
@@ -518,9 +518,9 @@ describe('AC: regression / packaging / security', () => {
     expect(pkg.version).toBe('3.0.0')
     expect(lock.version).toBe('3.0.0')
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      '@huggingface/transformers',
       '@lancedb/lancedb',
       '@modelcontextprotocol/sdk',
-      '@xenova/transformers',
       'chrono-node'
     ])
   })

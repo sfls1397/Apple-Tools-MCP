@@ -380,8 +380,11 @@ Every tool the stdio server exposes — including the write tools — is also
 available over **Streamable HTTP**, so it's reachable from other machines,
 not just whatever process spawned it locally. This is additive: stdio still
 works exactly as before for local same-machine MCP clients that spawn it
-directly. HTTP is for reaching the same tools from elsewhere — another
-machine on your LAN, or (via Tailscale) your phone.
+directly. The intended MacBook clients are Claude Desktop, Claude Code,
+Codex Desktop, and ChatGPT Desktop. Claude Desktop uses the included local
+HTTP-to-stdio proxy; Claude Code and Codex connect to the Mini's HTTP
+endpoint directly. ChatGPT Desktop does not currently support this private
+MCP connection; see the client guide for its provider-supported options.
 
 Because HTTP reaches beyond "whoever spawned this process," which stdio's
 trust model relies on, **every HTTP request needs a bearer token.** stdio
@@ -396,8 +399,9 @@ trusted by whoever spawned it.
 
 The token is a random secret generated on first run and stored in the
 macOS Keychain (service `apple-tools-mcp-http`) — never in a config file,
-the repo, or logs after the one-time generation banner. There's no external
-account and no cost; it's a self-issued password, like an SSH key.
+the server's config file, or logs after the one-time generation banner.
+There's no external account and no cost; it's a self-issued password,
+like an SSH key.
 
 ```bash
 apple-tools-mcp http-token   # prints the token, generating one first if needed
@@ -413,14 +417,19 @@ the next run), then update every client using the old value.
 
 ```json
 {
-  "httpHost": "0.0.0.0",
+  "httpHost": "127.0.0.1",
   "httpPort": 8421
 }
 ```
 
-Env overrides: `APPLE_TOOLS_HTTP_HOST`, `APPLE_TOOLS_HTTP_PORT`. Default
-port is 8421 (the indexer's stdio process needs no port; this is only for
-`--transport=http`).
+Env overrides: `APPLE_TOOLS_HTTP_HOST`, `APPLE_TOOLS_HTTP_PORT`. The default
+host is `127.0.0.1`, so HTTP is local-only until you explicitly set a network
+address such as `0.0.0.0`. Default port is 8421 (the indexer's stdio process
+needs no port; this is only for `--transport=http`). For remote access, use a
+Tailscale address for clients that connect directly from your tailnet, or
+put the server behind a TLS-terminating reverse proxy. Do not send the
+bearer token over an untrusted LAN. Cloud-hosted connectors need a separate
+way to reach the server; a private Tailscale address alone is insufficient.
 
 ### LaunchAgent
 
@@ -432,10 +441,13 @@ independent process.
 
 ### Wiring up clients
 
-See `examples/mcp-client.json` for the full walkthrough. Short version:
+See `examples/mcp-client.md` for the MacBook setup. Short version:
 
-- **Same machine or LAN** (Claude Code, Codex, or any other MCP client that supports an HTTP server entry): `claude mcp add --transport http apple-tools http://<host>:8421/mcp -H "Authorization: Bearer $(apple-tools-mcp http-token)" -s user`
-- **iPhone, via Tailscale** (Claude / ChatGPT custom connectors): add through each app's web-based connector settings first (mobile apps don't support adding a new remote MCP server directly), pointing at `http://<tailscale-ip>:8421/mcp` with the same bearer token. Requires Tailscale running on both the host and the phone — this is never exposed to the public internet, only to devices in your own tailnet.
+- **On the Mini:** set `httpHost` to its LAN or Tailscale IP and restart the HTTP server. Retrieve the bearer token with `apple-tools-mcp http-token`.
+- **Claude Desktop on the MacBook:** configure the included `apple-tools-http-proxy` as a local MCP server. It forwards tool calls to the Mini over HTTP.
+- **Claude Code and Codex Desktop on the MacBook:** add `http://<mini-address>:8421/mcp` and the token. The client guide has commands for both.
+- **ChatGPT Desktop on the MacBook:** current custom MCP support does not provide a direct private HTTP connection in the desktop app. The client guide describes the documented ChatGPT web route.
+- **Claude / ChatGPT cloud connectors:** a connector does not connect from your device's tailnet interface. [Claude requires a publicly reachable server](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp); [ChatGPT directs private-network servers to Secure MCP Tunnel and currently supports MCP apps on web only](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt). Use the provider's supported network setup before adding this server as a cloud connector.
 
 ## Available Tools
 
@@ -656,7 +668,7 @@ Ask your MCP client things like:
 
 ## Privacy & Security
 
-- **Local Processing**: All embeddings are generated locally using Xenova/Transformers
+- **Local Processing**: All embeddings are generated locally using Hugging Face Transformers.js
 - **No Cloud Services**: No data is sent to external servers; the write bridge is a local unix socket, never a network port
 - **Reads are read-only**: Search and lookup tools never modify your data. The [write tools](#write-tools-200) are the only ones that change anything, and they are opt-in per call, with `confirm` required for deletes and multi-recipient sends
 - **No credentials**: The server holds no tokens or passwords. It uses the Mail, Messages, Calendar, and Contacts apps you are already signed into
@@ -785,4 +797,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - Built with the [Model Context Protocol SDK](https://github.com/modelcontextprotocol/sdk)
 - Vector search powered by [LanceDB](https://lancedb.com/)
-- Local embeddings via [Xenova/Transformers](https://github.com/xenova/transformers.js)
+- Local embeddings via [Hugging Face Transformers.js](https://github.com/huggingface/transformers.js)

@@ -6,7 +6,7 @@
 import fs from 'fs'
 import path from 'path'
 import { connect } from '@lancedb/lancedb'
-import { pipeline } from '@xenova/transformers'
+import { pipeline } from '@huggingface/transformers'
 
 // Real paths
 const DATA_DIR = path.join(process.env.HOME, '.apple-tools-mcp')

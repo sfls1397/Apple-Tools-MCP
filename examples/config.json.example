@@ -1,5 +1,5 @@
 {
   "indexInterval": "5m",
-  "httpHost": "0.0.0.0",
+  "httpHost": "127.0.0.1",
   "httpPort": 8421
 }

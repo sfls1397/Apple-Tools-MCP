@@ -16,6 +16,7 @@ import { isIndexerMode, isPermissionsMode, isHttpMode, isHttpTokenMode } from ".
 import { runPermissionsCommand } from "./lib/permissions.js";
 import { loadResolvedIndexInterval, logResolvedInterval, resolveHttpServerConfig } from "./lib/config.js";
 import { loadOrCreateHttpAuthToken, verifyAuthHeader } from "./lib/httpAuth.js";
+import { createHttpRequestHandler } from "./lib/httpTransport.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
 import {
   shouldConnectMcpStdio,
@@ -1645,46 +1646,13 @@ async function main() {
 async function startHttpServer(host, port) {
   const { token } = loadOrCreateHttpAuthToken();
 
-  const httpServer = http.createServer((req, res) => {
-    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-
-    if (url.pathname === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, version: PACKAGE_VERSION }));
-      return;
-    }
-
-    if (url.pathname !== "/mcp" && url.pathname !== "/") {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not found" }));
-      return;
-    }
-
-    if (!verifyAuthHeader(req.headers["authorization"], token)) {
-      res.writeHead(401, { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" });
-      res.end(JSON.stringify({ error: "Unauthorized: missing or invalid bearer token" }));
-      return;
-    }
-
-    void (async () => {
-      const requestServer = createServer();
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      try {
-        await requestServer.connect(transport);
-        await transport.handleRequest(req, res);
-        res.on("close", () => {
-          void transport.close();
-          void requestServer.close();
-        });
-      } catch (err) {
-        console.error(`MCP HTTP request error: ${err.message}`);
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "internal error" }));
-        }
-      }
-    })();
-  });
+  const httpServer = http.createServer(createHttpRequestHandler({
+    token,
+    verifyAuthHeader,
+    createServer,
+    StreamableHTTPServerTransport,
+    packageVersion: PACKAGE_VERSION
+  }));
 
   await new Promise((resolve) => {
     httpServer.listen(port, host, resolve);

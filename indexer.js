@@ -85,10 +85,10 @@ let db = null;
 async function getEmbedder() {
   if (!embeddingPipeline) {
     console.error("Loading embedding model (first time may take a minute)...");
-    // Lazy import: @xenova/transformers loads sharp at import time. A static
+    // Lazy import: @huggingface/transformers loads sharp at import time. A static
     // import crashes Linux (and any host without the platform sharp native)
     // before search.js formatters / pronoun helpers can load.
-    const { pipeline } = await import("@xenova/transformers");
+    const { pipeline } = await import("@huggingface/transformers");
     embeddingPipeline = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
     console.error("Embedding model loaded.");
   }
