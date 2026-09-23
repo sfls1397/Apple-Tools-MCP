@@ -7,7 +7,8 @@
   "bin": {
     "apple-tools-mcp": "bin/apple-tools-mcp.js",
     "apple-tools-indexer": "bin/apple-tools-indexer.js",
-    "apple-tools-http": "bin/apple-tools-http.js"
+    "apple-tools-http": "bin/apple-tools-http.js",
+    "apple-tools-http-proxy": "bin/apple-tools-http-proxy.js"
   },
   "author": "Peter Coates",
   "license": "MIT",
@@ -50,6 +51,7 @@
     "contacts.js",
     "lib/",
     "bin/",
+    "examples/",
     "scripts/audit-index.js",
     "scripts/smoke-writes.js",
     "scripts/postinstall.js",
@@ -88,14 +90,14 @@
     "perf:dates": "vitest run tests/perf/date-parsing.perf.test.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "@lancedb/lancedb": "^0.22.3",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@xenova/transformers": "^2.17.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "chrono-node": "^2.9.0"
   },
   "devDependencies": {
-    "vitest": "^2.1.0",
     "@vitest/coverage-v8": "^2.1.0",
-    "fast-check": "^3.22.0"
+    "fast-check": "^3.22.0",
+    "vitest": "^2.1.0"
   }
 }

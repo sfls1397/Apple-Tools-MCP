@@ -51,7 +51,7 @@ export function checkDataSources() {
 }
 
 /**
- * True when the real Xenova/sharp native can load.
+ * True when the Transformers.js sharp native can load.
  * This package is darwin-only; Linux CI / Cloud Agent checkouts typically have
  * a darwin sharp binary and fail with sharp-linux-x64.node missing. Real
  * embedding idx tests must skip instead of failing the suite.
@@ -64,7 +64,8 @@ export function embedderAvailable() {
     return false
   }
   try {
-    require('sharp')
+    const transformersRequire = createRequire(require.resolve('@huggingface/transformers'))
+    transformersRequire('sharp')
     cachedEmbedderAvailable = true
   } catch {
     cachedEmbedderAvailable = false
@@ -79,7 +80,7 @@ export function embedderAvailable() {
 let embeddingPipeline = null
 export async function getEmbedder() {
   if (!embeddingPipeline) {
-    const { pipeline } = await import('@xenova/transformers')
+    const { pipeline } = await import('@huggingface/transformers')
     embeddingPipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')
   }
   return embeddingPipeline

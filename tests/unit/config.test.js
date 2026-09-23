@@ -269,6 +269,7 @@ describe('logResolvedInterval', () => {
 describe('resolveHttpServerConfig precedence', () => {
   it('uses product defaults when nothing is set', () => {
     const result = resolveHttpServerConfig({ env: {}, fileData: {}, warn: () => {} })
+    expect(DEFAULT_HTTP_HOST).toBe('127.0.0.1')
     expect(result.host).toBe(DEFAULT_HTTP_HOST)
     expect(result.port).toBe(DEFAULT_HTTP_PORT)
   })
