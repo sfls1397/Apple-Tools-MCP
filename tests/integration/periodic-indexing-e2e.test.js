@@ -185,7 +185,7 @@ async function searchForEmail(query) {
   try {
     // Import the mail search functionality
     const { default: lancedb } = await import('@lancedb/lancedb')
-    const { pipeline } = await import('@xenova/transformers')
+    const { pipeline } = await import('@huggingface/transformers')
     const path = await import('path')
     const os = await import('os')
 

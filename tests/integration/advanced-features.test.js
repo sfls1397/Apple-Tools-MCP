@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { connect } from '@lancedb/lancedb'
-import { pipeline } from '@xenova/transformers'
+import { pipeline } from '@huggingface/transformers'
 import {
   loadContacts,
   resolveByName
