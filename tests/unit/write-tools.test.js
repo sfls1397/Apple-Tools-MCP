@@ -509,7 +509,12 @@ describe('mail_send', () => {
     expect(mcpWriteResult(result).isError).toBeUndefined()
   })
 
-  it('fails loud when send returns but Sent/Outbox verify misses', () => {
+  it('reports unconfirmed (not failed) when send returns but Sent/Outbox verify misses within budget', () => {
+    // Regression (2026-09-23): 6/6 real sends on an iCloud account eventually
+    // landed in Sent despite a verify-miss within any bounded polling window
+    // (observed sync lag up to ~65s, longer than the MCP client SDK's own
+    // 60s default CallTool timeout can safely be blocked for). A verify-miss
+    // here is not evidence of failure, so it must not say "failed".
     osascript.mockImplementation((script) => {
       if (isMailSentVerifyScript(script)) return 'NOT_FOUND'
       return 'OK'
@@ -519,7 +524,8 @@ describe('mail_send', () => {
     expect(result.delivered).toBe(false)
     expect(result.mailbox).toBeNull()
     expect(result.message).toContain(MAIL_VERIFY_MISS_GUIDANCE)
-    expect(result.message).toContain('mail_send failed')
+    expect(result.message).toContain('mail_send: unconfirmed')
+    expect(result.message).not.toContain('mail_send failed')
     expect(result.message).not.toContain('Hello')
     expect(osascript.mock.calls.length).toBe(2 + SENT_VERIFY_ATTEMPTS)
     expect(mcpWriteResult(result).isError).toBe(true)
