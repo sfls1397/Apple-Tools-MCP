@@ -63,6 +63,11 @@ import {
   MAIL_COMPOSE_TOP_UI_MAX,
   ATM_AX_HIT_TEST_MARKER,
   MAIL_COMPOSE_TIMEOUT_MS,
+  MAIL_FIND_TIMEOUT_MS,
+  MAIL_FIND_AND_SEND_TIMEOUT_MS,
+  MCP_CALL_DEADLINE_MS,
+  SENT_VERIFY_MIN_POLL_MS,
+  SENT_VERIFY_TIMEOUT_MS,
   MAIL_SE_PROBE_TIMEOUT_MS,
   SYSTEM_EVENTS_AUTOMATION_PROBE_TIMEOUT_MS,
   isSystemEventsProbeScript,
@@ -104,6 +109,7 @@ import {
   eventKitLookupIds,
   parseEventKitCalendarList,
   mergeCalendarSources,
+  buildEventKitListCalendarsScript,
   describeCalendarRemoveFailure,
   validateAlerts,
   defaultEndParts
@@ -529,6 +535,14 @@ describe('mail_send', () => {
     expect(result.message).not.toContain('Hello')
     expect(osascript.mock.calls.length).toBe(2 + SENT_VERIFY_ATTEMPTS)
     expect(mcpWriteResult(result).isError).toBe(true)
+  })
+
+  it('keeps reply/forward find+send at least as long as find-only, under the client deadline', () => {
+    expect(MAIL_FIND_AND_SEND_TIMEOUT_MS).toBeGreaterThanOrEqual(MAIL_FIND_TIMEOUT_MS)
+    expect(MAIL_FIND_AND_SEND_TIMEOUT_MS).toBeGreaterThan(38000)
+    expect(MAIL_FIND_AND_SEND_TIMEOUT_MS + SENT_VERIFY_MIN_POLL_MS).toBeLessThanOrEqual(MCP_CALL_DEADLINE_MS)
+    expect(MCP_CALL_DEADLINE_MS).toBeLessThan(60000)
+    expect(MAIL_COMPOSE_TIMEOUT_MS + SENT_VERIFY_TIMEOUT_MS).toBeLessThanOrEqual(MCP_CALL_DEADLINE_MS)
   })
 
   it('prefers a captured Message-ID together with To on verify', () => {
@@ -1401,6 +1415,33 @@ describe('mail Sent verify helpers', () => {
     expect(recoverIfInSent({ subject: 'Hi', to: ['a@example.com'] })).toBeNull()
   })
 
+  it('stops Sent verification when the client deadline has no poll left', () => {
+    const start = 1_000_000
+    sentVerifyClock.now = () => start
+    osascript.mockImplementation(() => 'NOT_FOUND')
+    expect(verifyQueuedMessage(
+      { subject: 'Hi', to: ['a@example.com'] },
+      { deadlineMs: start + SENT_VERIFY_MIN_POLL_MS - 1 }
+    )).toBeNull()
+    expect(osascript).not.toHaveBeenCalled()
+
+    let t = start
+    sentVerifyClock.now = () => t
+    osascript.mockImplementation((_script, opts) => {
+      t += opts.timeout
+      return 'NOT_FOUND'
+    })
+    verifyQueuedMessage(
+      { subject: 'Hi', to: ['a@example.com'] },
+      { deadlineMs: start + 30000, attempts: 6, retryMs: 2000 }
+    )
+    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(osascript.mock.calls[0][1].timeout).toBe(SENT_VERIFY_TIMEOUT_MS)
+    expect(osascript.mock.calls[1][1].timeout).toBe(SENT_VERIFY_TIMEOUT_MS)
+    const spent = osascript.mock.calls.reduce((sum, call) => sum + call[1].timeout, 0)
+    expect(spent).toBeLessThanOrEqual(30000)
+  })
+
   it('retries verifyQueuedMessage until Sent appears', () => {
     osascript
       .mockImplementationOnce(() => 'NOT_FOUND')
@@ -2025,6 +2066,29 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
     const result = calendarRsvp({ event_id: 'EVT-UID-1', response: 'accept' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('answer the invitation in Calendar directly')
+  })
+
+  it('uses EventKit when Calendar.app is closed and EventKit returns calendars', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('EKEventStore')) return 'Home<<>>yes<<>>yes<<>>0<<>>On My Mac'
+      throw new Error("Application isn't running. (-600)")
+    })
+    const result = calendarListCalendars()
+    expect(result.ok).toBe(true)
+    expect(result.calendars[0].name).toBe('Home')
+    expect(result.message).not.toContain('No calendars found')
+  })
+
+  it('reports the classic failure when EventKit comes back empty', () => {
+    osascript.mockImplementation((script) => {
+      if (String(script).includes('EKEventStore')) return ''
+      throw new Error('Not authorized to send Apple events to Calendar. (-1743)')
+    })
+    const result = calendarListCalendars()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(CALENDAR_TCC_GUIDANCE)
+    expect(result.message).not.toContain('No calendars found')
+    expect(buildEventKitListCalendarsScript()).toContain('EVENTKIT_LIST_FAILED')
   })
 
   it('lists calendars with writability', () => {
