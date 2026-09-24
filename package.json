@@ -1,6 +1,6 @@
 {
   "name": "apple-tools-mcp",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "MCP server for semantic search and write actions across Apple Mail, Messages, Calendar, and Contacts. Speaks stdio (local) or bearer-token-authenticated Streamable HTTP (LAN / Tailscale).",
   "type": "module",
   "main": "index.js",
