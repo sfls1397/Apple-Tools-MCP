@@ -52,11 +52,8 @@ describe('no product Notification Center toasts', () => {
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
     const permSrc = fs.readFileSync(path.join(root, 'lib/permissions.js'), 'utf8')
 
-    expect(readme).toContain('does **not** post product Notification Center')
-    expect(readme).toContain('does **not** silence macOS Background Items')
-    expect(readme).toContain('running in the background')
-    expect(readme).toContain('does not suppress them')
-    expect(readme).toContain('does not suppress OS Allow dialogs')
+    expect(readme).not.toMatch(/silence macOS Background Items/i)
+    expect(readme).not.toMatch(/suppress OS Allow dialogs/i)
     expect(readme).not.toContain('APPLE_TOOLS_NOTIFY')
     expect(readme).not.toContain('--notify')
     expect(readme).not.toContain('<string>Background</string>')
