@@ -779,16 +779,6 @@ npm run smoke:writes
 npm run smoke:writes -- --apply
 ```
 
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run the tests: `npm test`
-5. Submit a pull request
-
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
