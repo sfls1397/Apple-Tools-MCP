@@ -682,6 +682,18 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script.indexOf('does not contain "All good"', gateAt)).toBeGreaterThan(gateAt)
   })
 
+  it('matches a long subject by its 60-character prefix (Mail titles the window with the full subject)', () => {
+    const long = '[Network] Test alert: network alerts now arrive by email (one copy, from you). Make yourself a VIP in Mail ...'
+    const marker = composeTitleMarker(long)
+    expect(marker).toHaveLength(MAIL_COMPOSE_TITLE_MARKER_MAX)
+    expect(long.startsWith(marker)).toBe(true)
+    const handler = buildMailBodyPasteHandler()
+    const matches = appleScriptHandler(handler, 'atmTitleMatches')
+    expect(matches).toContain('if atmTitle is atmMarker then return true')
+    expect(matches).toContain(`if (length of atmMarker) >= ${MAIL_COMPOSE_TITLE_MARKER_MAX} and atmTitle starts with atmMarker then return true`)
+    expect(handler).not.toContain('is titleMarker then')
+  })
+
   it('title-matches the compose window then focuses the AXWebArea before paste', () => {
     expect(composeTitleMarker('Status')).toBe('Status')
     expect(composeTitleMarker('')).toBe('New Message')
@@ -690,7 +702,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(MAIL_COMPOSE_TOP_UI_MAX).toBeLessThanOrEqual(48)
 
     const handler = buildMailBodyPasteHandler()
-    expect(handler).toContain('if (name of atmCand as string) is titleMarker then')
+    expect(handler).toContain('if my atmTitleMatches(name of atmCand as string, titleMarker) then')
     expect(handler).toContain('BODY_FOCUS_FAILED')
     expect(handler).toContain('BODY_FOCUS_UNPROVEN')
     expect(handler).toContain('AXWebArea')
@@ -722,7 +734,8 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(bits).toContain('tell application "System Events"')
     expect(exact).toContain('tell application "System Events"')
     expect(bits).toContain('set atmBits to atmBits & (value of attribute "AXTitle" of atmEl as string) & " "')
-    expect(exact).toContain('if (value of attribute "AXTitle" of atmEl as string) is atmMarker then return true')
+    expect(exact).toContain('set atmAxTitle to (value of attribute "AXTitle" of atmEl as string)')
+    expect(exact).toContain('if my atmTitleMatches(atmAxTitle, atmMarker) then return true')
     axTitleReadsInsideSystemEventsTell(bits)
     axTitleReadsInsideSystemEventsTell(exact)
 
