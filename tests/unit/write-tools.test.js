@@ -59,6 +59,7 @@ import {
   isMailGuiScriptingUnavailable,
   BODY_FOCUS_FAILED_SENTINEL,
   BODY_FOCUS_UNPROVEN_SENTINEL,
+  DISPLAY_ASLEEP_GUI_UNAVAILABLE_SENTINEL,
   MAIL_COMPOSE_TITLE_MARKER_MAX,
   MAIL_COMPOSE_TOP_UI_MAX,
   ATM_AX_HIT_TEST_MARKER,
@@ -461,6 +462,26 @@ describe('mail_send', () => {
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(osascript).toHaveBeenCalledTimes(2)
     expect(mcpWriteResult(result).isError).toBe(true)
+  })
+
+  it('polls for Mail windows and flags an asleep display before the body fill', () => {
+    const script = buildMailBodyPasteHandler()
+    const fillAt = script.indexOf('on atmFillMailBody')
+    expect(script).toContain('atmSeWindowCount')
+    expect(script.indexOf('if (count of (every window)) > 0 then exit repeat', fillAt)).toBeGreaterThan(fillAt)
+    expect(script).toContain('atmWin is missing value and atmSeWindowCount is 0 then error "DISPLAY_ASLEEP_GUI_UNAVAILABLE"')
+    expect(DISPLAY_ASLEEP_GUI_UNAVAILABLE_SENTINEL).toBe('DISPLAY_ASLEEP_GUI_UNAVAILABLE')
+  })
+
+  it('reports a display-asleep GUI failure without the caret message', () => {
+    throwAfterSeProbe(DISPLAY_ASLEEP_GUI_UNAVAILABLE_SENTINEL)
+    const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
+    expect(result.ok).toBe(false)
+    expect(result.delivered).toBe(false)
+    expect(result.message).toContain('display is asleep')
+    expect(result.message).toContain('nothing was sent')
+    expect(result.message).not.toContain('caret')
+    expect(result.message).not.toContain('Hello')
   })
 
   it('aborts without pasting when the caret stays in a header field', () => {
