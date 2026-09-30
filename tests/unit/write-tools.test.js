@@ -60,6 +60,8 @@ import {
   BODY_FOCUS_FAILED_SENTINEL,
   BODY_FOCUS_UNPROVEN_SENTINEL,
   DISPLAY_ASLEEP_GUI_UNAVAILABLE_SENTINEL,
+  DISPLAY_WAKE_SECONDS,
+  wakeDisplay,
   MAIL_COMPOSE_TITLE_MARKER_MAX,
   MAIL_COMPOSE_TOP_UI_MAX,
   ATM_AX_HIT_TEST_MARKER,
@@ -473,12 +475,40 @@ describe('mail_send', () => {
     expect(DISPLAY_ASLEEP_GUI_UNAVAILABLE_SENTINEL).toBe('DISPLAY_ASLEEP_GUI_UNAVAILABLE')
   })
 
+  it('stops a running screen saver before and while polling for Mail windows', () => {
+    const script = buildMailBodyPasteHandler()
+    expect(script).toContain('if running of screen saver preferences then stop current screen saver')
+    const fillAt = script.indexOf('on atmFillMailBody')
+    const firstStop = script.indexOf('my atmStopScreenSaver()', fillAt)
+    const pollAt = script.indexOf('if (count of (every window)) > 0 then exit repeat', fillAt)
+    const pollEnd = script.indexOf('end repeat', pollAt)
+    expect(firstStop).toBeGreaterThan(fillAt)
+    expect(firstStop).toBeLessThan(pollAt)
+    expect(script.indexOf('my atmStopScreenSaver()', pollAt)).toBeLessThan(pollEnd)
+  })
+
+  it('wakes with a detached caffeinate that outlasts the compose', () => {
+    const spawnDetached = vi.fn(() => 4242)
+    expect(wakeDisplay({ spawnDetached, platform: 'darwin' })).toBe(true)
+    expect(spawnDetached).toHaveBeenCalledWith('/usr/bin/caffeinate', ['-u', '-t', String(DISPLAY_WAKE_SECONDS)])
+    expect(DISPLAY_WAKE_SECONDS * 1000).toBeGreaterThan(MAIL_COMPOSE_TIMEOUT_MS)
+  })
+
+  it('treats a failed wake spawn as best-effort', () => {
+    expect(wakeDisplay({ spawnDetached: () => null, platform: 'darwin' })).toBe(false)
+    expect(wakeDisplay({ spawnDetached: () => { throw new Error('ENOENT') }, platform: 'darwin' })).toBe(false)
+    const spawnDetached = vi.fn(() => 1)
+    expect(wakeDisplay({ spawnDetached, platform: 'linux' })).toBe(false)
+    expect(spawnDetached).not.toHaveBeenCalled()
+  })
+
   it('reports a display-asleep GUI failure without the caret message', () => {
     throwAfterSeProbe(DISPLAY_ASLEEP_GUI_UNAVAILABLE_SENTINEL)
     const result = mailCompose({ to: ['a@example.com'], subject: 'Hi', body: 'Hello' })
     expect(result.ok).toBe(false)
     expect(result.delivered).toBe(false)
     expect(result.message).toContain('display is asleep')
+    expect(result.message).toContain('screen saver')
     expect(result.message).toContain('nothing was sent')
     expect(result.message).not.toContain('caret')
     expect(result.message).not.toContain('Hello')
