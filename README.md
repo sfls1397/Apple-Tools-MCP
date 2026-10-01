@@ -103,6 +103,16 @@ Claude Desktop keeps this in `~/Library/Application Support/Claude/claude_deskto
 
 The MCP process is short-lived: it exits when the client disconnects. Ongoing indexing belongs on the indexer, not on a wrapper that holds this process open.
 
+When stdin closes, requests already received still get their replies before the process exits (up to two minutes). A script can pipe a whole session in one go:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"script","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mail_search","arguments":{"query":"invoice","limit":5}}}' \
+| apple-tools-mcp
+```
+
 ### 4. Indexer
 
 On first use the server builds a search index of your mail, messages, and calendar events. That can take a while if you have a lot of mail. The index is stored in `~/.apple-tools-mcp/vector-index/`.
