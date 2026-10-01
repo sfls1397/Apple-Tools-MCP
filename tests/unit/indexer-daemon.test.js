@@ -187,6 +187,8 @@ describe('index.js wires the runtime helpers', () => {
   it('imports lock and runtime modules instead of inlining daemon policy', () => {
     expect(indexSrc).toContain('createIndexerLock')
     expect(indexSrc).toContain('bindStdinCloseExit')
+    expect(indexSrc).toContain('stdioInFlight = trackInFlightRequests(transport)')
+    expect(indexSrc).toContain('drainInFlightThenExit({')
     expect(indexSrc).toContain('beginIndexCycle')
     expect(indexSrc).toContain('applyIndexerCycleEnd')
     expect(indexSrc).toContain('mcpIndexingStartup')
