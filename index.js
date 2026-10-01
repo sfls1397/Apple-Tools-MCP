@@ -32,6 +32,7 @@ import {
   isWriteTool,
   dispatchWriteTool,
   executeWriteToolLocally,
+  loggedBridgeHandler,
   mcpWriteResult
 } from "./lib/writeTools.js";
 import { startWriteBridgeServer, defaultSocketPath } from "./lib/writeBridge.js";
@@ -112,7 +113,7 @@ async function startWriteBridge() {
   try {
     writeBridge = await startWriteBridgeServer({
       socketPath: WRITE_SOCKET_PATH,
-      handler: (tool, args) => executeWriteToolLocally(tool, args),
+      handler: loggedBridgeHandler((tool, args) => executeWriteToolLocally(tool, args), (msg) => console.error(msg)),
       log: (msg) => console.error(msg)
     });
     ensureEventKitSession({ helpers: EVENTKIT_JXA_HELPERS });

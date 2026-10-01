@@ -514,9 +514,9 @@ describe('AC: regression / packaging / security', () => {
     expect(cacheSrc).toContain('skipIf(!sources.embedder)')
   })
 
-  it('package version is 3.0.4 and dependencies are unchanged', () => {
-    expect(pkg.version).toBe('3.0.4')
-    expect(lock.version).toBe('3.0.4')
+  it('package version is 3.0.5 and dependencies are unchanged', () => {
+    expect(pkg.version).toBe('3.0.5')
+    expect(lock.version).toBe('3.0.5')
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
       '@huggingface/transformers',
       '@lancedb/lancedb',
