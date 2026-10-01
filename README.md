@@ -248,6 +248,7 @@ Your client can also call `audit_index`.
 | `mail_read` | Full email content by file path. |
 | `mail_senders` | Most frequent senders. |
 | `mail_thread` | Every email in a conversation. |
+| `mail_find` | Exact lookup in Mail's own database by subject prefix or text, sender, recipient, mailbox, and date. Returns every copy with its Message-ID. Does not wait on the index. |
 
 ### Messages
 
@@ -294,7 +295,7 @@ Every write tool accepts:
 | `dry_run` | Preview only. Nothing is sent or changed. This wins even if `confirm` is also set. |
 | `confirm` | Approves an action that is otherwise blocked. |
 
-Deletes need `confirm: true`: `mail_trash`, `calendar_remove`, `contacts_remove`, and `contacts_edit` when it clears every email or phone. One id per call. There is no bulk delete.
+Deletes need `confirm: true`: `mail_trash`, `calendar_remove`, `contacts_remove`, and `contacts_edit` when it clears every email or phone. These take one id per call, except `mail_trash`, which also takes a list (`message_ids`).
 
 Sends to more than one person need `confirm: true`: `mail_send` and `mail_forward` when To, Cc, and Bcc add up to more than one address, `mail_reply` with `reply_all: true`, and `messages_send` to several people or to a group chat. A single recipient sends on the first call. `mail_draft` never sends, so it does not need that confirm.
 
@@ -314,9 +315,11 @@ A missing or malformed id or recipient is refused. Calendar times are local date
 | `mail_forward` | `message_id` or `file_path`, `to[]` (required), `body`, `save_as_draft` | when recipients > 1 |
 | `mail_mark` | `message_id` or `file_path`, `status` (`read` or `unread`, default `read`) | no |
 | `mail_archive` | `message_id` or `file_path` | no |
-| `mail_trash` | `message_id` or `file_path` | yes |
+| `mail_trash` | `message_id` or `file_path`, or `message_ids[]` (up to 500) | yes |
 
 Pass the RFC822 Message-ID, or the `file_path` from `mail_search` or `mail_recent` and the server reads the Message-ID from the file. `mail_archive` moves the message to that account's Archive (or All Mail). `mail_trash` moves it to Trash.
+
+`mail_trash` with `message_ids` moves every copy of each message, for example the INBOX copy and the Sent copy of a mail you sent yourself, to that account's Trash. It finds each copy through Mail's database (`mail_find` uses the same lookup) and checks its Message-ID again before it moves it. One call stops starting new moves after about 35 seconds and reports `remaining`. Run it again for the rest. Copies that are already in Trash are left alone. Nothing is deleted for good. Mail empties Trash on its own schedule.
 
 `body_format: "html"` pastes the text into Mail's compose window. Mail may still create its own HTML version. New mail is a new message, not a quoted reply. Reply and forward still include the original.
 

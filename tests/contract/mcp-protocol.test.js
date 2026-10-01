@@ -17,7 +17,7 @@ const REQUIRED_SCHEMA_FIELDS = ['type', 'properties']
 // All tools that should be registered
 const EXPECTED_TOOLS = [
   'smart_search',
-  'mail_search', 'mail_recent', 'mail_date', 'mail_read', 'mail_senders', 'mail_thread',
+  'mail_search', 'mail_recent', 'mail_date', 'mail_read', 'mail_senders', 'mail_thread', 'mail_find',
   'messages_search', 'messages_recent', 'messages_conversation', 'messages_contacts',
   'calendar_search', 'calendar_date', 'calendar_free_time', 'calendar_upcoming',
   'calendar_week', 'calendar_recurring',
