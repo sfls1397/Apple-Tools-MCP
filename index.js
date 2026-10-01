@@ -21,6 +21,8 @@ import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.
 import {
   shouldConnectMcpStdio,
   bindStdinCloseExit,
+  trackInFlightRequests,
+  drainInFlightThenExit,
   beginIndexCycle,
   applyIndexerCycleEnd,
   mcpIndexingStartup,
@@ -166,9 +168,17 @@ process.on("unhandledRejection", (reason, promise) => {
 // MCP stdio clients exit when the host closes stdin. The indexer daemon,
 // HTTP server, and short-lived CLIs must not — LaunchAgent / KeepAlive
 // often attaches stdin to /dev/null, and the CLIs exit on their own.
+// A caller that pipes a batch and closes stdin still gets every reply:
+// in-flight requests finish (up to STDIN_CLOSE_DRAIN_MS) before exit.
+const STDIN_CLOSE_DRAIN_MS = 120000;
+let stdioInFlight = null;
 bindStdinCloseExit(process.stdin, INDEXER_MODE || PERMISSIONS_MODE || HTTP_MODE || HTTP_TOKEN_MODE, () => {
   console.error("Client disconnected. Exiting.");
-  shutdownIndexing(0);
+  drainInFlightThenExit({
+    inFlight: stdioInFlight,
+    timeoutMs: STDIN_CLOSE_DRAIN_MS,
+    exit: () => shutdownIndexing(0)
+  });
 });
 
 // Vector search imports
@@ -1624,6 +1634,7 @@ const server = createServer();
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  stdioInFlight = trackInFlightRequests(transport);
   console.error(`Apple Tools MCP server running (v${PACKAGE_VERSION})`);
   // Background indexing: indexer daemon when --mode=indexer; otherwise local
   // fallback on this stdio process only if indexer.lock is free.
