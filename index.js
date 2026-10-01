@@ -40,6 +40,7 @@ import {
 import { startWriteBridgeServer, defaultSocketPath } from "./lib/writeBridge.js";
 import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSession.js";
 import { EVENTKIT_JXA_HELPERS } from "./lib/calendarWrite.js";
+import { mailFind, MAILBOX_KINDS, MAIL_FIND_MAX_LIMIT } from "./lib/mailFind.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -1151,6 +1152,28 @@ function createServer() {
           required: ["file_path"],
         },
       },
+      {
+        name: "mail_find",
+        description: "Exact email lookup in Mail's own database (not the semantic index, so it never waits on indexing and matches filters exactly). Returns JSON: one row per copy (the same Message-ID in INBOX and Sent is two rows) with message_id, subject, from, to, received, mailbox, account_id. Needs at least one of subject_prefix, subject_contains, from, to, message_ids. Trash is excluded unless include_trash or mailboxes asks for it. Pair with mail_trash message_ids to clear what it finds.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subject_prefix: { type: "string", description: "Subject starts with this text (case-insensitive), e.g. '[Network] '" },
+            subject_contains: { type: "string", description: "Subject contains this text (case-insensitive)" },
+            from: { type: "string", description: "Exact sender address" },
+            from_me: { type: "boolean", description: "Only messages sent from one of your own addresses (any address that appears as a sender in a Sent mailbox)" },
+            to: { type: "string", description: "Exact recipient address (To or Cc)" },
+            to_only: { type: "boolean", description: "With to: that address is the only recipient" },
+            message_ids: { type: "array", items: { type: "string" }, description: "RFC822 Message-IDs (finds every copy)" },
+            mailboxes: { type: "array", items: { type: "string", enum: MAILBOX_KINDS }, description: "Only these mailbox kinds (default: every mailbox except trash)" },
+            include_trash: { type: "boolean", description: "Also return copies already in Trash (default false)" },
+            older_than_hours: { type: "number", description: "Only messages received more than this many hours ago" },
+            received_after: { type: "string", description: "ISO 8601 date/time; only messages received at or after it" },
+            received_before: { type: "string", description: "ISO 8601 date/time; only messages received before it" },
+            limit: { type: "number", description: `Maximum rows (default 50, max ${MAIL_FIND_MAX_LIMIT}); 'truncated' says when more matched` }
+          },
+        },
+      },
 
       // ============ MESSAGES TOOLS ============
       {
@@ -1451,6 +1474,10 @@ function createServer() {
 
         case "mail_read":
           result = readFullEmail(args.file_path);
+          break;
+
+        case "mail_find":
+          result = mailFind(args || {});
           break;
 
         // Messages tools

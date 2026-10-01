@@ -39,6 +39,9 @@ import {
   mailMark,
   mailArchive,
   mailTrash,
+  mailTrashMany,
+  buildBulkTrashScript,
+  parseBulkTrashOutput,
   resolveMailMessageId,
   probeMailAutomation,
   probeSystemEventsAutomation,
@@ -1543,6 +1546,103 @@ describe('mail_mark, mail_archive, mail_trash', () => {
     const confirmed = mailTrash({ message_id: 'abc@example.com', confirm: true })
     expect(confirmed.ok).toBe(true)
     expect(lastScript()).toContain('mailbox "Trash" of acct')
+  })
+})
+
+describe('mail_trash with message_ids (bulk)', () => {
+  const ACCT = '4C4A53E8-CD12-47E0-AFBE-F058004EB1D5'
+  const copy = (id, mid, mailboxPath = 'INBOX', mailbox = 'inbox') => ({ id, message_id: mid, mailbox, mailbox_path: mailboxPath, account_id: ACCT })
+  const locateOf = (copies, missingIds = []) => vi.fn(() => ({ copies, missingIds }))
+
+  it('never moves anything without confirm, and previews the copy count', () => {
+    const locate = locateOf([copy(11, 'a1@me.com'), copy(10, 'a1@me.com', 'Sent Messages', 'sent')], ['gone@me.com'])
+    const blocked = mailTrashMany({ message_ids: ['a1@me.com', '<gone@me.com>'] }, { locate })
+    expect(blocked.planned).toBe(true)
+    expect(blocked.message).toContain('CONFIRMATION REQUIRED')
+    expect(blocked.message).toContain('move 2 copies of 1 message to Trash (1 not found outside Trash)')
+    expect(locate).toHaveBeenCalledWith(['a1@me.com', 'gone@me.com'])
+
+    const dry = mailTrashMany({ message_ids: ['a1@me.com'], dry_run: true, confirm: true }, { locate })
+    expect(dry.planned).toBe(true)
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('refuses mixed, empty, oversized, or invalid id lists without touching Mail', () => {
+    expect(mailTrash({ message_ids: ['a@b.c'], message_id: 'a@b.c', confirm: true }).message).toContain('not both')
+    expect(mailTrashMany({ message_ids: [] }).message).toContain('empty')
+    expect(mailTrashMany({ message_ids: Array.from({ length: 501 }, (_, i) => `m${i}@x.com`) }).message).toContain('at most 500')
+    expect(mailTrashMany({ message_ids: ['has space@x.com'] }).message).toContain('invalid')
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('skips copies already in Trash or without an addressable account, and reports nothing to move', () => {
+    const locate = locateOf([copy(14, 'a1@me.com', 'Deleted Messages', 'trash'), { ...copy(15, 'a1@me.com'), account_id: null }])
+    const result = mailTrashMany({ message_ids: ['a1@me.com'], confirm: true }, { locate })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('nothing to move')
+    expect(result.message).toContain('unaddressable: 1')
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('moves each copy by internal id after re-checking its Message-ID', () => {
+    const locate = locateOf([copy(11, 'a1@me.com'), copy(10, 'a1@me.com', 'Sent Messages', 'sent')])
+    osascript.mockImplementation(() => '11\tmoved\n10\tmoved\n')
+    const result = mailTrashMany({ message_ids: ['a1@me.com'], confirm: true }, { locate })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('moved 2 of 2 copies to Trash')
+    const script = lastScript()
+    expect(script).toContain('whose id is rid')
+    expect(script).toContain('if (message id of msg) is not mid then return "mismatch"')
+    expect(script).toContain('{"Deleted Messages", "Trash", "Bin", "Deleted Items"}')
+    expect(script).toContain(`{"${ACCT}", "Sent Messages", 10, "a1@me.com"}`)
+    expect(script).not.toContain('delete msg')
+  })
+
+  it('counts stale rows, budget leftovers, and failures separately', () => {
+    const locate = locateOf([copy(1, 'a@me.com'), copy(2, 'b@me.com'), copy(3, 'c@me.com'), copy(4, 'd@me.com'), copy(5, 'e@me.com')])
+    osascript.mockImplementation(() => '1\tmoved\n2\tmismatch\n3\tskipped\n4\terror -1728\n')
+    const result = mailTrashMany({ message_ids: ['a@me.com', 'b@me.com', 'c@me.com', 'd@me.com', 'e@me.com'], confirm: true }, { locate })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('moved: 1')
+    expect(result.message).toContain('stale: 1')
+    // copy 5 never reported back: treated as not attempted
+    expect(result.message).toContain('remaining: 2')
+    expect(result.message).toContain('failed: 1')
+    expect(result.message).toContain('failure_reasons: error -1728')
+    expect(result.message).toContain('run again for the rest')
+  })
+
+  it('maps an osascript hang to timeout guidance', () => {
+    const locate = locateOf([copy(11, 'a1@me.com')])
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailTrashMany({ message_ids: ['a1@me.com'], confirm: true }, { locate })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
+  })
+
+  it('reports a lookup failure instead of guessing', () => {
+    const locate = vi.fn(() => {
+      throw new Error('Give node Full Disk Access')
+    })
+    const result = mailTrashMany({ message_ids: ['a1@me.com'], confirm: true }, { locate })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('Full Disk Access')
+  })
+
+  it('escapes mailbox paths and validates ids in the script', () => {
+    const script = buildBulkTrashScript([copy(7, 'x@me.com', 'Work/"Q4"', 'other')], { budgetSec: 20 })
+    expect(script).toContain('"Work/\\"Q4\\""')
+    expect(script).toContain('> 20 then')
+    expect(() => buildBulkTrashScript([copy('7; do shell script "x"', 'x@me.com')])).toThrow('id must be an integer')
+  })
+
+  it('parses status lines', () => {
+    const map = parseBulkTrashOutput('5\tmoved\r6\terror -1743\njunk line\n')
+    expect(map.get(5)).toBe('moved')
+    expect(map.get(6)).toBe('error -1743')
+    expect(map.size).toBe(2)
   })
 })
 
