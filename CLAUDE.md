@@ -1,6 +1,6 @@
 # Project Architecture
 
-Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 38 tools: 22 read/search/admin tools plus the 16 write tools added in 2.0.0. There are no Apple Reminders tools.
+Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 39 tools: 23 read/search/admin tools plus the 16 write tools. There are no Apple Reminders tools.
 
 A long-lived **indexer daemon** (`--mode=indexer` / `apple-tools-indexer`) owns `~/.apple-tools-mcp/indexer.lock` and refreshes the vector index on an interval from `~/.apple-tools-mcp/config.json` (env `INDEX_INTERVAL_MS` overrides; default 5 minutes, clamped to 15s–6h). MCP stdio clients stay short-lived, exit on stdin close, and index locally only when no daemon holds the lock.
 
@@ -49,6 +49,10 @@ Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals fr
 ### lib/indexerRuntime.js -- Daemon vs stdio control flow
 
 Stdin-exit policy, overlapping-cycle skip, lock retention across daemon cycles, MCP local-fallback startup, and daemon lock retry.
+
+### lib/mailFind.js -- Exact mail lookup (Envelope Index)
+
+`mail_find` and bulk `mail_trash` read Mail's own `~/Library/Mail/V<n>/MailData/Envelope Index` with `sqlite3 -readonly` (Full Disk Access; Mail stays the only writer). Filters are exact (subject prefix/contains with escaped LIKE, sender, recipient, sole recipient, from-me = any address seen as a sender in a Sent mailbox, Message-IDs, mailbox kind, dates) and every copy of a message is its own row. A message's AppleScript `id` is its Envelope Index ROWID, so bulk `mail_trash` addresses each copy as `messages of <its mailbox> whose id is N` (~2s on a 60k INBOX) instead of `atmFindMessage`'s 30-38s scan, re-checks the Message-ID before moving, and stops starting new moves after `MAIL_BULK_TRASH_BUDGET_SEC` so the call answers inside the MCP deadline.
 
 ### lib/writeTools.js -- Write tool surface (2.0.0)
 
