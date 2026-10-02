@@ -583,6 +583,7 @@ describe('mail_send', () => {
     expect(result.ok).toBe(false)
     expect(result.delivered).toBe(false)
     expect(result.mailbox).toBeNull()
+    expect(result.unconfirmed).toBe(true)
     expect(result.message).toContain(MAIL_VERIFY_MISS_GUIDANCE)
     expect(result.message).toContain('mail_send: unconfirmed')
     expect(result.message).not.toContain('mail_send failed')
@@ -1277,7 +1278,8 @@ describe('mail_reply and mail_forward', () => {
     expect(verifyScript).toContain('"Re: "')
     expect(verifyScript).toContain('atmFindMessage')
     expect(verifyScript).toContain('sent mailbox')
-    expect(verifyScript).toContain('outgoing mailbox')
+    expect(verifyScript).toContain('to outbox')
+    expect(verifyScript).not.toContain('outgoing mailbox')
   })
 
   it('does not label a missed Sent-verify hang as TCC and tells clients to Sent-check', () => {
@@ -1379,7 +1381,8 @@ describe('mail Sent verify helpers', () => {
     expect(byReply).toContain('The original, not the reply we just sent')
     expect(byReply).toContain('atmFindMessage')
     expect(byReply).toContain('sent mailbox')
-    expect(byReply).toContain('outgoing mailbox')
+    expect(byReply).toContain('to outbox')
+    expect(byReply).not.toContain('outgoing mailbox')
     expect(byReply).toContain('source of msg')
     expect(byReply).toContain('return "SENT"')
     expect(byReply).toContain('return "OUTBOX"')
