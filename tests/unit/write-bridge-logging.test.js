@@ -43,6 +43,15 @@ describe('loggedBridgeHandler', () => {
     await dry('mail_send', {})
     expect(lines[2]).toMatch(/write bridge: mail_send planned \(dry run \/ needs confirm\) in \d+ms$/)
   })
+
+  it("logs a send Mail accepted but Sent/Outbox didn't show yet as unconfirmed, not failed", async () => {
+    const lines = []
+    const h = loggedBridgeHandler(async () => ({ ok: false, unconfirmed: true, message: `mail_send: unconfirmed — attempted to send mail to ${ADDR}.` }), (m) => lines.push(m))
+    await h('mail_send', {})
+    expect(lines[0]).toMatch(/write bridge: mail_send unconfirmed \(sent; not yet seen in Sent\/Outbox\) in \d+ms$/)
+    expect(lines[0]).not.toContain('failed')
+    expect(lines[0]).not.toContain(ADDR)
+  })
 })
 
 describe('dispatchWriteTool declined by the daemon', () => {
