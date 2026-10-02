@@ -9,6 +9,8 @@ import {
   buildMailBodyPasteHandler,
   buildAtmFocusedElementHandler,
   buildSystemEventsAutomationProbeScript,
+  buildReplyScript,
+  buildForwardScript,
   ATM_FOCUSED_WHOSE_QUERY,
   ATM_FOCUSED_AX_QUERY,
   ATM_APPLESCRIPT_RESERVED_SHORTS
@@ -687,6 +689,45 @@ describe('mail compose AXTitle compile (2.1.4)', () => {
     expect(script).toContain('BODY_FOCUS_UNPROVEN')
     expect(script).not.toContain('click at')
     expect(script).not.toContain('AXUIElementSetAttributeValue')
+  })
+})
+
+describe('mail reply/forward paste (blank body regression)', () => {
+  it('escapes a reply body and never uses AppleScript content', () => {
+    const body = '" & do shell script "whoami" & "\n---\nTXID: 1'
+    const script = buildReplyScript({
+      messageId: 'id" & beep',
+      body,
+      replyAll: false,
+      sendNow: true
+    })
+    expect(script).not.toContain('do shell script "whoami"')
+    expect(script).not.toContain('id" & beep')
+    expect(script).toContain('atmFillMailBody')
+    expect(script).toContain(', theReply, false)')
+    expect(script).toContain('with opening window')
+    expect(script).not.toContain('set content to')
+    expect(script).not.toMatch(/content:/)
+    expect(script).toContain('delete theReply')
+    const fillAt = script.indexOf('atmFillMailBody')
+    const sendAt = script.lastIndexOf('send theReply')
+    expect(script.indexOf('delete theReply')).toBeGreaterThan(fillAt)
+    expect(sendAt).toBeGreaterThan(script.indexOf('delete theReply'))
+  })
+
+  it('escapes a forward note and never uses AppleScript content', () => {
+    const body = '" & do shell script "whoami" & "'
+    const script = buildForwardScript({
+      messageId: 'abc@example.com',
+      to: ['a@example.com'],
+      body,
+      sendNow: true
+    })
+    expect(script).not.toContain('do shell script "whoami"')
+    expect(script).toContain('atmFillMailBody')
+    expect(script).toContain(', theForward, false)')
+    expect(script).not.toContain('set content to')
+    expect(script).not.toMatch(/content:/)
   })
 })
 
