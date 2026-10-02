@@ -67,6 +67,7 @@ import {
   wakeDisplay,
   MAIL_COMPOSE_TITLE_MARKER_MAX,
   MAIL_COMPOSE_TOP_UI_MAX,
+  MAIL_BODY_START_KEY_CODE,
   ATM_AX_HIT_TEST_MARKER,
   MAIL_COMPOSE_TIMEOUT_MS,
   MAIL_FIND_TIMEOUT_MS,
@@ -83,6 +84,7 @@ import {
   buildAtmFocusedElementHandler,
   buildReplyScript,
   buildForwardScript,
+  quoteIntroPasteText,
   buildFindSentByInReplyToScript,
   buildFindSentBySubjectScript,
   buildFindSentByRecipientAndSubjectScript,
@@ -340,7 +342,7 @@ describe('mail_send', () => {
     const script = firstScript()
     expect(script).not.toContain('do shell script "whoami"')
     expect(script).toContain('\\" & do shell script \\"whoami\\"')
-    expect(script).toContain('atmFillMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell", "x\\" & do shell script \\"whoami\\" & \\"", "Hi", newMessage)')
+    expect(script).toContain('atmFillMailBody("x\\" & do shell script \\"whoami\\" & \\"\\nend tell", "x\\" & do shell script \\"whoami\\" & \\"", "Hi", newMessage, true)')
   })
 
   it('sends HTML via native paste with tags stripped, never AppleScript html content', () => {
@@ -354,7 +356,7 @@ describe('mail_send', () => {
     expect(result.ok).toBe(true)
     const script = firstScript()
     expect(script).toContain('make new outgoing message')
-    expect(script).toContain('atmFillMailBody("All good", "All good", "Report", newMessage)')
+    expect(script).toContain('atmFillMailBody("All good", "All good", "Report", newMessage, true)')
     expect(script).not.toContain('html content')
     expect(script).not.toContain('set html content')
     expect(script).not.toContain('<blockquote')
@@ -365,7 +367,7 @@ describe('mail_send', () => {
   it('defaults to a plain text body via make new + keystroke, not AppleScript content', () => {
     mailCompose({ to: ['a@example.com'], subject: 'Report', body: 'All good' })
     const script = firstScript()
-    expect(script).toContain('atmFillMailBody("All good", "All good", "Report", newMessage)')
+    expect(script).toContain('atmFillMailBody("All good", "All good", "Report", newMessage, true)')
     expect(script).not.toContain('html content')
     expect(script).not.toMatch(/content:"All good"/)
     expect(script).toContain('make new outgoing message with properties {subject:"Report", visible:true}')
@@ -623,7 +625,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(handler).toContain('keystroke "a" using command down')
     expect(handler).toContain('System Events')
     expect(handler).toContain('ACCESSIBILITY_DENIED')
-    expect(handler).toContain('atmFillMailBody(bodyText, needle, titleMarker, msg)')
+    expect(handler).toContain('atmFillMailBody(bodyText, needle, titleMarker, msg, replaceBody)')
     expect(handler).toContain('set focused of atmBody to true')
     expect(handler).toContain('entire contents of atmWin')
     expect(handler).toContain('BODY_FOCUS_UNPROVEN')
@@ -850,7 +852,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     })
 
     expect(script).toContain('set newMessage to make new outgoing message with properties {subject:"Quick note about your Mac", visible:true}')
-    expect(script).toContain('atmFillMailBody("Quick note about your Mac\\nSecond line", "Quick note about your Mac", "Quick note about your Mac", newMessage)')
+    expect(script).toContain('atmFillMailBody("Quick note about your Mac\\nSecond line", "Quick note about your Mac", "Quick note about your Mac", newMessage, true)')
     expect(script).toContain('address:"a@example.com"')
     expect(script).toContain('send newMessage')
     expect(script).toContain('count of to recipients of newMessage')
@@ -904,7 +906,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     })
 
     expect(script).toContain('make new outgoing message')
-    expect(script).toContain('atmFillMailBody("Quick note about your Mac Second line", "Quick note about your Mac Second line", "Quick note about your Mac", newMessage)')
+    expect(script).toContain('atmFillMailBody("Quick note about your Mac Second line", "Quick note about your Mac Second line", "Quick note about your Mac", newMessage, true)')
     expect(script).toContain('count of to recipients of newMessage')
     expect(script).toContain('subject of newMessage as string')
     expect(script).toContain('does not contain "Quick note about your Mac Second line"')
@@ -919,14 +921,38 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).not.toMatch(/set newMessage to mailto/)
   })
 
-  it('keeps reply/forward quoting of the original message', () => {
+  it('prepends reply/forward intro via paste without replacing the quote (no AppleScript content)', () => {
     const reply = buildReplyScript({
       messageId: 'abc@example.com',
       body: 'Thanks',
       replyAll: false,
       sendNow: true
     })
-    expect(reply).toContain('set content to "Thanks" & return & content')
+    expect(reply).toContain('atmFillMailBody("Thanks\\n", "Thanks", atmTitleMarker, theReply, false)')
+    expect(reply).toContain('reply theMessage with opening window without reply to all')
+    expect(reply).toContain('if replaceBody then')
+    expect(reply).toContain('keystroke "a" using command down')
+    expect(reply).toContain(`key code ${MAIL_BODY_START_KEY_CODE} using command down`)
+    expect(reply).toContain('atmComposeTitleMarker')
+    expect(reply).toContain('delete theReply')
+    expect(reply).not.toContain('set content to')
+    expect(reply).not.toMatch(/content:/)
+    expect(reply).not.toContain('without opening window')
+    expect(reply).not.toContain('visible:false')
+    const fillCall = reply.indexOf('atmFillMailBody("Thanks\\n"')
+    const deleteAt = reply.indexOf('delete theReply')
+    const sendAt = reply.lastIndexOf('send theReply')
+    expect(fillCall).toBeGreaterThan(-1)
+    expect(deleteAt).toBeGreaterThan(fillCall)
+    expect(sendAt).toBeGreaterThan(deleteAt)
+    const replaceIf = reply.indexOf('if replaceBody then')
+    const cmdA = reply.indexOf('keystroke "a" using command down', replaceIf)
+    const cmdUp = reply.indexOf(`key code ${MAIL_BODY_START_KEY_CODE} using command down`, replaceIf)
+    const paste = reply.indexOf('keystroke "v" using command down', replaceIf)
+    expect(replaceIf).toBeGreaterThan(-1)
+    expect(cmdA).toBeGreaterThan(replaceIf)
+    expect(cmdUp).toBeGreaterThan(cmdA)
+    expect(paste).toBeGreaterThan(cmdUp)
 
     const forward = buildForwardScript({
       messageId: 'abc@example.com',
@@ -934,7 +960,12 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
       body: 'FYI',
       sendNow: true
     })
-    expect(forward).toContain('set content to "FYI" & return & content')
+    expect(forward).toContain('atmFillMailBody("FYI\\n", "FYI", atmTitleMarker, theForward, false)')
+    expect(forward).toContain('forward theMessage with opening window')
+    expect(forward).toContain('delete theForward')
+    expect(forward).not.toContain('set content to')
+    expect(forward).not.toMatch(/content:/)
+    expect(forward).not.toContain('without opening window')
   })
 
   it('tells users how mail sends work, without a version history', () => {
@@ -1239,8 +1270,11 @@ describe('mail_reply and mail_forward', () => {
     expect(result.ok).toBe(true)
     const script = firstScript()
     expect(script).toContain('atmFindMessage("abc@example.com")')
-    expect(script).toContain('reply theMessage without opening window without reply to all')
+    expect(script).toContain('reply theMessage with opening window without reply to all')
+    expect(script).toContain('atmFillMailBody("Thanks\\n", "Thanks", atmTitleMarker, theReply, false)')
     expect(script).toContain('send theReply')
+    expect(script).not.toContain('set content to')
+    expect(isSystemEventsProbeScript(osascript.mock.calls[0][0])).toBe(true)
   })
 
   it('treats reply-all as a multi-recipient send', () => {
@@ -1260,11 +1294,11 @@ describe('mail_reply and mail_forward', () => {
   })
 
   it('returns success when a hung reply is already in Sent', () => {
-    osascript
-      .mockImplementationOnce(() => {
-        throw new Error('spawnSync osascript ETIMEDOUT')
-      })
-      .mockImplementationOnce(() => 'FOUND')
+    osascript.mockImplementation((script) => {
+      if (isSystemEventsProbeScript(script)) return 'OK'
+      if (isMailSentVerifyScript(script)) return 'FOUND'
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
     const result = mailReply({ message_id: '<abc@example.com>', body: 'Thanks' })
     expect(result.ok).toBe(true)
     expect(result.recovered).toBe(true)
@@ -1272,7 +1306,7 @@ describe('mail_reply and mail_forward', () => {
     expect(result.message).toContain('verified in Sent')
     expect(result.message).not.toContain('TCC')
     expect(result.message).not.toContain('timed out')
-    const verifyScript = osascript.mock.calls[1][0]
+    const verifyScript = firstVerifyScript()
     expect(verifyScript).toContain('In-Reply-To:')
     expect(verifyScript).toContain('abc@example.com')
     expect(verifyScript).toContain('"Re: "')
@@ -1283,11 +1317,11 @@ describe('mail_reply and mail_forward', () => {
   })
 
   it('does not label a missed Sent-verify hang as TCC and tells clients to Sent-check', () => {
-    osascript
-      .mockImplementationOnce(() => {
-        throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
-      })
-      .mockImplementationOnce(() => 'NOT_FOUND')
+    osascript.mockImplementation((script) => {
+      if (isSystemEventsProbeScript(script)) return 'OK'
+      if (isMailSentVerifyScript(script)) return 'NOT_FOUND'
+      throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
+    })
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('mail_reply failed')
@@ -1303,9 +1337,7 @@ describe('mail_reply and mail_forward', () => {
   })
 
   it('labels a hard Mail deny on reply as TCC and skips Sent-verify', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('Not authorized to send Apple events to Mail. (-10004)')
-    })
+    throwAfterSeProbe('Not authorized to send Apple events to Mail. (-10004)')
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks' })
     expect(result.ok).toBe(false)
     expect(result.message).toContain(MAIL_TCC_GUIDANCE)
@@ -1313,41 +1345,42 @@ describe('mail_reply and mail_forward', () => {
     expect(result.message).toContain('TCC / Automation deny')
     expect(result.message).not.toContain('verified in Sent')
     expect(result.message).not.toContain('find/reply/send hang')
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
+    expect(isSystemEventsProbeScript(osascript.mock.calls[0][0])).toBe(true)
   })
 
   it('maps a pre-send find/reply hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('spawnSync osascript ETIMEDOUT')
-    })
+    throwAfterSeProbe('spawnSync osascript ETIMEDOUT')
     const result = mailReply({ message_id: 'abc@example.com', body: 'Thanks', save_as_draft: true })
     expect(result.ok).toBe(false)
     expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
     expect(result.message).toContain('find/reply/open before send')
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
   })
 
   it('forwards to a validated recipient', () => {
     const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
     expect(result.ok).toBe(true)
     const script = firstScript()
-    expect(script).toContain('forward theMessage without opening window')
+    expect(script).toContain('forward theMessage with opening window')
+    expect(script).toContain('atmFillMailBody("FYI\\n", "FYI", atmTitleMarker, theForward, false)')
     expect(script).toContain('address:"c@example.com"')
+    expect(script).not.toContain('set content to')
   })
 
   it('returns success when a hung forward is already in Sent', () => {
-    osascript
-      .mockImplementationOnce(() => {
-        throw new Error('spawnSync osascript ETIMEDOUT')
-      })
-      .mockImplementationOnce(() => 'FOUND')
+    osascript.mockImplementation((script) => {
+      if (isSystemEventsProbeScript(script)) return 'OK'
+      if (isMailSentVerifyScript(script)) return 'FOUND'
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
     const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'], body: 'FYI' })
     expect(result.ok).toBe(true)
     expect(result.recovered).toBe(true)
     expect(result.message).toContain('mail_forward: forwarded')
     expect(result.message).toContain('verified in Sent')
-    const verifyScript = osascript.mock.calls[1][0]
+    const verifyScript = firstVerifyScript()
     expect(verifyScript).toContain('Fwd:')
     expect(verifyScript).toContain('Begin forwarded message')
     expect(verifyScript).toContain('c@example.com')
@@ -1355,9 +1388,7 @@ describe('mail_reply and mail_forward', () => {
   })
 
   it('maps a pre-send forward/open hang to timeout guidance, not MAIL_TCC_GUIDANCE', () => {
-    osascript.mockImplementation(() => {
-      throw new Error('Mail got an error: AppleEvent timed out. (-1712)')
-    })
+    throwAfterSeProbe('Mail got an error: AppleEvent timed out. (-1712)')
     const result = mailForward({
       message_id: 'abc@example.com',
       to: ['c@example.com'],
@@ -1367,7 +1398,78 @@ describe('mail_reply and mail_forward', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
-    expect(osascript).toHaveBeenCalledTimes(1)
+    expect(osascript).toHaveBeenCalledTimes(2)
+  })
+
+  it('pastes a multi-paragraph reply with dashes/TXID instead of AppleScript set content', () => {
+    const body = [
+      'Hi,',
+      '',
+      'Please send the TXID so we can trace the payment.',
+      '',
+      '---',
+      'TXID: 0xabc123def456',
+      'Thanks'
+    ].join('\n')
+    const messageId = 'CADqYV_EgCKSW6jWgkZV4AhyFO=LZaFAwtsBxjTeJavYNkNnu=w@mail.gmail.com'
+    const result = mailReply({ message_id: messageId, body })
+    expect(result.ok).toBe(true)
+    const script = firstScript()
+    expect(quoteIntroPasteText(body)).toBe(`${body}\n`)
+    expect(script).toContain('atmFillMailBody(')
+    expect(script).toContain('TXID: 0xabc123def456')
+    expect(script).toContain('---')
+    expect(script).toContain('\\nPlease send the TXID')
+    expect(script).toContain(', theReply, false)')
+    expect(script).toContain('if replaceBody then')
+    expect(script).toContain(`key code ${MAIL_BODY_START_KEY_CODE} using command down`)
+    expect(script).toContain('BODY_FOCUS_FAILED')
+    expect(script).toContain('BODY_FOCUS_UNPROVEN')
+    expect(script).toContain('does not contain "Hi,"')
+    expect(script).not.toContain('set content to')
+    expect(script).not.toMatch(/content:/)
+    expect(script).not.toContain('without opening window')
+    const fillAt = script.indexOf('atmFillMailBody(')
+    const sendAt = script.lastIndexOf('send theReply')
+    const deleteAt = script.indexOf('delete theReply')
+    expect(fillAt).toBeGreaterThan(-1)
+    expect(deleteAt).toBeGreaterThan(fillAt)
+    expect(sendAt).toBeGreaterThan(deleteAt)
+  })
+
+  it('fails closed locally when a reply body cannot be pasted, and returns unsupported from the daemon', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const daemon = mailReply(
+      { message_id: 'abc@example.com', body: 'Thanks' },
+      { indexerMode: true }
+    )
+    expect(daemon.ok).toBe(false)
+    expect(daemon.delivered).toBe(false)
+    expect(daemon.unsupported).toBe(true)
+    expect(daemon.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(daemon.message).not.toContain('Thanks')
+
+    osascript.mockReset()
+    throwAfterSeProbe(BODY_FOCUS_FAILED_SENTINEL)
+    const local = mailReply({ message_id: 'abc@example.com', body: 'Thanks' }, { indexerMode: false })
+    expect(local.ok).toBe(false)
+    expect(local.delivered).toBe(false)
+    expect(local.unsupported).toBeUndefined()
+    expect(local.message).toContain('could not be moved into the message body')
+    expect(local.message).toContain('nothing was sent')
+  })
+
+  it('forwards without a note without AppleScript content or a body paste', () => {
+    const result = mailForward({ message_id: 'abc@example.com', to: ['c@example.com'] })
+    expect(result.ok).toBe(true)
+    const script = firstScript()
+    expect(script).toContain('forward theMessage with opening window')
+    expect(script).not.toContain('atmFillMailBody')
+    expect(script).not.toContain('set content to')
+    expect(script).not.toMatch(/content:/)
+    expect(osascript.mock.calls.every(([s]) => !isSystemEventsProbeScript(s))).toBe(true)
   })
 })
 
