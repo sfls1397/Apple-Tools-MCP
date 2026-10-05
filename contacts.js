@@ -104,7 +104,7 @@ function findContactsDatabase() {
  * Normalize phone number for consistent matching
  * Strips all non-digit characters except leading +
  */
-function normalizePhone(phone) {
+export function normalizePhone(phone) {
   if (!phone) return "";
   // Keep leading + for international, then only digits
   const hasPlus = phone.startsWith("+");
@@ -371,6 +371,18 @@ export function resolveByName(name) {
   }
 
   return matches;
+}
+
+/**
+ * Resolve a name to contacts by exact full name, first name, or nickname
+ * (case-insensitive). No partial matching.
+ * @param {string} name - Name to look up
+ * @returns {object[]} Matching contacts (may be empty)
+ */
+export function resolveByExactName(name) {
+  if (!name) return [];
+  loadContacts();  // Ensure contacts are loaded
+  return nameToContact.get(name.toLowerCase().trim()) || [];
 }
 
 /**

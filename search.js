@@ -1,7 +1,8 @@
 import * as chrono from "chrono-node";
 import { safeOsascript } from "./lib/shell.js";
 import { safeMatch, validateSearchQuery, toUnixMillis } from "./lib/validators.js";
-import { embed, getOpenTable, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, formatContact } from "./indexer.js";
+import { embed, getOpenTable, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, resolveByExactName, normalizePhone, formatContact } from "./indexer.js";
+import { createMessageContactMatcher, describeMessagePeer } from "./lib/messageContact.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
 
 // ============ CACHING ============
@@ -1024,12 +1025,8 @@ export async function searchMessages(query, options = {}) {
     }
 
     if (contact) {
-      const contactLower = contact.toLowerCase();
-      results = results.filter(r => {
-        const sender = (r.sender || "").toLowerCase();
-        const chatId = (r.chatIdentifier || "").toLowerCase();
-        return sender.includes(contactLower) || chatId.includes(contactLower);
-      });
+      const matcher = createMessageContactMatcher(contact, { resolveExactName: resolveByExactName, normalizePhone });
+      if (matcher) results = results.filter(r => matcher.matches(r));
     }
 
     if (groupChatOnly) {
@@ -1057,7 +1054,11 @@ export async function searchMessages(query, options = {}) {
     if (results.length === 0) {
       let filterMsg = "";
       if (daysBack > 0) filterMsg += ` in the last ${daysBack} days`;
-      if (contact) filterMsg += ` with ${contact}`;
+      if (contact) {
+        filterMsg += ` with ${contact}`;
+        const matcher = createMessageContactMatcher(contact, { resolveExactName: resolveByExactName, normalizePhone });
+        if (matcher?.isName && matcher.resolvedCount === 0) filterMsg += ` (no contact named "${contact}")`;
+      }
       if (groupChatOnly) filterMsg += " in group chats";
       if (groupChatName) filterMsg += ` in "${groupChatName}"`;
       if (hasAttachment) filterMsg += " with attachments";
@@ -1082,6 +1083,7 @@ export async function searchMessages(query, options = {}) {
         dateTimestamp: toUnixMillis(row.dateTimestamp) || null,
         sender: sender,
         senderContact: senderContact,  // Resolved contact name (if found)
+        to: sender === "Me" ? messagePeer(row) : null,
         text: row.text || "",
         chatName: row.chatName || "",
         isGroupChat: row.isGroupChat || false,
@@ -1105,6 +1107,11 @@ export async function searchMessages(query, options = {}) {
   }
 }
 
+// Who a from-me message was sent to (contact name + handle, or the group chat)
+function messagePeer(row) {
+  return describeMessagePeer(row, { resolvePhone, resolveEmail, formatContact });
+}
+
 // Get recent messages without semantic search
 export async function getRecentMessageResults(limit = 10, daysBack = 1) {
   try {
@@ -1125,6 +1132,7 @@ export async function getRecentMessageResults(limit = 10, daysBack = 1) {
         dateTimestamp: toUnixMillis(row.dateTimestamp) || null,
         sender: sender,
         senderContact: senderContact,
+        to: sender === "Me" ? messagePeer(row) : null,
         text: row.text || "",
         isGroupChat: row.isGroupChat || false
       };
@@ -1153,7 +1161,11 @@ export async function getConversationResults(contact, limit = 50) {
     }));
 
     if (formattedResults.length === 0) {
-      return { success: true, results: [], message: `No conversation found with ${contact}` };
+      const matcher = createMessageContactMatcher(contact, { resolveExactName: resolveByExactName, normalizePhone });
+      const hint = matcher?.isName && matcher.resolvedCount === 0
+        ? ` (no contact named "${contact}"; try a phone number or email)`
+        : "";
+      return { success: true, results: [], message: `No conversation found with ${contact}${hint}` };
     }
 
     return { success: true, results: formattedResults, contact };
@@ -1173,6 +1185,7 @@ export function formatMessageResults(searchResult) {
     const senderDisplay = r.senderContact ? `${r.senderContact} (${r.sender})` : r.sender;
     result += `\nDate: ${r.date}\nFrom: ${senderDisplay}`;
     if (r.isGroupChat) result += " (Group)";
+    if (r.to) result += `\nTo: ${r.to}`;
     result += `\nMessage: ${r.text}`;
     return result + "\n---";
   }).join("\n");

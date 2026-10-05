@@ -16,6 +16,8 @@ import {
 import { safeSqlite3Json, safeOsascript, safeFind } from "./lib/shell.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
 import { createLanceTableCache, LANCE_CONNECT_OPTIONS } from "./lib/lancedbTables.js";
+import { createMessageContactMatcher } from "./lib/messageContact.js";
+import { resolveByExactName, normalizePhone } from "./contacts.js";
 
 // Re-export contact functions for use by other modules
 export {
@@ -23,6 +25,8 @@ export {
   resolveEmail,
   resolvePhone,
   resolveByName,
+  resolveByExactName,
+  normalizePhone,
   lookupContact,
   searchContacts,
   getContactIdentifiers,
@@ -1538,7 +1542,7 @@ export async function getRecentMessages(limit = 10, daysBack = 1) {
   try {
     const cutoff = Date.now() - (daysBack * 24 * 60 * 60 * 1000);
     const results = await tables.messages.query()
-      .select(["id", "date", "dateTimestamp", "sender", "text", "chatId", "isGroupChat"])
+      .select(["id", "date", "dateTimestamp", "sender", "text", "chatId", "chatIdentifier", "chatName", "isGroupChat"])
       .toArray();
 
     const filtered = results
@@ -1559,17 +1563,15 @@ export async function getConversation(contact, limit = 50) {
   if (!tables.messages) return [];
 
   try {
-    const contactLower = contact.toLowerCase();
+    const matcher = createMessageContactMatcher(contact, { resolveExactName: resolveByExactName, normalizePhone });
+    if (!matcher) return [];
     const results = await tables.messages.query()
       .select(["id", "date", "dateTimestamp", "sender", "text", "chatId", "chatIdentifier"])
       .toArray();
 
-    // Find messages where sender or chatIdentifier contains the contact
-    const filtered = results.filter(r => {
-      const sender = (r.sender || "").toLowerCase();
-      const chatId = (r.chatIdentifier || "").toLowerCase();
-      return sender.includes(contactLower) || chatId.includes(contactLower);
-    });
+    // Sender or chat handle matches the contact (name resolved to its handles);
+    // from-me rows match through the 1:1 chat's handle
+    const filtered = results.filter(r => matcher.matches(r));
 
     // Sort chronologically (oldest first for conversation view)
     return filtered
