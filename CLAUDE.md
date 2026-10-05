@@ -50,6 +50,10 @@ Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals fr
 
 Stdin-exit policy, overlapping-cycle skip, lock retention across daemon cycles, MCP local-fallback startup, and daemon lock retry.
 
+### lib/messageContact.js -- Messages contact matching and reply recipients
+
+Pure helpers (lookups injected) used by `messages_search`, `messages_recent`, and `messages_conversation`. `createMessageContactMatcher` matches a `contact` argument against a row's `sender` / `chatIdentifier`: raw substring as before, phone input by normalized digits, email exactly, and a name by **exact** Contacts full name / first name / nickname (`resolveByExactName`) expanded to that contact's phones and emails — never fuzzy, so a short name cannot pull in other people's threads. From-me rows match through the 1:1 chat's handle, so a thread includes my replies. `describeMessagePeer` names who a from-me row went to (`Dad (+1…)` or `group chat "Name"`); search and recent output print it as a `To:` line, so "did I reply?" can be answered from a flat list.
+
 ### lib/mailFind.js -- Exact mail lookup (Envelope Index)
 
 `mail_find` and bulk `mail_trash` read Mail's own `~/Library/Mail/V<n>/MailData/Envelope Index` with `sqlite3 -readonly` (Full Disk Access; Mail stays the only writer). Filters are exact (subject prefix/contains with escaped LIKE, sender, recipient, sole recipient, from-me = any address seen as a sender in a Sent mailbox, Message-IDs, mailbox kind, dates) and every copy of a message is its own row. A message's AppleScript `id` is its Envelope Index ROWID, so bulk `mail_trash` addresses each copy as `messages of <its mailbox> whose id is N` (~2s on a 60k INBOX) instead of `atmFindMessage`'s 30-38s scan, re-checks the Message-ID before moving, and stops starting new moves after `MAIL_BULK_TRASH_BUDGET_SEC` so the call answers inside the MCP deadline.
