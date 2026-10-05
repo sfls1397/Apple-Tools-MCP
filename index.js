@@ -1185,7 +1185,7 @@ function createServer() {
             query: { type: "string", description: "Natural language search (e.g., 'dinner plans', 'about the trip', 'address')" },
             limit: { type: "number", description: "Maximum results (default 30)" },
             days_back: { type: "number", description: "Only messages from last N days (0 = all time)" },
-            contact: { type: "string", description: "Filter by contact name or phone number" },
+            contact: { type: "string", description: "Filter by contact: exact Contacts name (full name, first name, or nickname, e.g. 'Dad'), phone number in any format, or email. Includes my replies in that 1:1 chat." },
             group_chat_only: { type: "boolean", description: "Only show messages from group chats" },
             group_chat_name: { type: "string", description: "Filter by specific group chat name" },
             has_attachment: { type: "boolean", description: "Filter to messages with attachments (photos, files)" },
@@ -1196,7 +1196,7 @@ function createServer() {
       },
       {
         name: "messages_recent",
-        description: "Get most recent messages without semantic search. Use this when the user asks for 'recent messages', 'latest texts', or 'what messages did I get'.",
+        description: "Get most recent messages without semantic search. Use this when the user asks for 'recent messages', 'latest texts', or 'what messages did I get'. My own messages show a To: line naming the contact or group chat they were sent to.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1211,7 +1211,7 @@ function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            contact: { type: "string", description: "Contact name or phone number" },
+            contact: { type: "string", description: "Exact Contacts name (full name, first name, or nickname, e.g. 'Dad'), phone number in any format, or email. Returns both sides of the 1:1 thread, including my replies." },
             limit: { type: "number", description: "Maximum messages to return (default 50)" }
           },
           required: ["contact"],
