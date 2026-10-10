@@ -151,10 +151,16 @@ describe('locating the message file', () => {
       fs.mkdirSync(nested, { recursive: true })
       fs.writeFileSync(path.join(nested, '42.emlx'), 'x')
 
-      expect(locateEmlx(73691, `imap://${ACCT}/INBOX`, { indexPath })).toBe(path.join(inbox, '73691.partial.emlx'))
-      expect(locateEmlx(42, `imap://${ACCT}/Work/Projects%202026`, { indexPath })).toBe(path.join(nested, '42.emlx'))
-      expect(locateEmlx(73690, `imap://${ACCT}/INBOX`, { indexPath })).toBeNull()
-      expect(locateEmlx(42, 'imap://not-an-account/INBOX', { indexPath })).toBeNull()
+      const local = path.join(root, 'V10', 'Mailboxes', 'Receipts.mbox', 'STORE-3', 'Data', 'Messages')
+      fs.mkdirSync(local, { recursive: true })
+      fs.writeFileSync(path.join(local, '7.emlx'), 'x')
+
+      expect(locateEmlx(73691, `imap://${ACCT}/INBOX`, { indexPath })).toEqual({ file: path.join(inbox, '73691.partial.emlx'), mailboxFound: true })
+      expect(locateEmlx(42, `imap://${ACCT}/Work/Projects%202026`, { indexPath })).toEqual({ file: path.join(nested, '42.emlx'), mailboxFound: true })
+      expect(locateEmlx(7, 'local:///Receipts', { indexPath })).toEqual({ file: path.join(local, '7.emlx'), mailboxFound: true })
+      expect(locateEmlx(73690, `imap://${ACCT}/INBOX`, { indexPath })).toEqual({ file: null, mailboxFound: true })
+      expect(locateEmlx(42, 'imap://not-an-account/Nowhere', { indexPath })).toEqual({ file: null, mailboxFound: false })
+      expect(locateEmlx(42, `imap://${ACCT}/..%2F..%2Fetc`, { indexPath })).toEqual({ file: null, mailboxFound: false })
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
@@ -169,7 +175,7 @@ describe('mail_links tool', () => {
       mailLinks({ id: 73691 }, {
         indexPath: '/x/V10/MailData/Envelope Index',
         query: query([{ id: 73691, mailbox_url: `imap://${ACCT}/INBOX` }]),
-        locate: () => '/x/73691.partial.emlx',
+        locate: () => ({ file: '/x/73691.partial.emlx', mailboxFound: true }),
         readFile: () => emlx(QP_MESSAGE)
       })
     )
@@ -179,9 +185,17 @@ describe('mail_links tool', () => {
 
   it('says when Mail has the message but not its file yet', () => {
     const out = JSON.parse(
-      mailLinks({ id: 5 }, { indexPath: '/x', query: query([{ id: 5, mailbox_url: `imap://${ACCT}/INBOX` }]), locate: () => null })
+      mailLinks({ id: 5 }, { indexPath: '/x', query: query([{ id: 5, mailbox_url: `imap://${ACCT}/INBOX` }]), locate: () => ({ file: null, mailboxFound: true }) })
     )
     expect(out).toMatchObject({ found: true, downloaded: false })
+  })
+
+  it('says retrying will not help when the mailbox folder cannot be found', () => {
+    const out = JSON.parse(
+      mailLinks({ id: 5 }, { indexPath: '/x', query: query([{ id: 5, mailbox_url: 'local:///Gone' }]), locate: () => ({ file: null, mailboxFound: false }) })
+    )
+    expect(out).toMatchObject({ found: true, located: false })
+    expect(out.downloaded).toBeUndefined()
   })
 
   it('says when the id is not in Mail', () => {
