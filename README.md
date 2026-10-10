@@ -259,6 +259,7 @@ Your client can also call `audit_index`.
 | `mail_senders` | Most frequent senders. |
 | `mail_thread` | Every email in a conversation. |
 | `mail_find` | Exact lookup in Mail's own database by subject prefix or text, sender, recipient, mailbox, and date. Returns every copy with its Message-ID. Does not wait on the index. |
+| `mail_links` | The links in one email (by its `mail_find` id), decoded, with each link's visible text. Use it for the URL behind a button, such as a sign-in link; `mail_read` drops link targets. Does not wait on the index. |
 
 ### Messages
 
