@@ -41,6 +41,7 @@ import { startWriteBridgeServer, defaultSocketPath } from "./lib/writeBridge.js"
 import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSession.js";
 import { EVENTKIT_JXA_HELPERS } from "./lib/calendarWrite.js";
 import { mailFind, MAILBOX_KINDS, MAIL_FIND_MAX_LIMIT } from "./lib/mailFind.js";
+import { mailLinks } from "./lib/mailLinks.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -1174,6 +1175,17 @@ function createServer() {
           },
         },
       },
+      {
+        name: "mail_links",
+        description: "Links in one email, decoded: each http(s) link with its visible text, from the HTML anchors (quoted-printable and base64 decoded, &amp; unescaped) and bare URLs in the plain-text part. Use the id from mail_find. mail_read strips HTML, so it loses link targets; use this when you need the URL behind a button such as a sign-in or confirm link. Reads Mail's message file directly and never waits on the index. downloaded:false means Mail has not saved the file yet.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "number", description: "Message id from mail_find (Mail's Envelope Index id)" }
+          },
+          required: ["id"],
+        },
+      },
 
       // ============ MESSAGES TOOLS ============
       {
@@ -1478,6 +1490,10 @@ function createServer() {
 
         case "mail_find":
           result = mailFind(args || {});
+          break;
+
+        case "mail_links":
+          result = mailLinks(args || {});
           break;
 
         // Messages tools

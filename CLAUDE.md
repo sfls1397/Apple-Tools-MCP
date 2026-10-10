@@ -1,6 +1,6 @@
 # Project Architecture
 
-Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 39 tools: 23 read/search/admin tools plus the 16 write tools. There are no Apple Reminders tools.
+Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 40 tools: 24 read/search/admin tools plus the 16 write tools. There are no Apple Reminders tools.
 
 A long-lived **indexer daemon** (`--mode=indexer` / `apple-tools-indexer`) owns `~/.apple-tools-mcp/indexer.lock` and refreshes the vector index on an interval from `~/.apple-tools-mcp/config.json` (env `INDEX_INTERVAL_MS` overrides; default 5 minutes, clamped to 15s–6h). MCP stdio clients stay short-lived, exit on stdin close, and index locally only when no daemon holds the lock.
 
@@ -57,6 +57,10 @@ Pure helpers (lookups injected) used by `messages_search`, `messages_recent`, an
 ### lib/mailFind.js -- Exact mail lookup (Envelope Index)
 
 `mail_find` and bulk `mail_trash` read Mail's own `~/Library/Mail/V<n>/MailData/Envelope Index` with `sqlite3 -readonly` (Full Disk Access; Mail stays the only writer). Filters are exact (subject prefix/contains with escaped LIKE, sender, recipient, sole recipient, from-me = any address seen as a sender in a Sent mailbox, Message-IDs, mailbox kind, dates) and every copy of a message is its own row. A message's AppleScript `id` is its Envelope Index ROWID, so bulk `mail_trash` addresses each copy as `messages of <its mailbox> whose id is N` (~2s on a 60k INBOX) instead of `atmFindMessage`'s 30-38s scan, re-checks the Message-ID before moving, and stops starting new moves after `MAIL_BULK_TRASH_BUDGET_SEC` so the call answers inside the MCP deadline.
+
+### lib/mailLinks.js -- Links in one message (mail_links)
+
+`mail_links` takes the Envelope Index id from `mail_find`, finds that message's `.emlx` or `.partial.emlx` under its mailbox (`<account>/<mailbox>.mbox/<store>/Data/<digits of id/1000, reversed>/Messages/`), and returns each http(s) link with its visible text. It decodes MIME itself (multipart, quoted-printable, base64, charset) because `mail_read` strips HTML and reads the raw file, which loses link targets and breaks quoted-printable URLs. Anchors are scanned with indexOf, not regex, and output is capped at `MAIL_LINKS_MAX`. Read-only; same Full Disk Access as `mail_find`. EdgeCore Meetings to Notion uses it to read EdgeBase magic-link emails.
 
 ### lib/writeTools.js -- Write tool surface (2.0.0)
 
