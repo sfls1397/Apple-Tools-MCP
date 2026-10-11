@@ -8,7 +8,7 @@ on:
     branches: [main]
   pull_request:
   release:
-    types: [created]
+    types: [published]
 
 jobs:
   test:
@@ -35,4 +35,7 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
+      - name: Scan package contents before publish
+        run: |
+          node scripts/scan-package.js --docker
       - run: npm publish --access public

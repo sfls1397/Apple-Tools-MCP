@@ -8,7 +8,7 @@ A long-lived **indexer daemon** (`--mode=indexer` / `apple-tools-indexer`) owns 
 
 ### index.js -- MCP Server, Indexer Daemon, and Tool Dispatcher
 
-Entry point and process lifecycle manager. Default mode is MCP stdio: registers all 22 MCP tools, routes tool calls, and **exits on stdin close**. `--mode=indexer` (or the `apple-tools-indexer` bin) skips MCP stdio, holds `indexer.lock` for the process lifetime, and runs startup index + background refresh. MCP instances that lose the lock skip background indexing and search the shared index; if the lock is free they index locally (stdio happy path). Index-backed tools (`mail_*`, `messages_*`, `calendar_search`) return a "still indexing" message until the first index cycle completes (`sessionIndexComplete` flag) **while this process owns the lock**. `calendar_date` and `calendar_free_time` query live Calendar.sqlitedb and do not wait. Contains `smartSearch()` which auto-detects data sources from query intent and searches them in parallel, then groups results into 1-hour time buckets via `synthesizeResults()`.
+Entry point and process lifecycle manager. Default mode is MCP stdio: registers all 40 MCP tools, routes tool calls, and **exits on stdin close**. `--mode=indexer` (or the `apple-tools-indexer` bin) skips MCP stdio, holds `indexer.lock` for the process lifetime, and runs startup index + background refresh. MCP instances that lose the lock skip background indexing and search the shared index; if the lock is free they index locally (stdio happy path). Index-backed tools (`mail_*`, `messages_*`, `calendar_search`) return a "still indexing" message until the first index cycle completes (`sessionIndexComplete` flag) **while this process owns the lock**. `calendar_date` and `calendar_free_time` query live Calendar.sqlitedb and do not wait. Contains `smartSearch()` which auto-detects data sources from query intent and searches them in parallel, then groups results into 1-hour time buckets via `synthesizeResults()`.
 
 ### indexer.js -- Data Ingestion and Vector Storage
 
@@ -123,8 +123,8 @@ Reads and writes hit different gates and must not be conflated. Contacts and Cal
 - **MCP tool names**: `snake_case` (e.g., `mail_search`, `calendar_free_time`, `person_search`)
 - **Write tool pattern**: validate args -> `planWrite()` (dry_run / confirm gate) -> build escaped script -> `runAppleScript()` -> message naming ids and recipients, never bodies
 - **Exports**: Named exports only, never default exports
-- **Branching**: Single `main` branch; no feature branch convention
-- **CI/CD**: GitHub Actions publishes to GitHub Packages on release creation; runs `npm ci` and `npm test` first
+- **Branching**: Changes use a branch and pull request into `main`
+- **CI/CD**: GitHub Release `published` triggers npm Trusted Publishing through OIDC after the macOS unit/security test gate. Privacy scanning covers full Git history on push/PR and package contents before publish.
 - **Security pattern**: All subprocess execution goes through `lib/shell.js` wrappers with `shell: false`; all user input goes through `lib/validators.js`
 - **Test graceful skipping**: Tests use `describe.skipIf(!condition)` to skip when macOS data sources are unavailable
 - **Caching pattern**: In-memory `Map`-based caches with TTL expiry and max-entry limits throughout `search.js` and `contacts.js`

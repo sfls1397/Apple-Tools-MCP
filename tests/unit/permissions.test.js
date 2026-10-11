@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { isPermissionsMode, isIndexerMode } from '../../lib/processMode.js'
@@ -201,8 +202,8 @@ describe('probe binary and Full Disk Access advisory', () => {
     expect(described.execPath).toBe('/tmp/product-node')
     expect(described.miniExample).toBe(EXAMPLE_MINI_NODE)
     expect(described.macbookExample).toBe(EXAMPLE_MACBOOK_NVM_NODE)
-    expect(EXAMPLE_MINI_NODE).toBe('/Users/example/.local/node/bin/node')
-    expect(EXAMPLE_MACBOOK_NVM_NODE).toBe('/Users/example/.nvm/versions/node/v22.21.1/bin/node')
+    expect(EXAMPLE_MINI_NODE).toBe(path.join(os.homedir(), '.local', 'node', 'bin', 'node'))
+    expect(EXAMPLE_MACBOOK_NVM_NODE).toBe(process.execPath)
   })
 
   it('reports FDA as advisory and never as a required grant', () => {
@@ -263,7 +264,7 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('Probing node binary: /Users/example/.local/node/bin/node')
     expect(text).toContain(EXAMPLE_MINI_NODE)
     expect(text).toContain(EXAMPLE_MACBOOK_NVM_NODE)
-    expect(text).toContain('not Homebrew')
+    expect(text).toContain('current Node installation')
     expect(text).toContain('click Allow for THIS node')
     expect(text).toContain('Do not add node via +')
     expect(text).toContain('dry_run of mail_send / messages_send does not count')
