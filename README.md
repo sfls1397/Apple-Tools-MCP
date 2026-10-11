@@ -455,3 +455,23 @@ MIT License. See [LICENSE](LICENSE).
 - [Model Context Protocol SDK](https://github.com/modelcontextprotocol/sdk)
 - [LanceDB](https://lancedb.com/)
 - [Hugging Face Transformers.js](https://github.com/huggingface/transformers.js)
+
+### Privacy checks for contributors
+
+Install Gitleaks, then enable the committed hook once in each clone:
+
+```sh
+git config core.hooksPath .githooks
+npm run scan:package
+```
+
+The hook scans staged changes and fails closed if Gitleaks is unavailable. CI scans
+all fetched Git history and the exact `npm pack --dry-run` file list. Release CI
+repeats the package scan before npm Trusted Publishing. Credential rules are
+extended with private home paths, relay email, private hostnames and phone shapes.
+Use neutral example paths and fictional 555 numbers in fixtures. A narrow
+exception covers the deliberately fake bearer token in authentication unit tests.
+
+Host-specific settings remain in `~/.apple-tools-mcp/config.json`; upgrading the
+global package preserves them. Permission examples derive from the current home
+and runtime Node binary, so no personal paths belong in the package.

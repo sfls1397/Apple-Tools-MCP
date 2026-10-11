@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { isPermissionsMode, isIndexerMode } from '../../lib/processMode.js'
@@ -201,8 +202,8 @@ describe('probe binary and Full Disk Access advisory', () => {
     expect(described.execPath).toBe('/tmp/product-node')
     expect(described.miniExample).toBe(EXAMPLE_MINI_NODE)
     expect(described.macbookExample).toBe(EXAMPLE_MACBOOK_NVM_NODE)
-    expect(EXAMPLE_MINI_NODE).toBe('/Users/example/.local/node/bin/node')
-    expect(EXAMPLE_MACBOOK_NVM_NODE).toBe('/Users/example/.nvm/versions/node/v22.21.1/bin/node')
+    expect(EXAMPLE_MINI_NODE).toBe(path.join(os.homedir(), '.local', 'node', 'bin', 'node'))
+    expect(EXAMPLE_MACBOOK_NVM_NODE).toBe(process.execPath)
   })
 
   it('reports FDA as advisory and never as a required grant', () => {
