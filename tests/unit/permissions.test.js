@@ -264,7 +264,7 @@ describe('runPermissionsCommand', () => {
     expect(text).toContain('Probing node binary: /Users/example/.local/node/bin/node')
     expect(text).toContain(EXAMPLE_MINI_NODE)
     expect(text).toContain(EXAMPLE_MACBOOK_NVM_NODE)
-    expect(text).toContain('not Homebrew')
+    expect(text).toContain('current Node installation')
     expect(text).toContain('click Allow for THIS node')
     expect(text).toContain('Do not add node via +')
     expect(text).toContain('dry_run of mail_send / messages_send does not count')
