@@ -1,6 +1,6 @@
 {
   "name": "apple-tools-mcp",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "MCP server for semantic search and write actions across Apple Mail, Messages, Calendar, and Contacts. Speaks stdio (local) or bearer-token-authenticated Streamable HTTP (LAN / Tailscale).",
   "type": "module",
   "main": "index.js",
@@ -95,12 +95,15 @@
   "dependencies": {
     "@huggingface/transformers": "^4.3.0",
     "@lancedb/lancedb": "^0.22.3",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "chrono-node": "^2.9.0"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^2.1.0",
     "fast-check": "^3.22.0",
     "vitest": "^2.1.0"
+  },
+  "overrides": {
+    "sharp": "^0.35.5"
   }
 }
