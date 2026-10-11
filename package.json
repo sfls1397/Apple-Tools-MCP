@@ -88,7 +88,9 @@
     "perf:lancedb": "vitest run tests/perf/lancedb.perf.test.js",
     "perf:background": "vitest run tests/perf/background-indexing.perf.test.js",
     "perf:dates": "vitest run tests/perf/date-parsing.perf.test.js",
-    "scan:package": "node scripts/scan-package.js"
+    "scan:package": "node scripts/scan-package.js",
+    "security:check": "python3 .security/scan.py all",
+    "prepublishOnly": "npm run security:check && npm run scan:package"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.0",
