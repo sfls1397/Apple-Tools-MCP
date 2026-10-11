@@ -10,7 +10,12 @@ coverage/
 # IDE
 .vscode/
 .idea/
-.cursor/
+.cursor/*
+!.cursor/environment.json
+!.cursor/install-gitleaks.sh
+!.cursor/rules/
+.cursor/rules/*
+!.cursor/rules/gitleaks.mdc
 
 # Logs
 *.log
