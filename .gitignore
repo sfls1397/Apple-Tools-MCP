@@ -13,6 +13,8 @@ coverage/
 .cursor/*
 !.cursor/environment.json
 !.cursor/install-gitleaks.sh
+!.cursor/install-semgrep.sh
+!.cursor/install-security.sh
 !.cursor/rules/
 .cursor/rules/*
 !.cursor/rules/gitleaks.mdc
