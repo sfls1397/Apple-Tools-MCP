@@ -33,16 +33,12 @@ describe('loadOrCreateHttpAuthToken', () => {
 
     expect(result.generated).toBe(true)
     expect(result.token).toBe('0'.repeat(64))
-    expect(execFileSync).toHaveBeenCalledTimes(2)
-    expect(execFileSync).toHaveBeenNthCalledWith(
-      2,
-      '/usr/bin/security',
-      ['add-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT, '-w', result.token, '-U'],
-      expect.any(Object)
-    )
-    // One-time banner goes to the log, and includes the token so it's
-    // copyable — but only on generation, never on subsequent loads.
-    expect(log.mock.calls.some(([msg]) => msg.includes(result.token))).toBe(true)
+    const writes = execFileSync.mock.calls.filter(([, , options]) => options?.input?.includes(result.token))
+    expect(writes).toHaveLength(1)
+    expect(writes[0][1]).toEqual(['-i'])
+    expect(JSON.stringify(writes[0][1])).not.toContain(result.token)
+    // Generation guidance must keep the token out of logs.
+    expect(log.mock.calls.some(([msg]) => msg.includes(result.token))).toBe(false)
   })
 
   it('generates a new token when forceNew is set even if one already exists', () => {
@@ -53,8 +49,9 @@ describe('loadOrCreateHttpAuthToken', () => {
 
     expect(result.generated).toBe(true)
     expect(result.token).toBe('1'.repeat(64))
-    // Only the write call — the read is skipped entirely when forceNew is set.
-    expect(execFileSync).toHaveBeenCalledTimes(1)
+    // Force-new skips credential reads; compilation and the stdin write remain.
+    expect(execFileSync.mock.calls.some(([, args]) => args[0] === 'find-generic-password')).toBe(false)
+    expect(execFileSync.mock.calls.filter(([, , options]) => options?.input?.includes(result.token))).toHaveLength(1)
   })
 
   it('treats an empty Keychain read as not-found', () => {
