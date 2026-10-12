@@ -26,11 +26,11 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
 const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
 
-describe('package version 3.2.1', () => {
-  it('is 3.2.1 in package.json, lockfile, and startup logs', () => {
-    expect(pkg.version).toBe('3.2.1')
-    expect(lock.version).toBe('3.2.1')
-    expect(lock.packages[''].version).toBe('3.2.1')
+describe('package version consistency', () => {
+  it('matches the lockfile and is used in startup logs', () => {
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/)
+    expect(lock.version).toBe(pkg.version)
+    expect(lock.packages[''].version).toBe(pkg.version)
     expect(indexSrc).toContain('PACKAGE_VERSION')
     expect(indexSrc).toContain('Apple Tools MCP server running (v${PACKAGE_VERSION})')
     expect(indexSrc).toContain('Apple Tools MCP indexer running (v${PACKAGE_VERSION})')
