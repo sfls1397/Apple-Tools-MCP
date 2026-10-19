@@ -1,0 +1,18 @@
+{
+  "tests": [
+    [
+      "npm",
+      "ci"
+    ],
+    [
+      "npm",
+      "run",
+      "test:unit"
+    ],
+    [
+      "npm",
+      "run",
+      "test:security"
+    ]
+  ]
+}
