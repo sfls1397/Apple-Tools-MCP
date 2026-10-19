@@ -16,6 +16,12 @@ Production audit is clean after the October 11, 2026 dependency remediation. All
 
 No findings after rule review. The request-to-shell rule targets child-process calls, not RegExp.exec.
 
+## Mail send boundary review — 3.2.3
+
+Reviewed the HTTP/stdio to indexer handoff, queued-request deadline, send retry ownership, persistent claims, System Events error classification and asynchronous index-source subprocesses. A response timeout after a possible handoff cannot start a local send. Expired queued requests are rejected before the handler. Only explicit pre-send failures permit another attempt; uncertain claims never expire. Stable delivery keys and default content fingerprints arbitrate across processes/restarts with exclusive private files; stored metadata contains SHA-256 digests and outcomes, not addresses, subjects, bodies or raw keys. Explicit keys reject changed content. Accepted fingerprints also persist without expiry; intentional repeats require a new delivery key after checking the destination. Claims are retained on disk; no automatic uncertain-send recovery is claimed.
+
+Async sqlite/find use validated argv with no shell, bounded output and SIGKILL timeouts. Existing HTTP bearer authentication and Keychain handling are unchanged. No new network destination, credential, native component or separately installed runtime dependency was added. Proof uses synthetic send handlers and a real local socket (including timeout followed by late completion), cross-process claim contention and read-only System Events; no email delivery test is required or performed. Production dependency audit has zero advisories. Scanner PASS supplements this application review.
+
 
 ## Running and Reviewing
 

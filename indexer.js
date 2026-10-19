@@ -13,7 +13,7 @@ import {
   unfoldRfc822Headers,
   stripSubjectPrefixes
 } from "./lib/validators.js";
-import { safeSqlite3Json, safeOsascript, safeFind } from "./lib/shell.js";
+import { safeSqlite3Json, safeSqlite3JsonAsync, safeOsascript, safeFindAsync } from "./lib/shell.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
 import { createLanceTableCache, LANCE_CONNECT_OPTIONS } from "./lib/lancedbTables.js";
 import { createMessageContactMatcher } from "./lib/messageContact.js";
@@ -362,7 +362,8 @@ async function findAllEmlxFiles() {
   // "*.emlx" also matches "*.partial.emlx"
   // Let permission/IO errors propagate so indexEmails does not persist a
   // timestamp for an empty scan and skip real mail forever.
-  return safeFind(MAIL_DIR, { name: "*.emlx", type: "f" });
+  // Async: the daemon keeps answering writer.sock while a slow scan runs.
+  return safeFindAsync(MAIL_DIR, { name: "*.emlx", type: "f" });
 }
 
 // Fast incremental scan - uses find with -mtime filter (more reliable than mdfind/Spotlight)
@@ -380,7 +381,7 @@ async function findNewEmlxFiles(sinceTimestamp) {
 
     // Use find with -mtime instead of mdfind for reliability
     // find is more reliable than Spotlight which can have stale/incomplete indexes
-    const files = safeFind(MAIL_DIR, { name: "*.emlx", type: "f", mtime: `-${daysAgo}` });
+    const files = await safeFindAsync(MAIL_DIR, { name: "*.emlx", type: "f", mtime: `-${daysAgo}` });
     console.error(`find found ${files.length} new/modified emails in last ${daysAgo} days`);
     return files;
   } catch (e) {
@@ -563,7 +564,7 @@ function extractTextFromAttributedBody(buffer) {
   }
 }
 
-function getMessages(sinceTimestamp = null) {
+async function getMessages(sinceTimestamp = null) {
   try {
     // Enhanced query to get chat info, group chat detection, and attachments
     // Include attributedBody for messages where text is NULL (newer macOS format)
@@ -599,7 +600,7 @@ function getMessages(sinceTimestamp = null) {
         ${dateFilter}
       ORDER BY m.date DESC
     `;
-    const results = safeSqlite3Json(MESSAGES_DB, query, { timeout: 60000 });
+    const results = await safeSqlite3JsonAsync(MESSAGES_DB, query, { timeout: 60000 });
     if (!Array.isArray(results)) {
       throw new Error("Unexpected sqlite3 result for messages");
     }
@@ -668,7 +669,7 @@ function getParticipantStatus(status) {
   return statusMap[status] || "unknown";
 }
 
-function getCalendarEvents() {
+async function getCalendarEvents() {
   // NOTE: We index ALL calendar events, not filtered by date
   // Calendar events don't have a "file modification time" like emails do,
   // so we can't use the mdfind + DAYS_BACK approach.
@@ -718,12 +719,12 @@ function getCalendarEvents() {
       WHERE p.entity_type = 0
     `;
 
-  return withCalendarCopy((dbPath) => {
-    const rows = safeSqlite3Json(dbPath, query, { timeout: 30000 });
+  return withCalendarCopyAsync(async (dbPath) => {
+    const rows = await safeSqlite3JsonAsync(dbPath, query, { timeout: 30000 });
 
     let attendeesMap = new Map();
     try {
-      const attendeesRows = safeSqlite3Json(dbPath, attendeesQuery, { timeout: 10000 });
+      const attendeesRows = await safeSqlite3JsonAsync(dbPath, attendeesQuery, { timeout: 10000 });
 
       for (const att of attendeesRows) {
         if (!attendeesMap.has(att.owner_id)) {
@@ -1165,7 +1166,7 @@ export async function indexMessages(forceFullScan = false) {
   // Use incremental scan if we have a previous timestamp
   let messages;
   try {
-    messages = getMessages(lastMessageIndexTime);
+    messages = await getMessages(lastMessageIndexTime);
   } catch (e) {
     console.error(`Messages source read failed; skipping this cycle so the lookback timestamp is not advanced: ${e.message}`);
     return { indexed: 0, added: 0, error: e.message };
@@ -1311,7 +1312,7 @@ export async function indexCalendar() {
 
   let events;
   try {
-    events = getCalendarEvents();
+    events = await getCalendarEvents();
   } catch (e) {
     // Do not treat a source-read failure as "zero events" — that would mark
     // every indexed row stale and delete the calendar index.
@@ -1791,34 +1792,54 @@ export function buildEventsOnDateQuery(startMac, endMac, { includeUid = true } =
 
 // Copy Calendar.sqlitedb (+ wal/shm) to /tmp for one query, then delete the copies.
 // Calendar.app holds a lock on the live db; sqlite can read a snapshot copy.
-function withCalendarCopy(fn) {
+function copyCalendarDb() {
   const id = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const tmpDb = path.join("/tmp", `${CALENDAR_TMP_PREFIX}${id}.sqlitedb`);
-  const tmpWal = `${tmpDb}-wal`;
-  const tmpShm = `${tmpDb}-shm`;
-  const srcWal = `${CALENDAR_DB}-wal`;
-  const srcShm = `${CALENDAR_DB}-shm`;
-
-  try {
-    if (!fs.existsSync(CALENDAR_DB)) {
-      throw new Error("Calendar database not found");
-    }
-    fs.copyFileSync(CALENDAR_DB, tmpDb);
-    if (fs.existsSync(srcWal)) {
-      fs.copyFileSync(srcWal, tmpWal);
-    }
-    if (fs.existsSync(srcShm)) {
-      fs.copyFileSync(srcShm, tmpShm);
-    }
-    return fn(tmpDb);
-  } finally {
-    for (const file of [tmpDb, tmpWal, tmpShm]) {
+  const files = [tmpDb, `${tmpDb}-wal`, `${tmpDb}-shm`];
+  const cleanup = () => {
+    for (const file of files) {
       try {
         fs.unlinkSync(file);
       } catch {
         // already gone or never created
       }
     }
+  };
+  try {
+    if (!fs.existsSync(CALENDAR_DB)) {
+      throw new Error("Calendar database not found");
+    }
+    fs.copyFileSync(CALENDAR_DB, tmpDb);
+    if (fs.existsSync(`${CALENDAR_DB}-wal`)) {
+      fs.copyFileSync(`${CALENDAR_DB}-wal`, files[1]);
+    }
+    if (fs.existsSync(`${CALENDAR_DB}-shm`)) {
+      fs.copyFileSync(`${CALENDAR_DB}-shm`, files[2]);
+    }
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
+  return { tmpDb, cleanup };
+}
+
+// Index-cycle variant: the sqlite3 reads inside fn are awaited, so the
+// daemon's event loop (and writer.sock) stays free while they run.
+async function withCalendarCopyAsync(fn) {
+  const { tmpDb, cleanup } = copyCalendarDb();
+  try {
+    return await fn(tmpDb);
+  } finally {
+    cleanup();
+  }
+}
+
+function withCalendarCopy(fn) {
+  const { tmpDb, cleanup } = copyCalendarDb();
+  try {
+    return fn(tmpDb);
+  } finally {
+    cleanup();
   }
 }
 

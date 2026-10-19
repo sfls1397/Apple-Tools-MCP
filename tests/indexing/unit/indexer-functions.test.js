@@ -111,10 +111,10 @@ describe('indexEmails', () => {
       expect(fortyDaysAgo).toBeLessThan(thirtyDaysAgo)
 
       // This filter is applied in indexEmails based on dateTimestamp
-      const emails = generateTestEmails(10, { daysBack: 45 })
+      const emails = [{ timestamp: Date.now() }, { timestamp: fortyDaysAgo }]
       const recentEmails = emails.filter(e => e.timestamp >= thirtyDaysAgo)
 
-      expect(recentEmails.length).toBeLessThan(emails.length)
+      expect(recentEmails).toEqual([emails[0]])
     })
   })
 

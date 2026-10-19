@@ -66,7 +66,7 @@ Then open **System Settings → Privacy & Security → Accessibility** and turn 
 
 The command does real work so the prompts can appear. It opens a Mail compose window and throws it away (nothing is sent), lists Messages accounts (nothing is sent), creates and deletes a throwaway contact, lists calendars without creating events, and checks System Events. It exits with an error until Mail, Messages, Contacts, Calendar, and System Events are all allowed.
 
-`dry_run` on `mail_send` or `messages_send` does not talk to those apps, so a dry run will not pop the prompts and will not tell you whether Automation is allowed. A real send that hangs after you denied Mail is an Automation denial, not "Mail could not be reached."
+`dry_run` on `mail_send` or `messages_send` does not talk to those apps, so a dry run will not pop the prompts and will not tell you whether Automation is allowed. A timeout alone does not prove an Automation denial; only an explicit permission error does.
 
 If you clicked **Don't Allow**, macOS will not ask again. Open **System Settings → Privacy & Security → Automation**, turn the switch on for that node and that app, then run `apple-tools-mcp permissions` again.
 
@@ -308,6 +308,10 @@ Every write tool accepts:
 
 Deletes need `confirm: true`: `mail_trash`, `calendar_remove`, `contacts_remove`, and `contacts_edit` when it clears every email or phone. These take one id per call, except `mail_trash`, which also takes a list (`message_ids`).
 
+`mail_send` supports a stable `idempotency_key` per intended delivery. Reuse it after a disconnect or timeout. An accepted send is replayed without sending again; changed content with the same key is refused. Without a key, identical accepted content is suppressed without expiry. Use a new key for an intentional repeat. Uncertain sends remain blocked without expiry: check Sent and Outbox before making any new delivery. A missing Sent result alone cannot prove a queued send will not complete. Claims persist across processes/restarts in the private `~/.apple-tools-mcp/mail-send-claims` directory, containing only SHA-256 hashes and outcome metadata. Dry runs create no claims. Only explicit pre-send failures allow a retry.
+
+A bridge request that expires before execution is rejected. After a handoff with an unknown outcome, local fallback is suppressed. The System Events preflight allows 10 seconds (12-second process cap); timeout reports `probe_timeout` and unknown permission status, separately from an explicit permission denial.
+
 Sends to more than one person need `confirm: true`: `mail_send` and `mail_forward` when To, Cc, and Bcc add up to more than one address, `mail_reply` with `reply_all: true`, and `messages_send` to several people or to a group chat. A single recipient sends on the first call. `mail_draft` never sends, so it does not need that confirm.
 
 A dry run or a call that still needs confirm does not deliver anything. The result is `ok: false`, `planned: true`, `delivered: false`, and the client may mark it as an error. The text says `DRY RUN` or `CONFIRMATION REQUIRED`. Run it again with `dry_run` false, and with `confirm: true` when the tool asked for it.
@@ -320,7 +324,7 @@ A missing or malformed id or recipient is refused. Calendar times are local date
 
 | Tool | Arguments | Confirm |
 |------|-----------|---------|
-| `mail_send` | `to[]` (required), `cc[]`, `bcc[]`, `subject` (required), `body` (required), `body_format` (`plain` or `html`) | when recipients > 1 |
+| `mail_send` | `to[]` (required), `cc[]`, `bcc[]`, `subject` (required), `body` (required), `body_format` (`plain` or `html`), `idempotency_key` | when recipients > 1 |
 | `mail_draft` | `to[]` (required), `cc[]`, `bcc[]`, `subject`, `body`, `body_format` | no (saved to Drafts) |
 | `mail_reply` | `message_id` or `file_path`, `body` (required), `reply_all`, `save_as_draft` | when `reply_all` is true |
 | `mail_forward` | `message_id` or `file_path`, `to[]` (required), `body`, `save_as_draft` | when recipients > 1 |
