@@ -440,7 +440,9 @@ describe('Date Parsing Performance', () => {
         )
         expect(result.mean).toBeLessThan(2)
       }
-    })
+      // Five 500-iteration runs include 25s of deliberate cooldowns before
+      // scheduler overhead. Keep the measured 2ms latency assertion above.
+    }, 60000)
   })
 
   describe('Date Comparison', () => {

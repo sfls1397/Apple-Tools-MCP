@@ -30,7 +30,7 @@ describe('loggedBridgeHandler', () => {
   it('logs one timestamped line per write without addresses or subjects', async () => {
     const lines = []
     let t = 1000
-    const h = loggedBridgeHandler(async () => ({ ok: false, unsupported: true, message: declinedMsg }), (m) => lines.push(m), () => (t += 250))
+    const h = loggedBridgeHandler(async () => ({ ok: false, unsupported: true, sendStarted: false, message: declinedMsg }), (m) => lines.push(m), () => (t += 250))
     const r = await h('mail_send', { to: [ADDR], subject: 'x' })
     expect(r.unsupported).toBe(true)
     expect(lines).toHaveLength(1)
@@ -61,7 +61,7 @@ describe('dispatchWriteTool declined by the daemon', () => {
     const logs = []
     const r = await dispatchWriteTool('mail_send', { to: [ADDR] }, {
       ...base,
-      request: async () => ({ delivered: true, response: { ok: false, unsupported: true, message: declinedMsg }, error: null }),
+      request: async () => ({ delivered: true, response: { ok: false, unsupported: true, sendStarted: false, message: declinedMsg }, error: null }),
       runLocally: () => ({ ok: false, message: 'mail_send failed — The display is asleep, so System Events cannot see Mail.' }),
       log: (m) => logs.push(m)
     })
@@ -74,14 +74,14 @@ describe('dispatchWriteTool declined by the daemon', () => {
   it('keeps a successful local fallback as is', async () => {
     const r = await dispatchWriteTool('mail_send', { to: [ADDR] }, {
       ...base,
-      request: async () => ({ delivered: true, response: { ok: false, unsupported: true, message: declinedMsg }, error: null }),
+      request: async () => ({ delivered: true, response: { ok: false, unsupported: true, sendStarted: false, message: declinedMsg }, error: null }),
       runLocally: () => ({ ok: true, message: 'sent' }),
       log: () => {}
     })
     expect(r).toEqual({ ok: true, message: 'sent' })
   })
 
-  it("still says 'unavailable' when the daemon never answered", async () => {
+  it('logs an unknown outcome without resending after a bridge timeout', async () => {
     const logs = []
     await dispatchWriteTool('mail_send', { to: [ADDR] }, {
       ...base,
@@ -89,6 +89,6 @@ describe('dispatchWriteTool declined by the daemon', () => {
       runLocally: () => ({ ok: false, message: 'x' }),
       log: (m) => logs.push(m)
     })
-    expect(logs[0]).toBe('Write bridge unavailable for mail_send (write bridge timed out); running locally.')
+    expect(logs[0]).toBe('Write bridge outcome unknown for mail_send; local fallback suppressed.')
   })
 })

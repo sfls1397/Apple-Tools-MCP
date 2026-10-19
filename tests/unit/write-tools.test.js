@@ -1014,7 +1014,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
 
   it('bounds compose Apple events and SIGKILLs hung osascript', () => {
     expect(MAIL_COMPOSE_TIMEOUT_MS).toBeLessThanOrEqual(25000)
-    expect(MAIL_SE_PROBE_TIMEOUT_MS).toBeLessThanOrEqual(5000)
+    expect(MAIL_SE_PROBE_TIMEOUT_MS).toBe(12000)
     const shellSrc = fs.readFileSync(path.join(root, 'lib/shell.js'), 'utf8')
     expect(shellSrc).toContain("killSignal: 'SIGKILL'")
     const mailSrc = fs.readFileSync(path.join(root, 'lib/mailWrite.js'), 'utf8')
@@ -1031,7 +1031,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(script).toContain('with timeout of')
   })
 
-  it('returns unsupported when the write-bridge cannot drive System Events', () => {
+  it('reports a probe timeout separately without permitting a local fallback', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
@@ -1041,9 +1041,11 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     )
     expect(result.ok).toBe(false)
     expect(result.delivered).toBe(false)
-    expect(result.unsupported).toBe(true)
+    expect(result.unsupported).toBeUndefined()
+    expect(result.kind).toBe('probe_timeout')
+    expect(result.sendStarted).toBe(false)
     expect(isMailGuiScriptingUnavailable({ error: 'GUI_SCRIPTING_UNAVAILABLE' })).toBe(true)
-    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).toContain('permission status is unknown')
     expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain('Hello')
     expect(osascript).toHaveBeenCalledTimes(1)
@@ -1061,7 +1063,7 @@ describe('mail compose native paste (FB11734014, -2753)', () => {
     expect(result.ok).toBe(false)
     expect(result.delivered).toBe(false)
     expect(result.unsupported).toBeUndefined()
-    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(result.message).toContain('permission status is unknown')
     expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(mcpWriteResult(result).isError).toBe(true)
   })
@@ -1126,7 +1128,7 @@ describe('system_events_automation_probe', () => {
     expect(result.message).toContain('process GUI scripting verified')
   })
 
-  it('maps a hang to missing GUI scripting, not a Mail send timeout', () => {
+  it('reports an Automation probe timeout without claiming a missing grant', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
@@ -1134,8 +1136,8 @@ describe('system_events_automation_probe', () => {
     expect(result.ok).toBe(false)
     expect(result.kind).toBe('timeout')
     expect(result.message).toContain('system_events_automation_probe failed')
-    expect(result.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
-    expect(result.message).toContain('sticky Deny')
+    expect(result.message).toContain('permission status is unknown')
+    expect(result.message).not.toContain('sticky Deny')
     expect(result.message).not.toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
     expect(result.message).not.toContain(MAIL_TCC_GUIDANCE)
   })
@@ -1437,7 +1439,7 @@ describe('mail_reply and mail_forward', () => {
     expect(sendAt).toBeGreaterThan(deleteAt)
   })
 
-  it('fails closed locally when a reply body cannot be pasted, and returns unsupported from the daemon', () => {
+  it('reports a preflight reply timeout without claiming missing permissions', () => {
     osascript.mockImplementation(() => {
       throw new Error('spawnSync osascript ETIMEDOUT')
     })
@@ -1447,8 +1449,9 @@ describe('mail_reply and mail_forward', () => {
     )
     expect(daemon.ok).toBe(false)
     expect(daemon.delivered).toBe(false)
-    expect(daemon.unsupported).toBe(true)
-    expect(daemon.message).toContain(MAIL_GUI_SCRIPTING_GUIDANCE)
+    expect(daemon.unsupported).toBeUndefined()
+    expect(daemon.sendStarted).toBe(false)
+    expect(daemon.message).toContain('permission status is unknown')
     expect(daemon.message).not.toContain('Thanks')
 
     osascript.mockReset()
@@ -2816,7 +2819,7 @@ describe('write smoke script routing (ship gate)', () => {
     expect(smoke).toContain('Keep Contacts, Mail, and Messages running')
     expect(smoke).toContain('Calendar does not need to stay open (EventKit)')
     expect(readme).toContain('does not talk to those apps')
-    expect(readme).toContain('not "Mail could not be reached."')
+    expect(readme).toContain('only an explicit permission error does')
     expect(readme).toContain('apple-tools-mcp permissions')
     expect(readme).toContain('npx apple-tools-mcp permissions')
     expect(readme).toContain('npm run permissions')
@@ -3007,6 +3010,7 @@ describe('dispatchWriteTool routing', () => {
       response: {
         ok: false,
         unsupported: true,
+        sendStarted: false,
         delivered: false,
         message: `mail_send failed — attempted to send. ${MAIL_GUI_SCRIPTING_GUIDANCE}`
       }
