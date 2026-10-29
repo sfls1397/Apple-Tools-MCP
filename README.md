@@ -1,6 +1,22 @@
 # apple-tools-mcp
 
-An MCP (Model Context Protocol) server for Apple Mail, Messages, Calendar, and Contacts on macOS. Search them in plain language, send mail and messages, and create, edit, or remove calendar events and contacts. It talks to any MCP client over stdio. Search embeddings and the write bridge stay on your Mac.
+An MCP (Model Context Protocol) server for Apple Mail, Messages, Calendar, and Contacts on macOS. Search them in plain language, send mail and messages, and create, edit, or remove calendar events and contacts. It talks to any MCP client over stdio, or over HTTP with a bearer token. Plain-language search is retrieval-augmented: your mail, messages, and calendar events are embedded on your Mac and kept in a local LanceDB vector database (see [How search works](#how-search-works)). The embeddings and the write bridge stay on your Mac.
+
+## How search works
+
+Search runs against a local vector index, not a cloud service.
+
+- **Embedding model:** [`Xenova/all-MiniLM-L6-v2`](https://huggingface.co/Xenova/all-MiniLM-L6-v2), a 384-dimension sentence-embedding model (mean pooling, normalized), run on your Mac with [Transformers.js](https://github.com/huggingface/transformers.js). The model files are downloaded from Hugging Face the first time the model loads and cached after that. Your mail, messages, and events are never sent anywhere to be embedded.
+- **Vector database:** [LanceDB](https://lancedb.com/), embedded in the process (no server), stored in `~/.apple-tools-mcp/vector-index/` with three tables: `emails`, `messages`, and `calendar`.
+- **What is indexed:**
+  - **Mail:** every `.emlx` file under `~/Library/Mail`, including partly downloaded ones. The embedded text is From, To, Subject, and the start of the body (1,000 characters in all).
+  - **Messages:** iMessage and SMS from `~/Library/Messages/chat.db`, including text that macOS stores only in the rich-text `attributedBody` field. The embedded text is the sender and the message (500 characters).
+  - **Calendar:** events from Calendar's `Calendar.sqlitedb`. The embedded text is title, calendar, location, and notes (500 characters).
+  - **Contacts are not embedded.** The contact tools and name matching read the Contacts (AddressBook) database directly.
+- **At query time:** the question is embedded with the same model. Up to three variants of it (the original, one with time words removed, and one with a common synonym swapped in) each run a nearest-neighbour search. The result lists are merged with Reciprocal Rank Fusion (k = 60), then re-ranked by 70% vector similarity and 30% keyword match. If nothing comes back, one broader query is tried. `smart_search` chooses which tables to search from the question.
+- **Not from the index:** `mail_find`, `mail_links`, `calendar_date`, `calendar_free_time`, the contact tools, and every write tool read Mail, Calendar, Contacts, or Messages live, so they work while the index is rebuilding.
+
+The indexer (below) refreshes the index incrementally, every 5 minutes by default. The search tools return matching items for your MCP client's model to read and answer from.
 
 ## Requirements
 
@@ -172,7 +188,7 @@ If you do not run the indexer, the MCP process indexes when it starts, then exit
 
 ### 5. Another computer (optional)
 
-The same tools are available over HTTP, with a bearer token on every request. stdio on this Mac does not use the token.
+The same tools are available over HTTP, with a bearer token on every request. stdio on this Mac does not use the token. The token is a random secret created on first use and kept in your login Keychain (service `apple-tools-mcp-http`); `apple-tools-mcp http-token` prints it.
 
 ```bash
 apple-tools-http
@@ -468,6 +484,10 @@ Install Gitleaks, then enable the committed hook once in each clone:
 git config core.hooksPath .githooks
 npm run scan:package
 ```
+
+Before a pull request is merged, `python3 .security/local-gate.py <PR number>` runs
+Gitleaks, the production `npm audit`, offline Semgrep, and the unit and security
+tests on the exact PR head and records the result as the `local-gate` status.
 
 The hook scans staged changes and fails closed if Gitleaks is unavailable. CI scans
 all fetched Git history and the exact `npm pack --dry-run` file list. Release CI
