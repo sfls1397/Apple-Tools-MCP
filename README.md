@@ -184,6 +184,8 @@ The refresh interval is chosen once, when the process starts. The default is 5 m
 
 Values are clamped to 15 seconds through 6 hours. A missing config file is fine; the 5-minute default is used.
 
+The indexer keeps its memory bounded for long runs. The vector database's caches are capped at a 64 MB index cache and a 256 MB metadata cache; set `APPLE_TOOLS_LANCE_INDEX_CACHE_MB` or `APPLE_TOOLS_LANCE_METADATA_CACHE_MB` (whole megabytes, 1 to 8192) in the LaunchAgent's `EnvironmentVariables` to change them. Indexed IDs stay in memory between passes, so a pass with no new mail does not re-read the index. Once a day, after a pass that added or removed something, it compacts the index files and removes table versions older than an hour.
+
 If you do not run the indexer, the MCP process indexes when it starts, then exits when the client disconnects. Writes then run inside that process, and macOS attributes them to the app that launched it.
 
 ### 5. Another computer (optional)

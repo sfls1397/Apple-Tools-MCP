@@ -38,6 +38,10 @@ Compares the vector index against all three source databases with 0% tolerance. 
 
 Loads `~/.apple-tools-mcp/config.json` (missing/invalid JSON is non-fatal). Resolves the index refresh interval with precedence env `INDEX_INTERVAL_MS` > file `indexInterval` / `indexIntervalMs` > 5-minute default. Accepts human durations (`30s`, `1m`, `1h`) and clamps to 15 seconds–6 hours, logging the effective interval.
 
+### lib/indexMaintenance.js -- Long-run indexer upkeep
+
+`createIndexedIdCache` keeps the indexed ID sets (email `filePath` + `messageId` in one query, message `id`) in memory between passes and re-reads a table only when its LanceDB `version()` moves; `noteAdded` folds this process's own `add()` in when the version moved by exactly one commit, otherwise drops the entry. `createDuplicatePathTracker` remembers email copies skipped as duplicate Message-IDs (IMAP copies in another folder) so they are not parsed every pass, and forgets paths that leave the lookback window. `optimizeIndexTables` / `isIndexOptimizeDue` compact the tables and prune versions older than an hour, once a day after a pass that wrote something (`lastIndexOptimizeTime` in `index-meta.json`); failures are logged, never thrown. LanceDB cache caps (64 MB index, 256 MB metadata; `APPLE_TOOLS_LANCE_*_CACHE_MB`) live in `lib/lancedbTables.js` (`createLanceSession`).
+
 ### lib/processMode.js -- Indexer vs MCP stdio
 
 Detects `--mode=indexer` / `--mode indexer` / `apple-tools-indexer` bin so the same `index.js` can run as a daemon or as a short-lived MCP client.

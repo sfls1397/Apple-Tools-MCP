@@ -15,7 +15,18 @@ import {
 } from "./lib/validators.js";
 import { safeSqlite3Json, safeSqlite3JsonAsync, safeOsascript, safeFindAsync } from "./lib/shell.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
-import { createLanceTableCache, LANCE_CONNECT_OPTIONS } from "./lib/lancedbTables.js";
+import {
+  createLanceTableCache,
+  createLanceSession,
+  INDEX_TABLE_NAMES,
+  LANCE_CONNECT_OPTIONS
+} from "./lib/lancedbTables.js";
+import {
+  createIndexedIdCache,
+  createDuplicatePathTracker,
+  isIndexOptimizeDue,
+  optimizeIndexTables
+} from "./lib/indexMaintenance.js";
 import { createMessageContactMatcher } from "./lib/messageContact.js";
 import { resolveByExactName, normalizePhone } from "./contacts.js";
 
@@ -77,14 +88,29 @@ let embeddingPipeline = null;
 
 // One connection per process. Do not early-return a first connect that saw an
 // empty catalog — MCP stdio must pick up tables the indexer daemon already wrote.
+// The capped Session keeps LanceDB's caches from growing to their 6 GB / 1 GB
+// defaults in the long-lived indexer daemon.
 const lanceCache = createLanceTableCache({
-  connect: (uri, options) => lancedb.connect(uri, options),
+  connect: (uri, options, session) => lancedb.connect(uri, options, session),
   indexDir: INDEX_DIR,
   mkdirSync: (p, o) => fs.mkdirSync(p, o),
-  connectOptions: LANCE_CONNECT_OPTIONS
+  connectOptions: LANCE_CONNECT_OPTIONS,
+  session: createLanceSession(lancedb.Session)
 });
 const tables = lanceCache.tables;
 let db = null;
+
+// Indexed ID sets stay in memory between passes; a table is re-read only when
+// its version moves. Email files skipped as Message-ID duplicates are
+// remembered so the same IMAP copies are not parsed every pass.
+const EMAIL_ID_FIELDS = ["filePath", "messageId"];
+const indexedIdCache = createIndexedIdCache({
+  getTable: async (name) => {
+    await initDB();
+    return tables[name] || null;
+  }
+});
+const duplicateEmailPaths = createDuplicatePathTracker();
 
 async function getEmbedder() {
   if (!embeddingPipeline) {
@@ -782,6 +808,8 @@ export async function getOpenTable(type) {
 function resetLanceConnection() {
   lanceCache.reset();
   db = null;
+  indexedIdCache.invalidate();
+  duplicateEmailPaths.clear();
 }
 
 export async function clearEmailsTable() {
@@ -789,6 +817,8 @@ export async function clearEmailsTable() {
   if (tables.emails) {
     await db.dropTable("emails");
     tables.emails = null;
+    indexedIdCache.invalidate("emails");
+    duplicateEmailPaths.clear();
     console.error("Emails table dropped. Re-run indexing to rebuild.");
     return { cleared: true };
   }
@@ -800,6 +830,7 @@ export async function clearMessagesTable() {
   if (tables.messages) {
     await db.dropTable("messages");
     tables.messages = null;
+    indexedIdCache.invalidate("messages");
     console.error("Messages table dropped. Re-run indexing to rebuild.");
     return { cleared: true };
   }
@@ -910,6 +941,31 @@ async function getIndexedIdsWithRetry(tableName, idField, maxRetries = 3) {
   throw lastError;
 }
 
+/**
+ * Indexed ID sets for several columns of one table, read in one query and
+ * kept in memory between passes (re-read only when the table version moves).
+ * Same retry policy as getIndexedIdsWithRetry.
+ */
+async function getCachedIdSetsWithRetry(tableName, fields, maxRetries = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await indexedIdCache.getIdSets(tableName, fields);
+    } catch (e) {
+      // THROW (after retries) instead of returning empty Sets to prevent duplicate entries
+      console.error(`Error getting indexed IDs from ${tableName}: ${e.message}`);
+      lastError = new Error(`Failed to get indexed IDs from ${tableName}: ${e.message}`);
+      indexedIdCache.invalidate(tableName);
+      if (attempt < maxRetries) {
+        const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.error(`Retry ${attempt}/${maxRetries} after ${backoff}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoff));
+      }
+    }
+  }
+  throw lastError;
+}
+
 // ============ INDEX ALL CONTENT ============
 
 export async function indexEmails(progressCallback = null, forceFullScan = false) {
@@ -957,12 +1013,27 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   }
   console.error(`Found ${newFiles.length} new/modified email files (${Date.now() - startTime}ms)`);
 
-  const indexedPaths = await getIndexedIdsWithRetry("emails", "filePath");
-  const indexedMessageIds = await getIndexedIdsWithRetry("emails", "messageId");
+  // One read of both ID columns, served from memory while the table is unchanged.
+  const emailIdSets = await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS);
+  const indexedPaths = emailIdSets.filePath;
+  const indexedMessageIds = emailIdSets.messageId;
   console.error(`Already indexed: ${indexedPaths.size} emails`);
 
-  // Filter out already-indexed files
-  let toIndex = newFiles.filter(f => !indexedPaths.has(f));
+  // Filter out already-indexed files and copies already known to duplicate an
+  // indexed Message-ID (forget copies that left the lookback window).
+  duplicateEmailPaths.retainOnly(newFiles);
+  let knownDuplicates = 0;
+  let toIndex = newFiles.filter(f => {
+    if (indexedPaths.has(f)) return false;
+    if (duplicateEmailPaths.has(f)) {
+      knownDuplicates++;
+      return false;
+    }
+    return true;
+  });
+  if (knownDuplicates > 0) {
+    console.error(`Known duplicate copies (already indexed by Message-ID): ${knownDuplicates}`);
+  }
   console.error(`Need to index: ${toIndex.length} emails`);
 
   // Sort by mailbox priority so higher-priority folders are indexed first
@@ -976,7 +1047,8 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   }
 
   let processed = 0;
-  let skippedCount = { parseNull: 0, shortSearchText: 0, duplicateMessageId: 0 };
+  let indexedCount = 0;
+  let skippedCount = { parseNull: 0, shortSearchText: 0, duplicateMessageId: 0, alreadyIndexed: 0 };
 
   // Progress tracking
   const totalBatches = Math.ceil(toIndex.length / BATCH_SIZE);
@@ -989,6 +1061,9 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
     // Parse all emails in batch first
     const parsedEmails = [];
     const searchTexts = [];
+    // Message-IDs taken earlier in this batch (two copies of one new email can
+    // land in the same batch before either is in indexedMessageIds)
+    const batchMessageIds = new Set();
 
     for (const filePath of batch) {
       const parsed = parseEmlx(filePath);
@@ -1005,13 +1080,18 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
         continue;
       }
       // Skip duplicate messageIds - same email in multiple folders (IMAP behavior)
-      if (parsed.messageId && indexedMessageIds.has(parsed.messageId)) {
+      if (parsed.messageId && (indexedMessageIds.has(parsed.messageId) || batchMessageIds.has(parsed.messageId))) {
         skippedCount.duplicateMessageId++;
+        // Remember the copy's path so later passes skip it before parsing.
+        duplicateEmailPaths.add(filePath);
         continue; // Skip this duplicate
       }
       // NOTE: Don't filter by email header date - mdfind already filters by file modification time
       // The DAYS_BACK filter is applied at the mdfind level (finding recently modified files),
       // not at the email content level (email header dates can be old for recently modified messages)
+      if (parsed.messageId) {
+        batchMessageIds.add(parsed.messageId);
+      }
       parsedEmails.push({ filePath, parsed });
       searchTexts.push(parsed.searchText);
     }
@@ -1068,6 +1148,7 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
       if (uniqueRecords.length > 0) {
         if (!tables.emails) {
           tables.emails = await db.createTable("emails", uniqueRecords, { mode: "overwrite" });
+          indexedCount += uniqueRecords.length;
           // Track messageIds from the first batch so later batches can
           // dedupe IMAP copies (INBOX vs Junk) of the same Message-ID.
           for (const record of uniqueRecords) {
@@ -1077,16 +1158,18 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
           }
         } else {
           // Double-check: verify these IDs truly aren't in the index
-          const currentIndexed = await getIndexedIdsWithRetry("emails", "filePath");
+          const currentIndexed = (await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS)).filePath;
           const trulyNew = uniqueRecords.filter(r => !currentIndexed.has(r.filePath));
 
           if (trulyNew.length < uniqueRecords.length) {
+            skippedCount.alreadyIndexed += uniqueRecords.length - trulyNew.length;
             console.error(`WARNING: ${uniqueRecords.length - trulyNew.length} records were already indexed. Filtering them out.`);
           }
 
           if (trulyNew.length > 0) {
             const beforeCount = await tables.emails.countRows();
             await tables.emails.add(trulyNew);
+            indexedCount += trulyNew.length;
             const afterCount = await tables.emails.countRows();
             const actualAdded = afterCount - beforeCount;
 
@@ -1101,6 +1184,7 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
                 indexedMessageIds.add(record.messageId);
               }
             }
+            await indexedIdCache.noteAdded("emails", trulyNew);
           }
         }
       }
@@ -1134,20 +1218,23 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
 
   // Log skip summary with timing
   const totalProcessingTime = Date.now() - startProcessTime;
-  const totalSkipped = skippedCount.parseNull + skippedCount.shortSearchText + skippedCount.duplicateMessageId;
+  const totalSkipped = skippedCount.parseNull + skippedCount.shortSearchText +
+    skippedCount.duplicateMessageId + skippedCount.alreadyIndexed;
   console.error(`\nEmail indexing summary:`);
   console.error(`  Files to index: ${toIndex.length}`);
-  console.error(`  Successfully indexed: ${processed}`);
+  console.error(`  Successfully indexed: ${indexedCount}`);
   console.error(`  Skipped - parse errors: ${skippedCount.parseNull}`);
   console.error(`  Skipped - short searchText: ${skippedCount.shortSearchText}`);
   console.error(`  Skipped - duplicate messageId: ${skippedCount.duplicateMessageId}`);
+  console.error(`  Skipped - already indexed: ${skippedCount.alreadyIndexed}`);
   console.error(`  Total skipped: ${totalSkipped}`);
-  console.error(`  Discrepancy: ${toIndex.length - processed - totalSkipped}`);
+  console.error(`  Discrepancy: ${toIndex.length - indexedCount - totalSkipped}`);
   console.error(`  Total time: ${Math.round(totalProcessingTime / 1000)}s (${Math.round(totalProcessingTime / 60000)}m)\n`);
 
-  // Return actual indexed count from database, not stale cache
-  const finalIndexedPaths = await getIndexedIdsWithRetry("emails", "filePath");
-  return { indexed: finalIndexedPaths.size, added: processed };
+  // Indexed count from the version-checked ID cache (re-reads only if the
+  // table moved by something other than this pass's own adds)
+  const finalIndexedPaths = (await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS)).filePath;
+  return { indexed: finalIndexedPaths.size, added: indexedCount };
 }
 
 export async function indexMessages(forceFullScan = false) {
@@ -1173,7 +1260,7 @@ export async function indexMessages(forceFullScan = false) {
   }
   console.error(`Found ${messages.length} messages${lastMessageIndexTime ? ' (incremental)' : ' (full scan)'}`);
 
-  const indexed = await getIndexedIdsWithRetry("messages", "id");
+  const indexed = (await getCachedIdSetsWithRetry("messages", ["id"])).id;
   console.error(`Already indexed: ${indexed.size} messages`);
 
   const toIndex = messages.filter(m => !indexed.has(String(m.id)));
@@ -1186,6 +1273,7 @@ export async function indexMessages(forceFullScan = false) {
   }
 
   let processed = 0;
+  let addedCount = 0;
 
   // Progress tracking
   const totalBatches = Math.ceil(toIndex.length / BATCH_SIZE);
@@ -1260,9 +1348,10 @@ export async function indexMessages(forceFullScan = false) {
       if (uniqueRecords.length > 0) {
         if (!tables.messages) {
           tables.messages = await db.createTable("messages", uniqueRecords, { mode: "overwrite" });
+          addedCount += uniqueRecords.length;
         } else {
           // Double-check: verify these IDs truly aren't in the index
-          const currentIndexed = await getIndexedIdsWithRetry("messages", "id");
+          const currentIndexed = (await getCachedIdSetsWithRetry("messages", ["id"])).id;
           const trulyNew = uniqueRecords.filter(r => !currentIndexed.has(r.id));
 
           if (trulyNew.length < uniqueRecords.length) {
@@ -1272,12 +1361,14 @@ export async function indexMessages(forceFullScan = false) {
           if (trulyNew.length > 0) {
             const beforeCount = await tables.messages.countRows();
             await tables.messages.add(trulyNew);
+            addedCount += trulyNew.length;
             const afterCount = await tables.messages.countRows();
             const actualAdded = afterCount - beforeCount;
 
             if (actualAdded !== trulyNew.length) {
               console.error(`WARNING: Expected to add ${trulyNew.length} records but index grew by ${actualAdded}. Possible duplicate issue.`);
             }
+            await indexedIdCache.noteAdded("messages", trulyNew);
           }
         }
       }
@@ -1304,7 +1395,7 @@ export async function indexMessages(forceFullScan = false) {
   // Save timestamp for next incremental scan
   saveIndexMeta({ ...meta, lastMessageIndexTime: indexStartTime });
 
-  return { indexed: indexed.size, added: processed };
+  return { indexed: indexed.size, added: addedCount };
 }
 
 export async function indexCalendar() {
@@ -1458,8 +1549,33 @@ export async function indexAll(progressCallback = null) {
   const calendarResult = await indexCalendar();
   if (progressCallback) progressCallback('calendar-complete');
 
+  await maybeOptimizeIndex({ emails: emailResult, messages: messageResult, calendar: calendarResult });
+
   console.error("Full index complete.");
   return { emails: emailResult, messages: messageResult, calendar: calendarResult };
+}
+
+/**
+ * Daily LanceDB compaction + old-version cleanup, only after a pass that wrote
+ * something. Every add() leaves a small data file and a new version; without
+ * this the tables grow thousands of fragments that every full read opens.
+ */
+async function maybeOptimizeIndex(results) {
+  const wroteSomething =
+    (results.emails?.added || 0) > 0 ||
+    (results.messages?.added || 0) > 0 ||
+    (results.calendar?.added || 0) > 0 ||
+    (results.calendar?.removed || 0) > 0;
+  const meta = loadIndexMeta();
+  if (!isIndexOptimizeDue({ lastOptimizeTime: meta.lastIndexOptimizeTime, wroteSomething })) {
+    return null;
+  }
+  console.error("Optimizing index tables (compaction + old version cleanup)...");
+  const result = await optimizeIndexTables({ tables, tableNames: INDEX_TABLE_NAMES });
+  // Compaction makes new table versions; re-read IDs once next pass.
+  indexedIdCache.invalidate();
+  saveIndexMeta({ ...loadIndexMeta(), lastIndexOptimizeTime: Date.now() });
+  return result;
 }
 
 export async function isIndexReady(type = "emails") {
