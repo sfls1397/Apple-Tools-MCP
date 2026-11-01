@@ -1,5 +1,5 @@
 /**
- * 3.2.5 indexer memory fixes: capped LanceDB session, indexed-ID cache kept
+ * 3.3.0 indexer memory fixes: capped LanceDB session, indexed-ID cache kept
  * between passes, duplicate-copy tracker, and periodic compaction.
  */
 
