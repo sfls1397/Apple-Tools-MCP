@@ -412,7 +412,7 @@ describe('append-only durability, crash recovery and single-use retry approval',
       expect(transport).not.toHaveBeenCalled()
     }
   })
-  it.each(['torn', 'filename', 'schema_version', 'authorization_id', 'retry_attempt', 'consumed_at', 'symlink'])('refuses malformed consumption audit %s before handler entry', alteration => {
+  it.each(['torn', 'filename', 'schema_version', 'authorization_id', 'authorization_ref', 'retry_attempt', 'consumed_at', 'symlink'])('refuses malformed consumption audit %s before handler entry', alteration => {
     const sample = fixture()
     const { commit, commitDeps } = sample.prepare()
     mailSendReconcile(commit, commitDeps)
@@ -421,12 +421,53 @@ describe('append-only durability, crash recovery and single-use retry approval',
     const consumed = path.join(sample.directory, '.authorizations')
     fs.mkdirSync(consumed)
     const record = { schema_version: 1, ...claimBinding(terminal), claim_id: hash('unrelated'), authorization_id: hash('old-authorization'), authorization_ref: hash('old-reference'), retry_attempt: 2, consumed_at: time }
-    if (['schema_version', 'authorization_id', 'retry_attempt', 'consumed_at'].includes(alteration)) record[alteration] = null
+    if (['schema_version', 'authorization_id', 'authorization_ref', 'retry_attempt', 'consumed_at'].includes(alteration)) record[alteration] = null
+    record.integrity_hash = hash(JSON.stringify(record))
     const file = path.join(consumed, alteration === 'filename' ? 'invalid.json' : `${hash('old-authorization')}.json`)
     if (alteration === 'symlink') fs.symlinkSync(path.join(sample.directory, sample.id, '1.json'), file)
     else fs.writeFileSync(file, alteration === 'torn' ? '{' : JSON.stringify(record))
     const transport = vi.fn()
     expect(idempotentMailSend({ ...args, retry_authorization_ref: reference, deployment_ref: sample.beginArgs.deployment_ref }, transport, commitDeps).ok).toBe(false)
+    expect(transport).not.toHaveBeenCalled()
+    expect(fs.existsSync(path.join(sample.directory, sample.id, '2.json'))).toBe(false)
+  })
+  it('does not confuse an intact unrelated consumption record with the requested lineage', () => {
+    const sample = fixture()
+    const { commit, commitDeps } = sample.prepare()
+    mailSendReconcile(commit, commitDeps)
+    const terminal = readMailClaim(sample.directory, sample.id, 1)
+    const reference = sample.put('authorization', { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('new-authorization'), single_use: true, operator: 'operator_one', epoch })
+    const consumed = path.join(sample.directory, '.authorizations')
+    fs.mkdirSync(consumed)
+    const record = { schema_version: 1, ...claimBinding(terminal), claim_id: hash('unrelated'), authorization_id: hash('old-authorization'), authorization_ref: hash('old-reference'), retry_attempt: 2, consumed_at: time }
+    record.integrity_hash = hash(JSON.stringify(record))
+    fs.writeFileSync(path.join(consumed, `${record.authorization_id}.json`), JSON.stringify(record))
+    const transport = vi.fn(() => ({ ok: true }))
+    expect(code(idempotentMailSend({ ...args, retry_authorization_ref: reference, deployment_ref: sample.beginArgs.deployment_ref }, transport, commitDeps))).toBe('transport_accepted')
+    expect(transport).toHaveBeenCalledTimes(1)
+  })
+  it.each(['claim_id', 'fingerprint', 'authorization_ref', 'consumed_at', 'missing_integrity'])('refuses valid-shape consumption corruption of %s after a pre-attempt crash', field => {
+    const sample = fixture()
+    const { commit, commitDeps } = sample.prepare()
+    mailSendReconcile(commit, commitDeps)
+    const terminal = readMailClaim(sample.directory, sample.id, 1)
+    const reference = sample.put('authorization', { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('authorization'), single_use: true, operator: 'operator_one', epoch })
+    const request = { ...args, retry_authorization_ref: reference, deployment_ref: sample.beginArgs.deployment_ref }
+    const io = Object.create(fs)
+    io.openSync = (file, ...options) => {
+      if (file === path.join(sample.directory, sample.id, '2.json')) throw Error('crash before attempt')
+      return fs.openSync(file, ...options)
+    }
+    const transport = vi.fn()
+    expect(idempotentMailSend(request, transport, { ...commitDeps, io }).ok).toBe(false)
+    fs.rmdirSync(path.join(sample.directory, '.writer-lock'))
+    const file = path.join(sample.directory, '.authorizations', `${hash('authorization')}.json`)
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (field === 'missing_integrity') delete record.integrity_hash
+    else record[field] = field === 'consumed_at' ? record[field] + 1 : `${record[field][0] === 'a' ? 'b' : 'a'}${record[field].slice(1)}`
+    fs.writeFileSync(file, JSON.stringify(record))
+    const alternate = sample.put('authorization', { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('alternate-after-corruption'), single_use: true, operator: 'operator_one', epoch })
+    expect(code(idempotentMailSend({ ...request, retry_authorization_ref: alternate }, transport, commitDeps))).toBe('durability_refused')
     expect(transport).not.toHaveBeenCalled()
     expect(fs.existsSync(path.join(sample.directory, sample.id, '2.json'))).toBe(false)
   })

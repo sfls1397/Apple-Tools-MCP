@@ -199,6 +199,9 @@ proven-unstarted retry; a separately reviewed future protocol would be needed.
 Admission checks both the attempt's authorization provenance and all durable
 consumption records for its claim lineage, including a consumption whose crash
 prevented creation of the retry attempt. A different grant cannot restore it.
+The complete consumption record has a verified integrity hash before any lineage
+field is trusted. Missing hashes and valid-shape corruption refuse closed. As
+with claim/event hashes, this detects corruption, not malicious same-user edits.
 This promises at-most-once authorized handler invocation, not exactly-once
 delivery by Mail or a remote mail server.
 
