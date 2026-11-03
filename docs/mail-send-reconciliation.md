@@ -196,6 +196,9 @@ ID. Concurrent/replayed consumers cannot invoke another handler. A crash
 after consumption but before transport sacrifices permission and may sacrifice
 delivery. V1 does **not** allow another authorization after a consumed,
 proven-unstarted retry; a separately reviewed future protocol would be needed.
+Admission checks both the attempt's authorization provenance and all durable
+consumption records for its claim lineage, including a consumption whose crash
+prevented creation of the retry attempt. A different grant cannot restore it.
 This promises at-most-once authorized handler invocation, not exactly-once
 delivery by Mail or a remote mail server.
 

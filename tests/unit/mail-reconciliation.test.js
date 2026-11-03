@@ -357,10 +357,43 @@ describe('append-only durability, crash recovery and single-use retry approval',
     const reference = sample.put('authorization', { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('authorization'), single_use: true, operator: 'operator_one', epoch })
     const request = { ...args, retry_authorization_ref: reference, deployment_ref: sample.beginArgs.deployment_ref }
     const transport = vi.fn(() => ({ ok: false, sendStarted: false }))
-    idempotentMailSend(request, transport, commitDeps)
+    const result = idempotentMailSend(request, transport, commitDeps)
+    expect(result.mail_send.current_invocation_transport).toBe('entered')
     expect(code(idempotentMailSend(request, transport, commitDeps))).toBe('pending_suppressed')
     expect(transport).toHaveBeenCalledTimes(1)
     expect(readMailClaim(sample.directory, sample.id, 2).state).toBe('pending')
+  })
+  it('records actual ordinary handler entry separately from proof that sending did not start', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'atm-entry-'))
+    const transport = vi.fn(() => ({ ok: false, sendStarted: false }))
+    const result = idempotentMailSend(args, transport, { directory, log() {} })
+    expect(transport).toHaveBeenCalledTimes(1)
+    expect(result.mail_send.current_invocation_transport).toBe('entered')
+    expect(result.sendStarted).toBe(false)
+  })
+  it('rejects a second grant even after an authorized retry is reconciled to not_sent', () => {
+    const sample = fixture()
+    const { commit, evidence, commitDeps } = sample.prepare()
+    mailSendReconcile(commit, commitDeps)
+    const terminal = readMailClaim(sample.directory, sample.id, 1)
+    const grant = { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('grant-a'), single_use: true, operator: 'operator_one', epoch }
+    const request = { ...args, retry_authorization_ref: sample.put('authorization', grant), deployment_ref: sample.beginArgs.deployment_ref }
+    const transport = vi.fn(() => ({ ok: false, sendStarted: false }))
+    idempotentMailSend(request, transport, commitDeps)
+    const retry = readMailClaim(sample.directory, sample.id, 2)
+    const beginArgs = { ...sample.beginArgs, ...claimBinding(retry), approval_ref: sample.put('approval', { ...sample.approval, ...claimBinding(retry), id: hash('second-adjudication') }) }
+    const begun = mailSendReconcile(beginArgs, { ...sample.deps, now: () => time + 3 })
+    expect(code(begun)).toBe('evidence_required')
+    const secondEvidence = { ...evidence, ...claimBinding(retry), id: hash('second-evidence'), fence_id: begun.mail_send.fence_id, issued_at: time + 4,
+      sent: { ...evidence.sent, observed_at: time + 4, search_to: time + 4 }, outbox: { ...evidence.outbox, observed_at: time + 4, search_to: time + 4 } }
+    const secondCommit = { ...beginArgs, action: 'commit', fence_id: begun.mail_send.fence_id, outcome: 'not_sent', reason_code: 'operator_verified_not_sent', evidence_ref: sample.put('evidence', secondEvidence) }
+    const laterDeps = { ...sample.deps, now: () => time + 5 }
+    expect(code(mailSendReconcile(secondCommit, laterDeps))).toBe('reconciled')
+    const secondTerminal = readMailClaim(sample.directory, sample.id, 2)
+    const grantB = { ...grant, ...claimBinding(secondTerminal), id: hash('grant-b') }
+    expect(code(idempotentMailSend({ ...request, retry_authorization_ref: sample.put('authorization', grantB) }, transport, laterDeps))).toBe('authorization_refused')
+    expect(transport).toHaveBeenCalledTimes(1)
+    expect(fs.existsSync(path.join(sample.directory, sample.id, '3.json'))).toBe(false)
   })
   it('cannot enter transport on consumption failure, including torn claim, file fsync or directory fsync', () => {
     for (const boundary of [2, 3, 4, 5, 6]) {
@@ -379,6 +412,24 @@ describe('append-only durability, crash recovery and single-use retry approval',
       expect(transport).not.toHaveBeenCalled()
     }
   })
+  it.each(['torn', 'filename', 'schema_version', 'authorization_id', 'retry_attempt', 'consumed_at', 'symlink'])('refuses malformed consumption audit %s before handler entry', alteration => {
+    const sample = fixture()
+    const { commit, commitDeps } = sample.prepare()
+    mailSendReconcile(commit, commitDeps)
+    const terminal = readMailClaim(sample.directory, sample.id, 1)
+    const reference = sample.put('authorization', { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('new-authorization'), single_use: true, operator: 'operator_one', epoch })
+    const consumed = path.join(sample.directory, '.authorizations')
+    fs.mkdirSync(consumed)
+    const record = { schema_version: 1, ...claimBinding(terminal), claim_id: hash('unrelated'), authorization_id: hash('old-authorization'), authorization_ref: hash('old-reference'), retry_attempt: 2, consumed_at: time }
+    if (['schema_version', 'authorization_id', 'retry_attempt', 'consumed_at'].includes(alteration)) record[alteration] = null
+    const file = path.join(consumed, alteration === 'filename' ? 'invalid.json' : `${hash('old-authorization')}.json`)
+    if (alteration === 'symlink') fs.symlinkSync(path.join(sample.directory, sample.id, '1.json'), file)
+    else fs.writeFileSync(file, alteration === 'torn' ? '{' : JSON.stringify(record))
+    const transport = vi.fn()
+    expect(idempotentMailSend({ ...args, retry_authorization_ref: reference, deployment_ref: sample.beginArgs.deployment_ref }, transport, commitDeps).ok).toBe(false)
+    expect(transport).not.toHaveBeenCalled()
+    expect(fs.existsSync(path.join(sample.directory, sample.id, '2.json'))).toBe(false)
+  })
   it('sacrifices permission on a crash after consumption and before attempt creation', () => {
     const sample = fixture()
     const { commit, commitDeps } = sample.prepare()
@@ -396,6 +447,8 @@ describe('append-only durability, crash recovery and single-use retry approval',
     expect(fs.existsSync(path.join(sample.directory, '.authorizations', `${hash('authorization')}.json`))).toBe(true)
     fs.rmdirSync(path.join(sample.directory, '.writer-lock'))
     expect(idempotentMailSend(request, transport, commitDeps).ok).toBe(false)
+    const alternate = sample.put('authorization', { ...sample.fresh, ...claimBinding(terminal), kind: 'retry', id: hash('alternate-after-crash'), single_use: true, operator: 'operator_one', epoch })
+    expect(code(idempotentMailSend({ ...request, retry_authorization_ref: alternate }, transport, commitDeps))).toBe('authorization_refused')
     expect(transport).not.toHaveBeenCalled()
   })
 })
