@@ -23,6 +23,24 @@ Reviewed the HTTP/stdio to indexer handoff, queued-request deadline, send retry 
 Async sqlite/find use validated argv with no shell, bounded output and SIGKILL timeouts. Existing HTTP bearer authentication and Keychain handling are unchanged. No new network destination, credential, native component or separately installed runtime dependency was added. Proof uses synthetic send handlers and a real local socket (including timeout followed by late completion), cross-process claim contention and read-only System Events; no email delivery test is required or performed. Production dependency audit has zero advisories. Scanner PASS supplements this application review.
 
 
+## Mail reconciliation boundary — 3.3.1
+
+Reviewed protected-reference provenance (root ownership, ancestor permissions,
+content hashes and revocation), exact claim/content/attempt/revision binding,
+pre-observation writer fencing, complete account/mailbox evidence, append-only
+state/audit durability and at-most-once retry authorization consumption. No
+transport, collector, locked-screen workaround, automatic retry or legacy
+migration is added. Installation provisions no authority. The administrative
+exclusion/verification boundary is a separately established prerequisite;
+without it, live reconciliation remains unavailable rather than trusting a
+PID, timeout, lease or caller-supplied checked string. Hash chaining detects
+accidental corruption, not malicious same-user or administrator tampering.
+Original attempts and consumed grants never reset. No page-ledger integration
+or live Mail/claim mutation is part of the build's proof. Offline fault and
+process-barrier fixtures exercise the boundary; no exception or scanner waiver
+was added. The full contract and operational limitations are documented in
+`docs/mail-send-reconciliation.md`.
+
 ## Running and Reviewing
 
 Enable `.githooks` for every clone. Install Semgrep using the pin in `.cursor/install-semgrep.sh` and Python 3.10+; Mini Codex/Claude Code share the installed hook/scanner. `python3 .security/scan.py all` runs `npm audit --omit=dev --audit-level=high --json` and `semgrep scan --config .security/semgrep.yml --error --strict --metrics off --disable-version-check --disable-nosem --json`. npm registry/network errors fail closed. Pre-commit scans index bytes and audits staged package files when those files or policy change. The local pre-PR/pre-deploy gate (`.security/local-gate.py`) and npm prepublishOnly run the full gate. Cursor installation uses `.cursor/install-security.sh`, which also runs the full gate.
