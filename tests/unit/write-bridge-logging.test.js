@@ -48,7 +48,7 @@ describe('loggedBridgeHandler', () => {
     const lines = []
     const h = loggedBridgeHandler(async () => ({ ok: false, unconfirmed: true, message: `mail_send: unconfirmed — attempted to send mail to ${ADDR}.` }), (m) => lines.push(m))
     await h('mail_send', {})
-    expect(lines[0]).toMatch(/write bridge: mail_send unconfirmed \(sent; not yet seen in Sent\/Outbox\) in \d+ms$/)
+    expect(lines[0]).toMatch(/write bridge: mail_send unconfirmed \(transport status unknown\) in \d+ms$/)
     expect(lines[0]).not.toContain('failed')
     expect(lines[0]).not.toContain(ADDR)
   })
