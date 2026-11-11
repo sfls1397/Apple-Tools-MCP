@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { loadOrCreateHttpAuthToken, verifyAuthHeader, KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } from '../../lib/httpAuth.js'
+import { loadOrCreateHttpAuthToken, acceptedHttpAuthTokens, verifyAuthHeader, KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT } from '../../lib/httpAuth.js'
 
 describe('loadOrCreateHttpAuthToken', () => {
   it('returns the existing token from Keychain without generating a new one', () => {
@@ -98,5 +98,43 @@ describe('verifyAuthHeader', () => {
     expect(verifyAuthHeader('', token)).toBe(false)
     expect(verifyAuthHeader('Bearer', token)).toBe(false)
     expect(verifyAuthHeader(123, token)).toBe(false)
+  })
+})
+
+// Infisical pilot (R100; Peter: start the Infisical migration, about 8:50 AM CT Nov 11 2026; Toolbox board job
+// mcp:9ac156f9-5029-473b-8a4f-7aa4dee11333): under `infisical run` the server takes its token from the environment,
+// never touching Keychain, and during a rotation also accepts the previous token until clients have switched.
+// Token values here are fake fixtures built at run time.
+describe('HTTP auth token from the environment (infisical run)', () => {
+  const fake = (digit) => String(digit).repeat(64)
+
+  it('prefers APPLE_TOOLS_HTTP_TOKEN and neither reads nor writes Keychain', () => {
+    const execFileSync = vi.fn(() => Buffer.from('keychain-token'))
+    const log = vi.fn()
+    const result = loadOrCreateHttpAuthToken({ execFileSync, log, env: { APPLE_TOOLS_HTTP_TOKEN: ` ${fake(3)}\n` } })
+    expect(result).toEqual({ token: fake(3), generated: false })
+    expect(execFileSync).not.toHaveBeenCalled()
+    expect(log).not.toHaveBeenCalled()
+  })
+
+  it('falls back to Keychain when the variable is unset or blank', () => {
+    const execFileSync = vi.fn(() => Buffer.from('keychain-token\n'))
+    expect(loadOrCreateHttpAuthToken({ execFileSync, env: { APPLE_TOOLS_HTTP_TOKEN: '  ' } }).token).toBe('keychain-token')
+    expect(loadOrCreateHttpAuthToken({ execFileSync, env: {} }).token).toBe('keychain-token')
+  })
+
+  it('accepts the previous token only while APPLE_TOOLS_HTTP_TOKEN_PREVIOUS is set, next to the current one', () => {
+    const env = { APPLE_TOOLS_HTTP_TOKEN: fake(4), APPLE_TOOLS_HTTP_TOKEN_PREVIOUS: fake(5) }
+    expect(acceptedHttpAuthTokens(fake(4), env)).toEqual([fake(4), fake(5)])
+    expect(acceptedHttpAuthTokens(fake(4), { APPLE_TOOLS_HTTP_TOKEN: fake(4) })).toEqual([fake(4)])
+    expect(acceptedHttpAuthTokens(fake(4), { APPLE_TOOLS_HTTP_TOKEN: fake(4), APPLE_TOOLS_HTTP_TOKEN_PREVIOUS: fake(4) })).toEqual([fake(4)])
+    // The previous token is a rotation overlap for the env token only; a Keychain-run server never takes it.
+    expect(acceptedHttpAuthTokens(fake(4), { APPLE_TOOLS_HTTP_TOKEN_PREVIOUS: fake(5) })).toEqual([fake(4)])
+    const accepted = acceptedHttpAuthTokens(fake(4), env)
+    expect(verifyAuthHeader(`Bearer ${fake(4)}`, accepted)).toBe(true)
+    expect(verifyAuthHeader(`Bearer ${fake(5)}`, accepted)).toBe(true)
+    expect(verifyAuthHeader(`Bearer ${fake(6)}`, accepted)).toBe(false)
+    expect(verifyAuthHeader(`Bearer ${fake(5)}`, [fake(4)])).toBe(false)
+    expect(verifyAuthHeader(`Bearer ${fake(4)}`, [])).toBe(false)
   })
 })

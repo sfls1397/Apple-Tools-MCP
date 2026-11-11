@@ -208,6 +208,8 @@ apple-tools-mcp http-token
 
 `127.0.0.1` accepts connections only on this Mac. Set `httpHost` to a LAN or Tailscale address when a client on another machine should connect. `APPLE_TOOLS_HTTP_HOST` and `APPLE_TOOLS_HTTP_PORT` override the file. Do not send the token over an open network.
 
+Under a secrets manager's runtime injection (for example `infisical run -- apple-tools-http`), set `APPLE_TOOLS_HTTP_TOKEN` and the server uses it instead of Keychain, which it then neither reads nor writes. To rotate without cutting off clients, start the server with the new token in `APPLE_TOOLS_HTTP_TOKEN` and the old one in `APPLE_TOOLS_HTTP_TOKEN_PREVIOUS`; once every client has the new token, restart without `APPLE_TOOLS_HTTP_TOKEN_PREVIOUS` and the old token stops working.
+
 An example LaunchAgent is `examples/com.apple-tools-http.plist`. How to point Claude and other clients at it, including `apple-tools-http-proxy`, is in `examples/mcp-client.md`.
 
 ## Index commands

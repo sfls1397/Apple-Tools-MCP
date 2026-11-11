@@ -15,7 +15,7 @@ import { cycleEndFlags, indexUnavailableMessage, indexQueryGate } from "./lib/in
 import { isIndexerMode, isPermissionsMode, isHttpMode, isHttpTokenMode } from "./lib/processMode.js";
 import { runPermissionsCommand } from "./lib/permissions.js";
 import { loadResolvedIndexInterval, logResolvedInterval, resolveHttpServerConfig } from "./lib/config.js";
-import { loadOrCreateHttpAuthToken, verifyAuthHeader } from "./lib/httpAuth.js";
+import { acceptedHttpAuthTokens, loadOrCreateHttpAuthToken, verifyAuthHeader } from "./lib/httpAuth.js";
 import { createHttpRequestHandler } from "./lib/httpTransport.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
 import {
@@ -1702,7 +1702,7 @@ async function startHttpServer(host, port) {
   const { token } = loadOrCreateHttpAuthToken();
 
   const httpServer = http.createServer(createHttpRequestHandler({
-    token,
+    token: acceptedHttpAuthTokens(token),
     verifyAuthHeader,
     createServer,
     StreamableHTTPServerTransport,
