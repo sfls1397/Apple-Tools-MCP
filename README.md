@@ -340,6 +340,8 @@ A dry run or a call that still needs confirm does not deliver anything. The resu
 
 Responses name the action, ids, and recipients. They do not echo message bodies.
 
+No dashes go out under your name. `mail_send`, `mail_draft`, `mail_reply`, `mail_forward` and `messages_send` rewrite dashes used as punctuation before Mail or Messages sees the text: an em dash or en dash becomes a comma ("to" between two numbers, nothing at the start or end of a line), and a hyphen with a space on each side becomes a comma. Hyphens inside names, identifiers, dates and URLs stay, and so does a hyphen that starts a line (a list bullet or the `-- ` signature line). The rewrite runs before the send claim and the Sent check, so both see the text that went out, and the result says how many it rewrote. A dry run reports it too.
+
 A missing or malformed id or recipient is refused. Calendar times are local datetimes, `YYYY-MM-DD HH:MM`. Phrases like "next Tuesday" are rejected on writes.
 
 ### Mail

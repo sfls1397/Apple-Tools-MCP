@@ -74,6 +74,10 @@ Defines the 16 write tools (`mail_send`, `mail_draft`, `mail_reply`, `mail_forwa
 
 The safety contract shared by every write: `dry_run` previews and never executes; deletes and multi-recipient sends require `confirm`; recipients, ids, bodies, and subjects are validated rather than guessed; success and failure lines name the action and target, and `scrubValues()` keeps caller-supplied bodies out of error text. Planned / dry_run / confirm-blocked results use `plannedWriteResult()` (`ok: false`, `planned: true`, `delivered: false`) so MCP `isError` cannot be read as delivered.
 
+### lib/noDashes.js -- No dashes in anything sent as the owner
+
+`withoutDashes(tool, args)` rewrites the subject, body or text of `mail_send`, `mail_draft`, `mail_reply`, `mail_forward` and `messages_send` (em and en dashes and similar characters to commas, "to" between numbers, a spaced hyphen to a comma; HTML dash entities too when `body_format` is html). `executeWriteToolLocally` calls it once, before the idempotency claim, the mail fence and the handler, so every path (stdio, HTTP, the write bridge) sends the rewritten text and Sent verification looks for it; the result message gets `dashNote(count)`. Hyphens inside words, line-start bullets and the `-- ` signature line stay.
+
 ### lib/appleScript.js -- Script literals, strict dates, TCC classification
 
 Builds escaped AppleScript literals (`asString`/`asInteger`/`dateCall`), parses writes-only strict local datetimes (no natural language), and classifies osascript failures as `tcc` / `not_found` / `app_unavailable` / `unknown`.
