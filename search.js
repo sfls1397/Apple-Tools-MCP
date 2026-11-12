@@ -1601,6 +1601,18 @@ export function formatMessageContactsResults(contacts) {
   return output;
 }
 
+// A calendar tool result that failed to read the calendar becomes a thrown error, so the MCP
+// dispatcher answers isError: true. A failed read must never look like an empty day.
+export function requireCalendarRead(result) {
+  if (result?.success === false) {
+    throw new Error(result.error || "The calendar could not be read");
+  }
+  if (result?.error) {
+    throw new Error(`Error getting upcoming events: ${result.error}`);
+  }
+  return result;
+}
+
 // Format calendar_upcoming results
 export function formatUpcomingEventsResults(result) {
   if (result?.error) {

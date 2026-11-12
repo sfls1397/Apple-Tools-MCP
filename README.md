@@ -295,8 +295,8 @@ Your client can also call `audit_index`.
 | Tool | Description |
 |------|-------------|
 | `calendar_search` | Semantic search for events, with filters. |
-| `calendar_date` | Events on a date, read live from Calendar rather than the search index. |
-| `calendar_upcoming` | Next upcoming events. |
+| `calendar_date` | Events on a date, read live from Calendar rather than the search index. A failed read is an error, never an empty day. |
+| `calendar_upcoming` | Next events, starting with everything on today's date (all-day and earlier-today events included). A failed read is an error. |
 | `calendar_week` | Events for this week or a future week. |
 | `calendar_free_time` | Open time on a date, read live from Calendar rather than the search index. |
 | `calendar_recurring` | Recurring events. |
