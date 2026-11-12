@@ -1990,19 +1990,15 @@ export function getMessageContacts(limit = 50) {
   }
 }
 
-// calendar_upcoming: Get next N upcoming events
-export function getUpcomingEvents(limit = 10) {
-  try {
-    // Validate limit to prevent SQL issues
-    const safeLimit = validateLimit(limit, 10, 100);
-    const nowMac = Math.floor(Date.now() / 1000) - 978307200;
-    const fetchLimit = safeLimit + 1; // Fetch one extra to detect if more exist
-
-    // Query OccurrenceCache to include recurring event occurrences
-    const query = `
+// calendar_upcoming: Get next N upcoming events, starting with every event on the current local day.
+// OccurrenceCache.day is each occurrence's local midnight, so the lower bound is today's local midnight,
+// never now: comparing day to now dropped all of today (all-day and later-today events) after midnight.
+export function buildUpcomingEventsQuery(dayStartMac, fetchLimit) {
+  const occStart = "COALESCE(oc.occurrence_end_date - (ci.end_date - ci.start_date), ci.start_date)";
+  return `
       SELECT
         ci.summary as title,
-        datetime(COALESCE(oc.occurrence_end_date - (ci.end_date - ci.start_date), ci.start_date) + 978307200, 'unixepoch', 'localtime') as start,
+        datetime(${occStart} + 978307200, 'unixepoch', 'localtime') as start,
         datetime(COALESCE(oc.occurrence_end_date, ci.end_date) + 978307200, 'unixepoch', 'localtime') as end,
         ci.all_day as isAllDay,
         c.title as calendar,
@@ -2012,11 +2008,35 @@ export function getUpcomingEvents(limit = 10) {
       INNER JOIN CalendarItem ci ON oc.event_id = ci.ROWID
       LEFT JOIN Calendar c ON ci.calendar_id = c.ROWID
       LEFT JOIN Location l ON ci.location_id = l.ROWID
-      WHERE oc.day >= ${nowMac} AND ci.summary IS NOT NULL AND ci.summary <> ''
-      ORDER BY sort_day ASC
+      WHERE oc.day >= ${dayStartMac} AND ci.summary IS NOT NULL AND ci.summary <> ''
+      ORDER BY sort_day ASC, ci.all_day DESC, ${occStart} ASC, title ASC
       LIMIT ${fetchLimit}
     `;
+}
+
+// Start of the current local day, in Apple/Core Data seconds.
+function localTodayStartMac() {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  return Math.floor(midnight.getTime() / 1000) - MAC_ABSOLUTE_EPOCH;
+}
+
+// A copy with no OccurrenceCache rows at all is not a readable calendar: say so instead of an empty day.
+function assertOccurrenceCache(dbPath) {
+  const rows = safeSqlite3Json(dbPath, "SELECT COUNT(*) AS n FROM (SELECT 1 FROM OccurrenceCache LIMIT 1)", { timeout: 10000 });
+  if (!rows.length || !Number(rows[0].n)) {
+    throw new Error("Calendar OccurrenceCache is empty, so the calendar could not be read");
+  }
+}
+
+export function getUpcomingEvents(limit = 10) {
+  try {
+    // Validate limit to prevent SQL issues
+    const safeLimit = validateLimit(limit, 10, 100);
+    const fetchLimit = safeLimit + 1; // Fetch one extra to detect if more exist
+    const query = buildUpcomingEventsQuery(localTodayStartMac(), fetchLimit);
     const events = withCalendarCopy((dbPath) => {
+      assertOccurrenceCache(dbPath);
       return safeSqlite3Json(dbPath, query, { timeout: 10000 });
     });
     const hasMore = events.length > safeLimit;
@@ -2149,6 +2169,7 @@ export function getEventsOnDate(startMs, endMs) {
       const query = buildEventsOnDateQuery(startMac, endMac, { includeUid: attempt === 0 });
       try {
         const events = withCalendarCopy((dbPath) => {
+          assertOccurrenceCache(dbPath);
           return safeSqlite3Json(dbPath, query, { timeout: 15000 });
         });
         return { events, error: null };

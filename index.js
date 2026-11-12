@@ -219,6 +219,7 @@ import {
   formatSendersResults,
   formatMessageContactsResults,
   formatUpcomingEventsResults,
+  requireCalendarRead,
   formatWeekEventsResults,
   formatEmailThreadResults,
   formatRecurringEventsResults
@@ -576,13 +577,11 @@ async function calendarSearch(query, options = {}) {
 }
 
 async function calendarDate(date) {
-  const result = await getCalendarDateResults(date);
-  return formatCalendarResults(result);
+  return formatCalendarResults(requireCalendarRead(await getCalendarDateResults(date)));
 }
 
 async function calendarFreeTime(date, options = {}) {
-  const result = await calculateFreeTime(date, options);
-  return formatFreeTimeResults(result);
+  return formatFreeTimeResults(requireCalendarRead(await calculateFreeTime(date, options)));
 }
 
 // Mail directory for path validation
@@ -1618,7 +1617,7 @@ function createServer() {
 
         // Calendar tools
         case "calendar_upcoming":
-          result = formatUpcomingEventsResults(getUpcomingEvents(validateLimit(args?.limit, 30, 100)));
+          result = formatUpcomingEventsResults(requireCalendarRead(getUpcomingEvents(validateLimit(args?.limit, 30, 100))));
           break;
 
         // ============ NEW TOOLS - PHASE 2 ============
