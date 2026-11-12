@@ -419,6 +419,24 @@ function readEmlxMessageId(filePath) {
 
 const STALE_EMAIL_CHUNK = 500;
 
+// Gone means ENOENT/ENOTDIR only: a file that exists but cannot be read
+// right now (EACCES on one mailbox) is not stale and keeps its row.
+function emailFileGone(filePath) {
+  try {
+    fs.statSync(filePath);
+    return false;
+  } catch (e) {
+    return e.code === "ENOENT" || e.code === "ENOTDIR";
+  }
+}
+
+// SQL string literal for a LanceDB (DataFusion) filter: only a single quote
+// needs escaping; a backslash is literal there, so escapeSQL's doubling would
+// make a path containing one never match.
+function lanceStringLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 /**
  * Email rows whose file is gone: Mail rebuilt or renamed its mailbox folders
  * (a move to a new Mac), a .partial.emlx finished downloading, or a message
@@ -436,7 +454,7 @@ const STALE_EMAIL_CHUNK = 500;
 async function reconcileStaleEmailRows(indexedPaths) {
   let staleCount = 0;
   for (const p of indexedPaths) {
-    if (!fs.existsSync(p)) staleCount++;
+    if (emailFileGone(p)) staleCount++;
   }
   if (staleCount === 0 || !tables.emails) return null;
 
@@ -460,7 +478,7 @@ async function reconcileStaleEmailRows(indexedPaths) {
 
   // Message-IDs of the stale rows (one ID read, only on a pass with stale rows)
   const idRows = await tables.emails.query().select(["filePath", "messageId"]).toArray();
-  const stale = idRows.filter(r => !fs.existsSync(r.filePath));
+  const stale = idRows.filter(r => emailFileGone(r.filePath));
   const wantedIds = new Set(stale.map(r => r.messageId).filter(Boolean));
 
   // Unindexed live files that carry one of those Message-IDs; keep the copy
@@ -488,7 +506,7 @@ async function reconcileStaleEmailRows(indexedPaths) {
     }
   }
 
-  const inList = (paths) => `\`filePath\` IN (${paths.map(p => `'${escapeSQL(p)}'`).join(", ")})`;
+  const inList = (paths) => `\`filePath\` IN (${paths.map(lanceStringLiteral).join(", ")})`;
   let repathed = 0;
   let removed = 0;
   const oldPaths = [...repath.keys()];

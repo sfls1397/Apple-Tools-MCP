@@ -155,12 +155,38 @@ describe('stale email rows after Mail moves its folders', () => {
     }
   })
 
+  it('a path with a backslash or quote is re-pathed, and an unreadable mailbox keeps its rows', async () => {
+    // A mailbox whose folder name has a backslash and a quote
+    const odd = path.join(acct, "Odd\\Box's.mbox", 'OLD-UUID', 'Data', 'Messages')
+    writeEmlx(path.join(odd, '701.emlx'), { messageId: '<seven@example.com>', subject: 'Seventh fixture' })
+    let result = await indexer.indexEmails()
+    expect(result.added).toBe(1)
+    fs.rmSync(path.join(acct, "Odd\\Box's.mbox", 'OLD-UUID'), { recursive: true })
+    const moved = path.join(acct, "Odd\\Box's.mbox", 'NEW-UUID', 'Data', 'Messages', '702.emlx')
+    writeEmlx(moved, { messageId: '<seven@example.com>', subject: 'Seventh fixture' })
+    result = await indexer.indexEmails()
+    expect(result.repathed).toBe(1)
+    expect(result.removed).toBe(0)
+    expect((await rows()).find(r => r.messageId === '<seven@example.com>').filePath).toBe(moved)
+
+    // EACCES on one mailbox: its files still exist, so they are not stale
+    const sentDir = path.join(acct, 'Sent Messages.mbox')
+    fs.chmodSync(sentDir, 0o000)
+    try {
+      result = await indexer.indexEmails()
+      expect(result.removed).toBeUndefined()
+      expect(await rows()).toHaveLength(5)
+    } finally {
+      fs.chmodSync(sentDir, 0o755)
+    }
+  })
+
   it('an empty Mail scan never empties the index', async () => {
     // Every .emlx gone but the folder readable (e.g. Mail mid-rebuild)
     fs.rmSync(path.join(tmp, 'Library', 'Mail', 'V10'), { recursive: true })
     fs.mkdirSync(path.join(tmp, 'Library', 'Mail', 'V10'))
     const result = await indexer.indexEmails()
     expect(result.removed).toBeUndefined()
-    expect(await rows()).toHaveLength(4)
+    expect(await rows()).toHaveLength(5)
   })
 })
