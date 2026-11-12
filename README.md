@@ -477,6 +477,12 @@ npm run smoke:writes -- --apply
 
 `npm run smoke:writes` checks the write path without creating lasting contacts or events. `npm run smoke:writes -- --apply` performs real creates, edits, and deletes, then removes the test items. The extra `--` is required so npm forwards `--apply`. `--apply` fails if Mail, Messages, Contacts, or Calendar Automation is missing.
 
+```bash
+npm run smoke:mail-read
+```
+
+`npm run smoke:mail-read` is read-only: it runs a few `mail_search` queries against the live index and checks that `mail_read` can open every hit. A failure means the index holds old file paths (for example after moving to a new Mac); the indexer re-paths moved mail by Message-ID on its next pass, keeping the existing embeddings.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).

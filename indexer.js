@@ -392,6 +392,144 @@ async function findAllEmlxFiles() {
   return safeFindAsync(MAIL_DIR, { name: "*.emlx", type: "f" });
 }
 
+// Message-ID of an .emlx file, read from its first bytes the same way
+// parseEmlx reads it ("" when the file has none or cannot be read).
+const EMLX_HEADER_READ_BYTES = 64 * 1024;
+function readEmlxMessageId(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(EMLX_HEADER_READ_BYTES);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    let content = buf.subarray(0, n).toString("utf-8");
+    const firstNewline = content.indexOf("\n");
+    if (firstNewline >= 0 && /^\d+\s*$/.test(content.slice(0, firstNewline))) {
+      content = content.slice(firstNewline + 1);
+    }
+    const match = unfoldRfc822Headers(content).match(/^Message-ID:\s*(.+)$/im);
+    return match?.[1]?.trim() || "";
+  } catch {
+    return "";
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+  }
+}
+
+const STALE_EMAIL_CHUNK = 500;
+
+/**
+ * Email rows whose file is gone: Mail rebuilt or renamed its mailbox folders
+ * (a move to a new Mac), a .partial.emlx finished downloading, or a message
+ * moved to another mailbox. Without this pass those rows keep dead paths
+ * forever (mail_read fails on every hit) and the live copies are skipped as
+ * Message-ID duplicates of the dead rows.
+ *
+ * A stale row whose Message-ID matches an unindexed live file is re-pathed to
+ * it and keeps its embedding; the rest are removed. Quiet passes only stat the
+ * cached paths (no table reads). Returns null when nothing changed, else the
+ * counts plus the full-scan file list the pass should index from, so live
+ * files that matched no stale row are picked up even when older than the
+ * incremental lookback.
+ */
+async function reconcileStaleEmailRows(indexedPaths) {
+  let staleCount = 0;
+  for (const p of indexedPaths) {
+    if (!fs.existsSync(p)) staleCount++;
+  }
+  if (staleCount === 0 || !tables.emails) return null;
+
+  // Never treat an unreadable Mail folder (lost Full Disk Access, a scan
+  // error) as "every email is gone": that would empty the email index.
+  let allFiles;
+  try {
+    fs.readdirSync(MAIL_DIR);
+    allFiles = await findAllEmlxFiles();
+  } catch (e) {
+    console.error(`Stale email check skipped: Mail folder unreadable (${e.message})`);
+    return null;
+  }
+  if (allFiles.length === 0) {
+    console.error(`Stale email check skipped: ${staleCount} indexed paths are missing but the Mail scan found no .emlx files`);
+    return null;
+  }
+
+  console.error(`\n=== STALE EMAIL ROWS: ${staleCount} indexed paths no longer exist ===`);
+  const started = Date.now();
+
+  // Message-IDs of the stale rows (one ID read, only on a pass with stale rows)
+  const idRows = await tables.emails.query().select(["filePath", "messageId"]).toArray();
+  const stale = idRows.filter(r => !fs.existsSync(r.filePath));
+  const wantedIds = new Set(stale.map(r => r.messageId).filter(Boolean));
+
+  // Unindexed live files that carry one of those Message-IDs; keep the copy
+  // from the highest-priority mailbox, as a fresh index would.
+  const liveById = new Map();
+  for (const filePath of allFiles) {
+    if (indexedPaths.has(filePath)) continue;
+    const messageId = readEmlxMessageId(filePath);
+    if (!messageId || !wantedIds.has(messageId)) continue;
+    const current = liveById.get(messageId);
+    if (!current || getMailboxPriority(filePath) < getMailboxPriority(current)) {
+      liveById.set(messageId, filePath);
+    }
+  }
+
+  const repath = new Map(); // old path -> new path
+  const drop = [];
+  for (const row of stale) {
+    const target = row.messageId ? liveById.get(row.messageId) : undefined;
+    if (target) {
+      repath.set(row.filePath, target);
+      liveById.delete(row.messageId); // one row per live file
+    } else {
+      drop.push(row.filePath);
+    }
+  }
+
+  const inList = (paths) => `\`filePath\` IN (${paths.map(p => `'${escapeSQL(p)}'`).join(", ")})`;
+  let repathed = 0;
+  let removed = 0;
+  const oldPaths = [...repath.keys()];
+  for (let i = 0; i < oldPaths.length; i += STALE_EMAIL_CHUNK) {
+    const chunk = oldPaths.slice(i, i + STALE_EMAIL_CHUNK);
+    const rows = await tables.emails.query().where(inList(chunk)).toArray();
+    const seen = new Set();
+    const records = rows.filter(row => {
+      // A duplicated old path must not become a duplicated new path.
+      if (seen.has(row.filePath)) return false;
+      seen.add(row.filePath);
+      return true;
+    }).map(row => {
+      const filePath = repath.get(row.filePath);
+      const mailbox = extractMailbox(filePath);
+      return {
+        ...row,
+        filePath,
+        mailbox,
+        isSent: mailbox.toLowerCase().includes("sent"),
+        vector: Array.from(row.vector)
+      };
+    });
+    // Add before delete: a failed delete leaves a stale row that the next
+    // pass removes; a failed add loses nothing.
+    if (records.length > 0) await tables.emails.add(records);
+    await tables.emails.delete(inList(chunk));
+    repathed += records.length;
+  }
+  for (let i = 0; i < drop.length; i += STALE_EMAIL_CHUNK) {
+    const chunk = drop.slice(i, i + STALE_EMAIL_CHUNK);
+    await tables.emails.delete(inList(chunk));
+    removed += chunk.length;
+  }
+
+  indexedIdCache.invalidate("emails");
+  duplicateEmailPaths.clear();
+  console.error(`Stale email rows: re-pathed ${repathed}, removed ${removed} (${Date.now() - started}ms)`);
+  return { repathed, removed, allFiles };
+}
+
 // Fast incremental scan - uses find with -mtime filter (more reliable than mdfind/Spotlight)
 async function findNewEmlxFiles(sinceTimestamp) {
   if (!sinceTimestamp) {
@@ -1014,7 +1152,25 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   console.error(`Found ${newFiles.length} new/modified email files (${Date.now() - startTime}ms)`);
 
   // One read of both ID columns, served from memory while the table is unchanged.
-  const emailIdSets = await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS);
+  let emailIdSets = await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS);
+
+  // Re-path or drop rows whose file is gone, then index from the full scan so
+  // relocated mail older than the lookback window is not missed.
+  let staleResult = null;
+  try {
+    staleResult = await reconcileStaleEmailRows(emailIdSets.filePath);
+  } catch (e) {
+    indexedIdCache.invalidate("emails");
+    console.error(`Stale email check failed; continuing with the normal pass: ${e.message}`);
+  }
+  if (staleResult) {
+    // A DAYS_BACK cap keeps its own window; otherwise use the full scan.
+    if (!DAYS_BACK) newFiles = staleResult.allFiles;
+    emailIdSets = await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS);
+  }
+  const staleCounts = staleResult
+    ? { repathed: staleResult.repathed, removed: staleResult.removed }
+    : {};
   const indexedPaths = emailIdSets.filePath;
   const indexedMessageIds = emailIdSets.messageId;
   console.error(`Already indexed: ${indexedPaths.size} emails`);
@@ -1043,7 +1199,7 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   if (toIndex.length === 0) {
     // Save timestamp for next incremental scan
     saveIndexMeta({ ...meta, lastEmailIndexTime: indexStartTime });
-    return { indexed: indexedPaths.size, added: 0 };
+    return { indexed: indexedPaths.size, added: 0, ...staleCounts };
   }
 
   let processed = 0;
@@ -1234,7 +1390,7 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   // Indexed count from the version-checked ID cache (re-reads only if the
   // table moved by something other than this pass's own adds)
   const finalIndexedPaths = (await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS)).filePath;
-  return { indexed: finalIndexedPaths.size, added: indexedCount };
+  return { indexed: finalIndexedPaths.size, added: indexedCount, ...staleCounts };
 }
 
 export async function indexMessages(forceFullScan = false) {
@@ -1563,6 +1719,8 @@ export async function indexAll(progressCallback = null) {
 async function maybeOptimizeIndex(results) {
   const wroteSomething =
     (results.emails?.added || 0) > 0 ||
+    (results.emails?.repathed || 0) > 0 ||
+    (results.emails?.removed || 0) > 0 ||
     (results.messages?.added || 0) > 0 ||
     (results.calendar?.added || 0) > 0 ||
     (results.calendar?.removed || 0) > 0;
