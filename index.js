@@ -601,7 +601,9 @@ function readFullEmail(filePath) {
 
     // Verify file exists
     if (!fs.existsSync(validatedPath)) {
-      return "Email file not found.";
+      return "Email file not found. The search index may hold this email's old path " +
+        "(Mail moved or rebuilt its folders); the indexer re-paths moved mail on its next pass. " +
+        "Run mail_search again, or find the message with mail_find by subject or sender.";
     }
 
     const content = unfoldRfc822Headers(fs.readFileSync(validatedPath, 'utf-8'));
