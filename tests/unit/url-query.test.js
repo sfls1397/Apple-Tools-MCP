@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { stripUrlQueries } from '../../lib/urlQuery.js'
 import {
   formatCalendarResults,
@@ -91,5 +94,29 @@ describe('calendar formatters print titles and locations without URL queries', (
     const recurring = formatRecurringEventsResults({ events: [event], showing: 1, hasMore: false })
     expect(recurring).toContain('Standup https://example.zoom.us/j/1000000001')
     expect(recurring).not.toContain(PASS)
+  })
+})
+
+describe('smart_search and person_search print calendar titles and locations without URL queries', () => {
+  // formatSmartSearchResults and formatPersonSearchResults live inside index.js (not exported).
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'index.js'), 'utf8')
+  const body = (name) => {
+    const start = src.indexOf(`function ${name}(`)
+    expect(start).toBeGreaterThan(-1)
+    return src.slice(start, src.indexOf('\n}\n', start))
+  }
+
+  it('formatSmartSearchResults strips the timeline titles, event titles and locations', () => {
+    const fn = body('formatSmartSearchResults')
+    expect(fn).toContain('group.calendar.map(c => stripUrlQueries(c.title))')
+    expect(fn).toContain('Event: ${stripUrlQueries(r.title)}')
+    expect(fn).toContain('Location: ${stripUrlQueries(r.location)}')
+    expect(fn).not.toMatch(/\$\{r\.(title|location)\}/)
+  })
+
+  it('formatPersonSearchResults strips event titles', () => {
+    const fn = body('formatPersonSearchResults')
+    expect(fn).toContain('${stripUrlQueries(r.title)}')
+    expect(fn).not.toMatch(/\$\{r\.(title|location)\}/)
   })
 })

@@ -42,6 +42,7 @@ import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSessi
 import { EVENTKIT_JXA_HELPERS } from "./lib/calendarWrite.js";
 import { mailFind, MAILBOX_KINDS, MAIL_FIND_MAX_LIMIT } from "./lib/mailFind.js";
 import { mailLinks } from "./lib/mailLinks.js";
+import { stripUrlQueries } from "./lib/urlQuery.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -678,7 +679,7 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
     for (const group of synthesizedGroups.slice(0, 5)) {
       sections.push(`📅 ${group.timeWindow} (${group.totalItems} items)`);
       if (group.calendar.length > 0) {
-        sections.push(`  Calendar: ${group.calendar.map(c => c.title).join(', ')}`);
+        sections.push(`  Calendar: ${group.calendar.map(c => stripUrlQueries(c.title)).join(', ')}`);
       }
       if (group.mail.length > 0) {
         sections.push(`  Emails: ${group.mail.map(m => m.subject).join(', ')}`);
@@ -718,10 +719,10 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
     sections.push("📅 CALENDAR:");
     for (const r of results.calendar.results) {
       sections.push(`  [${r.rank}] Score: ${r.score}`);
-      sections.push(`      Event: ${r.title}${r.isAllDay ? ' (All Day)' : ''}`);
+      sections.push(`      Event: ${stripUrlQueries(r.title)}${r.isAllDay ? ' (All Day)' : ''}`);
       sections.push(`      Start: ${r.start}`);
       sections.push(`      Calendar: ${r.calendar}`);
-      if (r.location) sections.push(`      Location: ${r.location}`);
+      if (r.location) sections.push(`      Location: ${stripUrlQueries(r.location)}`);
     }
     sections.push("");
   }
@@ -1060,7 +1061,7 @@ function formatPersonSearchResults(results) {
   if (results.calendar && results.calendar.results && results.calendar.results.length > 0) {
     sections.push(`📅 CALENDAR (${results.calendar.results.length}):`);
     for (const r of results.calendar.results.slice(0, 10)) {
-      sections.push(`  • ${r.title}`);
+      sections.push(`  • ${stripUrlQueries(r.title)}`);
       sections.push(`    ${r.start} | ${r.calendar}`);
     }
     sections.push("");
