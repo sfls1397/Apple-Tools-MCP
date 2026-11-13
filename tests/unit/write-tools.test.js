@@ -1796,6 +1796,9 @@ describe('mail_unjunk', () => {
     expect(script).toContain('{"INBOX", "Inbox"}')
     expect(script).not.toMatch(/\bdelete\b/)
     expect(script).not.toContain('read status')
+    // No screen: nothing comes to the front, no window, no GUI scripting (Peter: no computer control; 9:27 PM CT Nov 12 2026)
+    expect(script).not.toMatch(/\bactivate\b|System Events|\bwindow\b|\breopen\b|\blaunch\b|\bclick\b|keystroke/)
+    expect(osascript).toHaveBeenCalledTimes(1)
   })
 
   it('counts stale, name mismatches, budget leftovers and failures separately', () => {
