@@ -278,7 +278,7 @@ Your client can also call `audit_index`.
 | `mail_read` | Full email content by file path. |
 | `mail_senders` | Most frequent senders. |
 | `mail_thread` | Every email in a conversation. |
-| `mail_find` | Exact lookup in Mail's own database by subject prefix or text, sender, recipient, mailbox, and date. Returns every copy with its Message-ID. Does not wait on the index. |
+| `mail_find` | Exact lookup in Mail's own database by subject prefix or text, sender, sender name, recipient, mailbox, and date. Returns every copy with its Message-ID. Does not wait on the index. |
 | `mail_links` | The links in one email (by its `mail_find` id), decoded, with each link's visible text. Use it for the URL behind a button, such as a sign-in link; `mail_read` drops link targets. Does not wait on the index. |
 
 ### Messages
@@ -358,10 +358,13 @@ A missing or malformed id or recipient is refused. Calendar times are local date
 | `mail_mark` | `message_id` or `file_path`, `status` (`read` or `unread`, default `read`) | no |
 | `mail_archive` | `message_id` or `file_path` | no |
 | `mail_trash` | `message_id` or `file_path`, or `message_ids[]` (up to 500) | yes |
+| `mail_unjunk` | `message_ids[]` (required, up to 500), `from_name_contains` | no |
 
 Pass the RFC822 Message-ID, or the `file_path` from `mail_search` or `mail_recent` and the server reads the Message-ID from the file. `mail_archive` moves the message to that account's Archive (or All Mail). `mail_trash` moves it to Trash.
 
 `mail_trash` with `message_ids` moves every copy of each message, for example the INBOX copy and the Sent copy of a mail you sent yourself, to that account's Trash. It finds each copy through Mail's database (`mail_find` uses the same lookup) and checks its Message-ID again before it moves it. One call stops starting new moves after about 35 seconds and reports `remaining`. Run it again for the rest. Copies that are already in Trash are left alone. Nothing is deleted for good. Mail empties Trash on its own schedule.
+
+`mail_unjunk` moves only the Junk copies of `message_ids` to that account's Inbox (on the server for IMAP accounts); a copy in any other mailbox is left alone, and nothing is deleted, marked or sent. It re-checks each copy's Message-ID, and with `from_name_contains` it also re-checks that the sender's display name still contains that text (any case) and leaves the copy in Junk if not. Pair it with `mail_find` `from_name_contains` and `mailboxes: ["junk"]`. Same 35 second budget and `remaining` as bulk `mail_trash`.
 
 `body_format: "html"` pastes the text into Mail's compose window. Mail may still create its own HTML version. New mail is a new message, not a quoted reply. Reply and forward still include the original.
 

@@ -1156,13 +1156,14 @@ function createServer() {
       },
       {
         name: "mail_find",
-        description: "Exact email lookup in Mail's own database (not the semantic index, so it never waits on indexing and matches filters exactly). Returns JSON: one row per copy (the same Message-ID in INBOX and Sent is two rows) with message_id, subject, from, to, received, mailbox, account_id. Needs at least one of subject_prefix, subject_contains, from, to, message_ids. Trash is excluded unless include_trash or mailboxes asks for it. Pair with mail_trash message_ids to clear what it finds.",
+        description: "Exact email lookup in Mail's own database (not the semantic index, so it never waits on indexing and matches filters exactly). Returns JSON: one row per copy (the same Message-ID in INBOX and Sent is two rows) with message_id, subject, from, from_name, to, received, mailbox, account_id. Needs at least one of subject_prefix, subject_contains, from_name_contains, from, to, message_ids. Trash is excluded unless include_trash or mailboxes asks for it. Pair with mail_trash message_ids to clear what it finds, or mail_unjunk to move Junk copies to the Inbox.",
         inputSchema: {
           type: "object",
           properties: {
             subject_prefix: { type: "string", description: "Subject starts with this text (case-insensitive), e.g. '[Network] '" },
             subject_contains: { type: "string", description: "Subject contains this text (case-insensitive)" },
             from: { type: "string", description: "Exact sender address" },
+            from_name_contains: { type: "string", description: "Sender display name contains this text (case-insensitive; Mail stores the name decoded), e.g. 'via Cloaked'" },
             from_me: { type: "boolean", description: "Only messages sent from one of your own addresses (any address that appears as a sender in a Sent mailbox)" },
             to: { type: "string", description: "Exact recipient address (To or Cc)" },
             to_only: { type: "boolean", description: "With to: that address is the only recipient" },
