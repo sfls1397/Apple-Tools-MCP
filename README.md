@@ -210,6 +210,8 @@ apple-tools-mcp http-token
 
 Under a secrets manager's runtime injection (for example `infisical run -- apple-tools-http`), set `APPLE_TOOLS_HTTP_TOKEN` and the server uses it instead of Keychain, which it then neither reads nor writes. To rotate without cutting off clients, start the server with the new token in `APPLE_TOOLS_HTTP_TOKEN` and the old one in `APPLE_TOOLS_HTTP_TOKEN_PREVIOUS`; once every client has the new token, restart without `APPLE_TOOLS_HTTP_TOKEN_PREVIOUS` and the old token stops working.
 
+The HTTP server never indexes and never takes `indexer.lock`: it serves the index the indexer daemon keeps fresh, so run the indexer too. It also refuses `rebuild_index`; rebuild from a stdio client or as described under the index rebuild below. Restarting either one in any order is safe.
+
 An example LaunchAgent is `examples/com.apple-tools-http.plist`. How to point Claude and other clients at it, including `apple-tools-http-proxy`, is in `examples/mcp-client.md`.
 
 ## Index commands
@@ -299,7 +301,9 @@ Your client can also call `audit_index`.
 | `calendar_upcoming` | Next events, starting with everything on today's date (all-day and earlier-today events included). A failed read is an error. |
 | `calendar_week` | Events for this week or a future week. |
 | `calendar_free_time` | Open time on a date, read live from Calendar rather than the search index. |
-| `calendar_recurring` | Recurring events. |
+| `calendar_recurring` | Recurring events with their next occurrence, counting today's. |
+
+Calendar tools print links in event titles and locations without their query string or fragment (`https://zoom.us/j/123?pwd=...` prints as `https://zoom.us/j/123`), so a meeting passcode never reaches a chat that reads the calendar.
 
 ### Contacts
 

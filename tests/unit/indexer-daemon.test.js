@@ -132,6 +132,21 @@ describe('MCP stdio vs indexer daemon runtime', () => {
     })
   })
 
+  it('the HTTP server never takes indexer.lock, even when it is free', () => {
+    // After an install the HTTP server could win the lock while the indexer daemon
+    // restarted, leaving the daemon waiting for it (3.3.5 deploy and earlier ones).
+    let asked = 0
+    const http = mcpIndexingStartup(() => { asked += 1; return true }, { httpMode: true })
+    expect(http).toEqual({
+      startBackground: false,
+      ownsIndexLock: false,
+      startHeartbeat: false,
+      reason: 'http-server'
+    })
+    expect(asked).toBe(0)
+    expect(mcpIndexingStartup(() => true, { httpMode: false }).reason).toBe('local-fallback')
+  })
+
   it('starts lock heartbeat when MCP local-fallback owns the lock', () => {
     const calls = []
     beginOwnedIndexing({
@@ -196,5 +211,12 @@ describe('index.js wires the runtime helpers', () => {
     expect(indexSrc).toContain('beginOwnedIndexing')
     expect(indexSrc).toContain('startHeartbeat: startLockHeartbeat')
     expect(indexSrc).toContain('local fallback when no daemon is running')
+  })
+
+  it('passes HTTP mode to the startup helper and refuses rebuild_index over HTTP before taking the lock', () => {
+    expect(indexSrc).toContain('mcpIndexingStartup(() => acquireLock(), { httpMode: HTTP_MODE })')
+    const rebuild = indexSrc.slice(indexSrc.indexOf('case "rebuild_index":'))
+    expect(rebuild.indexOf('if (HTTP_MODE)')).toBeGreaterThan(-1)
+    expect(rebuild.indexOf('if (HTTP_MODE)')).toBeLessThan(rebuild.indexOf('acquireLock()'))
   })
 })

@@ -449,9 +449,12 @@ async function initializeIndexing() {
   // MCP stdio: if the indexer daemon (or another instance) holds the lock,
   // skip background refresh and use the shared index. If nothing holds the
   // lock, index locally as before so the stdio happy path still works.
-  const startup = mcpIndexingStartup(() => acquireLock());
+  // The HTTP server never takes the lock (see mcpIndexingStartup).
+  const startup = mcpIndexingStartup(() => acquireLock(), { httpMode: HTTP_MODE });
   if (!startup.startBackground) {
-    console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
+    console.error(startup.reason === "http-server"
+      ? "HTTP server never takes indexer.lock; it serves the index the indexer daemon keeps fresh."
+      : "Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
     // Lost lock is not "still indexing": this process will never complete a
     // local cycle. Searches proceed whenever isIndexReady() is true (initDB
     // re-lists shared on-disk tables; it must not cache an empty first connect).
@@ -1568,6 +1571,13 @@ function createServer() {
           // Check if indexing is already in progress in this session
           if (indexingInProgress) {
             result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
+            break;
+          }
+
+          // The HTTP server never takes indexer.lock (it could hold it while the
+          // indexer daemon restarts); rebuilds run from stdio or the indexer.
+          if (HTTP_MODE) {
+            result = "rebuild_index does not run over the HTTP server, which never takes indexer.lock. Run it from a stdio session (apple-tools-mcp) or with npm run build-index while the indexer daemon is stopped.";
             break;
           }
 

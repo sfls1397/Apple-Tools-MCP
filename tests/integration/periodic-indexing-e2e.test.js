@@ -1,248 +1,109 @@
 /**
- * End-to-end test for periodic indexing
- * Sends a real email and verifies it gets indexed and searchable within 10 minutes
+ * End-to-end test for periodic indexing, isolated from the live index and from Mail.app.
  *
- * This test validates the complete workflow:
- * 1. Send email via Mail.app
- * 2. Wait for background indexing to run
- * 3. Search for the email
- * 4. Verify it was indexed correctly
+ * A new email lands in a fake Mail folder after a first pass; the next periodic email pass
+ * (indexEmails(), what each indexer cycle runs first) must index it, and mail_search's
+ * searchEmails() must find it by its unique marker and by meaning. It uses the real
+ * embedding model and real LanceDB.
  *
- * Run with: npm run test:integration:periodic
+ * Isolation (safe to run on the Mini next to the live indexer daemon):
+ * - HOME, APPLE_TOOLS_INDEX_DIR and APPLE_TOOLS_META_FILE point into a temp dir, like
+ *   tests/unit/indexer-email-pass.test.js, so the live ~/.apple-tools-mcp index and
+ *   ~/Library/Mail are never read or written.
+ * - No Mail.app, no AppleScript and no email is sent: the "new email" is a synthetic
+ *   .emlx written into the fake Mail folder.
  *
- * NOTE: This test takes ~10 minutes to complete and requires:
- * - Mail.app configured and running
- * - Background indexing enabled
- * - Test email account configured
+ * Opt in with RUN_E2E_TESTS=1 (the first run downloads the embedding model):
+ *   RUN_E2E_TESTS=1 npx vitest run tests/integration/periodic-indexing-e2e.test.js
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { execSync } from 'child_process'
-import path from 'path'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
+import path from 'path'
 
-// Test configuration
-const TEST_TIMEOUT = 15 * 60 * 1000 // 15 minutes
-const POLL_INTERVAL = 30 * 1000 // Check every 30 seconds
-const MAX_WAIT_TIME = 12 * 60 * 1000 // Wait up to 12 minutes
+const TEST_TIMEOUT = 5 * 60 * 1000 // first run may download the embedding model
 const UNIQUE_MARKER = `periodic-test-${Date.now()}-${Math.random().toString(36).substring(7)}`
+const ENV_KEYS = ['HOME', 'APPLE_TOOLS_INDEX_DIR', 'APPLE_TOOLS_META_FILE']
 
-// Skip this test by default - it requires Mail.app configured and takes 12+ minutes
-// Run with: RUN_E2E_TESTS=1 npm test to enable
-describe.skipIf(!process.env.RUN_E2E_TESTS)('Periodic Indexing E2E', () => {
-  let testEmailSubject
-  let testEmailBody
-  let indexPath
-  let serverProcess = null
+function writeEmlx (file, { messageId, subject, body }) {
+  const text = [
+    'From: Sender Example <sender@example.com>',
+    'To: Me Example <me@example.com>',
+    `Subject: ${subject}`,
+    `Date: ${new Date().toUTCString().replace('GMT', '+0000')}`,
+    `Message-ID: ${messageId}`,
+    '',
+    body
+  ].join('\n')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, `${Buffer.byteLength(text)}\n${text}`)
+}
 
-  beforeAll(() => {
-    // Generate unique test email content
-    testEmailSubject = `Test Email - ${UNIQUE_MARKER}`
-    testEmailBody = `This is a test email for periodic indexing verification.\n\nUnique ID: ${UNIQUE_MARKER}\nTimestamp: ${new Date().toISOString()}`
+describe.skipIf(!process.env.RUN_E2E_TESTS)('Periodic Indexing E2E (temp HOME and index)', () => {
+  const saved = {}
+  let tmp
+  let inbox
+  let indexer
+  let search
 
-    // Use production index path (or test index if available)
-    indexPath = path.join(os.homedir(), '.apple-tools-mcp', 'vector-index')
+  beforeAll(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atm-periodic-e2e-'))
+    for (const k of ENV_KEYS) saved[k] = process.env[k]
+    process.env.HOME = tmp
+    process.env.APPLE_TOOLS_INDEX_DIR = path.join(tmp, 'index')
+    process.env.APPLE_TOOLS_META_FILE = path.join(tmp, 'index-meta.json')
+    inbox = path.join(tmp, 'Library', 'Mail', 'V10', 'ACCT', 'INBOX.mbox', 'UUID', 'Data', 'Messages')
+    writeEmlx(path.join(inbox, '1.emlx'), {
+      messageId: '<existing@example.com>',
+      subject: 'Quarterly garden club newsletter',
+      body: 'Tomato seedlings, compost tips and the spring plant swap schedule.'
+    })
 
-    console.log(`\n📧 Test Configuration:`)
-    console.log(`   Subject: ${testEmailSubject}`)
-    console.log(`   Unique Marker: ${UNIQUE_MARKER}`)
-    console.log(`   Index Path: ${indexPath}`)
-    console.log(`   Max Wait: ${MAX_WAIT_TIME / 1000}s`)
-  })
+    vi.resetModules()
+    indexer = await import('../../indexer.js')
+    search = await import('../../search.js')
+    // Guard: never the live index
+    expect(indexer.INDEX_DIR).toBe(path.join(tmp, 'index'))
+
+    const first = await indexer.indexEmails()
+    expect(first.added).toBe(1)
+  }, TEST_TIMEOUT)
 
   afterAll(() => {
-    // Cleanup: Mark the test email for deletion if needed
-    if (serverProcess) {
-      serverProcess.kill()
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
     }
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true })
   })
 
-  it('should index a newly sent email within 10 minutes', async () => {
-    // Step 1: Send test email via AppleScript
-    console.log('\n📤 Step 1: Sending test email...')
+  it('the next periodic pass indexes a newly arrived email and mail_search finds its marker', async () => {
+    writeEmlx(path.join(inbox, '2.emlx'), {
+      messageId: `<${UNIQUE_MARKER}@example.com>`,
+      subject: `Test Email - ${UNIQUE_MARKER}`,
+      body: `This is a test email for periodic indexing verification.\n\nUnique ID: ${UNIQUE_MARKER}`
+    })
 
-    const sendEmailScript = `
-      tell application "Mail"
-        set newMessage to make new outgoing message with properties {subject:"${testEmailSubject}", content:"${testEmailBody}", visible:false}
-        tell newMessage
-          set sender to "me"
-          make new to recipient with properties {address:"${await getCurrentUserEmail()}"}
-          send
-        end tell
-      end tell
-    `
+    const pass = await indexer.indexEmails()
+    expect(pass.added).toBe(1)
 
-    try {
-      execSync(`osascript -e '${sendEmailScript.replace(/'/g, "'\"'\"'")}'`, { stdio: 'pipe' })
-      console.log('   ✅ Email sent successfully')
-    } catch (error) {
-      throw new Error(`Failed to send test email: ${error.message}`)
-    }
-
-    // Step 2: Wait a moment for Mail.app to process
-    await new Promise(resolve => setTimeout(resolve, 5000))
-
-    // Step 3: Poll for the email to appear in search results
-    console.log('\n🔍 Step 2: Waiting for periodic indexing to pick up the email...')
-    console.log(`   (Polling every ${POLL_INTERVAL / 1000}s for up to ${MAX_WAIT_TIME / 60000} minutes)`)
-
-    const startTime = Date.now()
-    let found = false
-    let attempts = 0
-
-    while (!found && (Date.now() - startTime) < MAX_WAIT_TIME) {
-      attempts++
-      const elapsed = Math.floor((Date.now() - startTime) / 1000)
-
-      console.log(`   Attempt ${attempts} (${elapsed}s elapsed)...`)
-
-      // Search for the email using the unique marker
-      const searchResult = await searchForEmail(UNIQUE_MARKER)
-
-      if (searchResult.found) {
-        found = true
-        const indexingTime = Math.floor((Date.now() - startTime) / 1000)
-
-        console.log(`\n   ✅ Email found after ${indexingTime}s!`)
-        console.log(`   📊 Search Results:`)
-        console.log(`      - Total Results: ${searchResult.totalResults}`)
-        console.log(`      - Subject Match: ${searchResult.subjectMatch}`)
-        console.log(`      - Content Match: ${searchResult.contentMatch}`)
-
-        // Validate the indexed content
-        expect(searchResult.found).toBe(true)
-        expect(searchResult.subjectMatch).toBe(true)
-        expect(searchResult.totalResults).toBeGreaterThan(0)
-        expect(indexingTime).toBeLessThan(MAX_WAIT_TIME / 1000)
-
-        break
-      }
-
-      // Wait before next attempt
-      if (!found) {
-        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL))
-      }
-    }
-
-    if (!found) {
-      throw new Error(`Email was not indexed within ${MAX_WAIT_TIME / 60000} minutes`)
-    }
-
-    console.log('\n✅ Periodic indexing test passed!')
-
+    const result = await search.searchEmails(UNIQUE_MARKER, { limit: 10 })
+    expect(result.success).toBe(true)
+    const hit = result.results.find(r => r.subject.includes(UNIQUE_MARKER))
+    expect(hit).toBeTruthy()
+    expect(hit.filePath).toBe(path.join(inbox, '2.emlx'))
+    expect(hit.filePath.startsWith(tmp)).toBe(true)
   }, TEST_TIMEOUT)
 
-  it('should find the email via semantic search', async () => {
-    console.log('\n🔎 Step 3: Testing semantic search...')
+  it('finds the new email by meaning, ahead of the unrelated one', async () => {
+    const result = await search.searchEmails('periodic indexing verification test', { limit: 10 })
+    expect(result.success).toBe(true)
+    expect(result.results.length).toBeGreaterThan(0)
+    expect(result.results[0].subject).toContain(UNIQUE_MARKER)
+  }, TEST_TIMEOUT)
 
-    // Search using semantic query (not exact match)
-    const semanticQuery = 'periodic indexing verification test'
-    const searchResult = await searchForEmail(semanticQuery)
-
-    console.log(`   Query: "${semanticQuery}"`)
-    console.log(`   Found: ${searchResult.found}`)
-    console.log(`   Results: ${searchResult.totalResults}`)
-
-    // Should find the email via semantic similarity
-    expect(searchResult.found).toBe(true)
-    expect(searchResult.totalResults).toBeGreaterThan(0)
-
-    console.log('   ✅ Semantic search successful')
+  it('a quiet pass adds nothing', async () => {
+    expect(await indexer.indexEmails()).toMatchObject({ added: 0 })
   }, TEST_TIMEOUT)
 })
-
-/**
- * Get current user's email address from Mail.app
- */
-async function getCurrentUserEmail() {
-  try {
-    const script = `
-      tell application "Mail"
-        set defaultAccount to account 1
-        set emailAddress to email addresses of defaultAccount
-        return item 1 of emailAddress
-      end tell
-    `
-
-    const result = execSync(`osascript -e '${script.replace(/'/g, "'\"'\"'")}'`, {
-      encoding: 'utf-8',
-      stdio: 'pipe'
-    }).trim()
-
-    return result || 'test@example.com'
-  } catch (error) {
-    console.warn('   ⚠️  Could not get user email, using fallback')
-    return 'test@example.com'
-  }
-}
-
-/**
- * Search for email using mail_search tool
- * Returns object with search results and metadata
- */
-async function searchForEmail(query) {
-  try {
-    // Import the mail search functionality
-    const { default: lancedb } = await import('@lancedb/lancedb')
-    const { pipeline } = await import('@huggingface/transformers')
-    const path = await import('path')
-    const os = await import('os')
-
-    // Initialize search
-    const indexPath = path.join(os.homedir(), '.apple-tools-mcp', 'vector-index')
-    const db = await lancedb.connect(indexPath)
-
-    // Check if table exists
-    const tables = await db.tableNames()
-    if (!tables.includes('emails')) {
-      return {
-        found: false,
-        totalResults: 0,
-        subjectMatch: false,
-        contentMatch: false,
-        error: 'Email table not found'
-      }
-    }
-
-    const table = await db.openTable('emails')
-
-    // Generate embedding for query
-    const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')
-    const output = await embedder(query, { pooling: 'mean', normalize: true })
-    const embedding = Array.from(output.data)
-
-    // Search
-    const results = await table
-      .vectorSearch(embedding)
-      .limit(10)
-      .toArray()
-
-    // Check if our test email is in results
-    const testEmailFound = results.some(r =>
-      r.subject?.includes(UNIQUE_MARKER) ||
-      r.content?.includes(UNIQUE_MARKER)
-    )
-
-    const subjectMatch = results.some(r => r.subject?.includes(UNIQUE_MARKER))
-    const contentMatch = results.some(r => r.content?.includes(UNIQUE_MARKER))
-
-    return {
-      found: testEmailFound,
-      totalResults: results.length,
-      subjectMatch,
-      contentMatch,
-      results: results.slice(0, 3) // Return top 3 for debugging
-    }
-
-  } catch (error) {
-    console.error(`   ❌ Search error: ${error.message}`)
-    return {
-      found: false,
-      totalResults: 0,
-      subjectMatch: false,
-      contentMatch: false,
-      error: error.message
-    }
-  }
-}

@@ -125,6 +125,41 @@ describe('calendar_upcoming keeps every event on the current day (Nov 12 2026 sh
   })
 })
 
+// Recurring series in the fixture: NAD+ (today and Nov 16), Veterans Day (yesterday only) and Book club (tomorrow).
+const RECURRENCE = `
+CREATE TABLE Recurrence (ROWID INTEGER PRIMARY KEY, owner_id INTEGER);
+INSERT INTO Recurrence VALUES (1, 1), (2, 4), (3, 5);
+`
+
+describe('calendar_recurring counts today\'s occurrence (same shape as the calendar_upcoming bug)', () => {
+  it('at 7:00 AM the NAD+ series is next on today, not Nov 16', () => {
+    writeDb(nov12Sql() + RECURRENCE)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BRIEF_TIME)
+    const result = indexer.getRecurringEvents(10)
+    expect(result.error).toBeUndefined()
+    expect(result.events.map((e) => e.title)).toEqual(['Take NAD+', 'Book club'])
+    expect(result.events[0].start).toBe('2026-11-12 00:00:00')
+    expect(result.events[0].occurrenceCount).toBe(2)
+    expect(result.events[1].start).toBe('2026-11-13 20:00:00')
+    expect(search.formatRecurringEventsResults(result)).toContain('Next: 2026-11-12 00:00:00')
+  })
+
+  it('still counts today at 9:30 PM', () => {
+    writeDb(nov12Sql() + RECURRENCE)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(Date.UTC(2026, 10, 13, 3, 30)))
+    const nad = indexer.getRecurringEvents(10).events.find((e) => e.title === 'Take NAD+')
+    expect(nad.start).toBe('2026-11-12 00:00:00')
+  })
+
+  it('bounds the query by local midnight, not by now', () => {
+    const sql = indexer.buildRecurringEventsQuery(mac(2026, 11, 12), 11)
+    expect(sql).toContain(`oc.day >= ${mac(2026, 11, 12)}`)
+    expect(sql).toContain('LIMIT 11')
+  })
+})
+
 describe('calendar_date for Nov 12 2026', () => {
   it('returns the recurring all-day NAD+ and both one-offs', async () => {
     writeDb(nov12Sql())
