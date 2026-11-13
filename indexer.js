@@ -2340,17 +2340,11 @@ export async function getEmailThread(filePath, limit = 20) {
   }
 }
 
-// calendar_recurring: Get recurring events (shows events with recurrence rules and their upcoming occurrences)
-export function getRecurringEvents(limit = 20) {
-  try {
-    // Validate limit to prevent SQL issues
-    const safeLimit = validateLimit(limit, 20, 100);
-    const nowMac = Math.floor(Date.now() / 1000) - 978307200;
-    const fetchLimit = safeLimit + 1; // Fetch one extra to detect if more exist
-
-    // Query events that have recurrence rules defined in the Recurrence table
-    // Show the next upcoming occurrence of each recurring event
-    const query = `
+// calendar_recurring: recurring events (a Recurrence row) with their next occurrence, from today on.
+// Bounded by today's local midnight, never now: OccurrenceCache.day is each occurrence's local midnight,
+// so comparing day to now dropped today's occurrence after midnight (the calendar_upcoming bug fixed in 3.3.5).
+export function buildRecurringEventsQuery(dayStartMac, fetchLimit) {
+  return `
       SELECT DISTINCT
         ci.summary as title,
         datetime(COALESCE(MIN(oc.occurrence_end_date) - (ci.end_date - ci.start_date), MIN(oc.day)) + 978307200, 'unixepoch', 'localtime') as start,
@@ -2361,12 +2355,20 @@ export function getRecurringEvents(limit = 20) {
       INNER JOIN CalendarItem ci ON r.owner_id = ci.ROWID
       INNER JOIN OccurrenceCache oc ON oc.event_id = ci.ROWID
       LEFT JOIN Calendar c ON ci.calendar_id = c.ROWID
-      WHERE oc.day >= ${nowMac}
+      WHERE oc.day >= ${dayStartMac}
         AND ci.summary IS NOT NULL AND ci.summary <> ''
       GROUP BY ci.ROWID, ci.summary, c.title, ci.all_day
       ORDER BY occurrenceCount DESC, MIN(oc.day) ASC
       LIMIT ${fetchLimit}
     `;
+}
+
+export function getRecurringEvents(limit = 20) {
+  try {
+    // Validate limit to prevent SQL issues
+    const safeLimit = validateLimit(limit, 20, 100);
+    const fetchLimit = safeLimit + 1; // Fetch one extra to detect if more exist
+    const query = buildRecurringEventsQuery(localTodayStartMac(), fetchLimit);
     const events = withCalendarCopy((dbPath) => {
       return safeSqlite3Json(dbPath, query, { timeout: 30000 });
     });

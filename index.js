@@ -42,6 +42,7 @@ import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSessi
 import { EVENTKIT_JXA_HELPERS } from "./lib/calendarWrite.js";
 import { mailFind, MAILBOX_KINDS, MAIL_FIND_MAX_LIMIT } from "./lib/mailFind.js";
 import { mailLinks } from "./lib/mailLinks.js";
+import { stripUrlQueries } from "./lib/urlQuery.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -449,9 +450,12 @@ async function initializeIndexing() {
   // MCP stdio: if the indexer daemon (or another instance) holds the lock,
   // skip background refresh and use the shared index. If nothing holds the
   // lock, index locally as before so the stdio happy path still works.
-  const startup = mcpIndexingStartup(() => acquireLock());
+  // The HTTP server never takes the lock (see mcpIndexingStartup).
+  const startup = mcpIndexingStartup(() => acquireLock(), { httpMode: HTTP_MODE });
   if (!startup.startBackground) {
-    console.error("Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
+    console.error(startup.reason === "http-server"
+      ? "HTTP server never takes indexer.lock; it serves the index the indexer daemon keeps fresh."
+      : "Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
     // Lost lock is not "still indexing": this process will never complete a
     // local cycle. Searches proceed whenever isIndexReady() is true (initDB
     // re-lists shared on-disk tables; it must not cache an empty first connect).
@@ -675,7 +679,7 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
     for (const group of synthesizedGroups.slice(0, 5)) {
       sections.push(`📅 ${group.timeWindow} (${group.totalItems} items)`);
       if (group.calendar.length > 0) {
-        sections.push(`  Calendar: ${group.calendar.map(c => c.title).join(', ')}`);
+        sections.push(`  Calendar: ${group.calendar.map(c => stripUrlQueries(c.title)).join(', ')}`);
       }
       if (group.mail.length > 0) {
         sections.push(`  Emails: ${group.mail.map(m => m.subject).join(', ')}`);
@@ -715,10 +719,10 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
     sections.push("📅 CALENDAR:");
     for (const r of results.calendar.results) {
       sections.push(`  [${r.rank}] Score: ${r.score}`);
-      sections.push(`      Event: ${r.title}${r.isAllDay ? ' (All Day)' : ''}`);
+      sections.push(`      Event: ${stripUrlQueries(r.title)}${r.isAllDay ? ' (All Day)' : ''}`);
       sections.push(`      Start: ${r.start}`);
       sections.push(`      Calendar: ${r.calendar}`);
-      if (r.location) sections.push(`      Location: ${r.location}`);
+      if (r.location) sections.push(`      Location: ${stripUrlQueries(r.location)}`);
     }
     sections.push("");
   }
@@ -1057,7 +1061,7 @@ function formatPersonSearchResults(results) {
   if (results.calendar && results.calendar.results && results.calendar.results.length > 0) {
     sections.push(`📅 CALENDAR (${results.calendar.results.length}):`);
     for (const r of results.calendar.results.slice(0, 10)) {
-      sections.push(`  • ${r.title}`);
+      sections.push(`  • ${stripUrlQueries(r.title)}`);
       sections.push(`    ${r.start} | ${r.calendar}`);
     }
     sections.push("");
@@ -1568,6 +1572,13 @@ function createServer() {
           // Check if indexing is already in progress in this session
           if (indexingInProgress) {
             result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
+            break;
+          }
+
+          // The HTTP server never takes indexer.lock (it could hold it while the
+          // indexer daemon restarts); rebuilds run from stdio or the indexer.
+          if (HTTP_MODE) {
+            result = "rebuild_index does not run over the HTTP server, which never takes indexer.lock. Run it from a stdio session (apple-tools-mcp) or with npm run build-index while the indexer daemon is stopped.";
             break;
           }
 

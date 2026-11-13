@@ -190,3 +190,64 @@ describe('stale email rows after Mail moves its folders', () => {
     expect(await rows()).toHaveLength(5)
   })
 })
+
+describe('stale email rows that share one Message-ID', () => {
+  // Two stale rows can carry the same Message-ID (an index from before the
+  // Message-ID dedupe, or an IMAP copy). One live file must take exactly one
+  // of them; the other is removed, never re-pathed onto the same file.
+  let dupTmp
+  let dupAcct
+  const dupSaved = {}
+
+  beforeAll(async () => {
+    dupTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atm-stale-dup-'))
+    for (const k of ['HOME', 'APPLE_TOOLS_INDEX_DIR', 'APPLE_TOOLS_META_FILE', 'APPLE_TOOLS_INDEX_DAYS_BACK']) dupSaved[k] = process.env[k]
+    process.env.HOME = dupTmp
+    process.env.APPLE_TOOLS_INDEX_DAYS_BACK = '0'
+    process.env.APPLE_TOOLS_INDEX_DIR = path.join(dupTmp, 'index')
+    process.env.APPLE_TOOLS_META_FILE = path.join(dupTmp, 'index-meta.json')
+    dupAcct = path.join(dupTmp, 'Library', 'Mail', 'V10', 'ACCT')
+    writeEmlx(path.join(dupAcct, 'INBOX.mbox', 'OLD-UUID', 'Data', 'Messages', '201.emlx'), { messageId: '<dup@example.com>', subject: 'Duplicate fixture' })
+    writeEmlx(path.join(dupAcct, 'INBOX.mbox', 'OLD-UUID', 'Data', 'Messages', '202.emlx'), { messageId: '<other@example.com>', subject: 'Other fixture' })
+    origError = console.error
+    console.error = () => {}
+    vi.resetModules()
+    indexer = await import('../../indexer.js')
+  })
+
+  afterAll(() => {
+    console.error = origError
+    for (const [k, v] of Object.entries(dupSaved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+    fs.rmSync(dupTmp, { recursive: true, force: true })
+  })
+
+  it('re-paths one stale duplicate to the live file and removes the other', async () => {
+    expect(await indexer.indexEmails()).toMatchObject({ added: 2 })
+    // A second row for <dup> at another old path, as an older index could hold.
+    const table = await indexer.getOpenTable('emails')
+    const [row] = await table.query().where("`messageId` = '<dup@example.com>'").toArray()
+    const copyPath = path.join(dupAcct, 'Archive.mbox', 'OLD-UUID', 'Data', 'Messages', '301.emlx')
+    await table.add([{ ...row, filePath: copyPath, mailbox: 'Archive', vector: Array.from(row.vector) }])
+    expect((await rows()).filter(r => r.messageId === '<dup@example.com>')).toHaveLength(2)
+
+    // Mail moves the folder: both <dup> rows are stale and one live file has that ID.
+    fs.rmSync(path.join(dupAcct, 'INBOX.mbox', 'OLD-UUID'), { recursive: true })
+    const live = path.join(dupAcct, 'INBOX.mbox', 'NEW-UUID', 'Data', 'Messages', '901.emlx')
+    writeEmlx(live, { messageId: '<dup@example.com>', subject: 'Duplicate fixture' })
+    writeEmlx(path.join(dupAcct, 'INBOX.mbox', 'NEW-UUID', 'Data', 'Messages', '902.emlx'), { messageId: '<other@example.com>', subject: 'Other fixture' })
+
+    const result = await indexer.indexEmails()
+    expect(result.repathed).toBe(2) // <dup> once, <other> once
+    expect(result.removed).toBe(1) // the second <dup> row
+    const after = await rows()
+    const dups = after.filter(r => r.messageId === '<dup@example.com>')
+    expect(dups).toHaveLength(1)
+    expect(dups[0].filePath).toBe(live)
+    expect(after.filter(r => r.filePath === live)).toHaveLength(1)
+    expect(new Set(after.map(r => r.filePath)).size).toBe(after.length)
+    for (const r of after) expect(fs.existsSync(r.filePath)).toBe(true)
+  })
+})
