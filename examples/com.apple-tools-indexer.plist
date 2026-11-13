@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Always-on indexer (RunAtLoad + KeepAlive). Replace REPLACE_ME_WITH_NODE_BIN_DIR with
+  the directory of the node that runs it (for example ~/.local/node/bin) and
+  REPLACE_ME_WITH_PACKAGE_PATH with the global install (`npm root -g`/apple-tools-mcp).
+  The first program is node, never the npm bin symlink or the package script: macOS
+  Background Task Management tracks an agent by its first program, and an `npm install -g`
+  rewrites the bin, which would post another "App Background Activity" notice each upgrade.
+  Restart it with `launchctl kill TERM gui/$(id -u)/<label>`; a changed plist needs a
+  bootout and bootstrap.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.REPLACE_ME.apple-tools-indexer</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPLACE_ME_WITH_NODE_BIN_DIR/node</string>
+    <string>REPLACE_ME_WITH_PACKAGE_PATH/bin/apple-tools-indexer.js</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/REPLACE_ME</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>REPLACE_ME_WITH_NODE_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>NODE_OPTIONS</key>
+    <string>--max-old-space-size=4096</string>
+    <key>HOME</key>
+    <string>/Users/REPLACE_ME</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/apple-tools-indexer.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/apple-tools-indexer.err.log</string>
+</dict>
+</plist>
