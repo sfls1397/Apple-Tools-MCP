@@ -141,7 +141,7 @@ apple-tools-indexer
 
 That command is `node index.js --mode=indexer`. A global install provides `apple-tools-indexer` (`bin/apple-tools-indexer.js`). From a clone, use `npm run indexer`.
 
-To keep it running across logins, use a LaunchAgent. LaunchAgents do not see your shell `PATH`, so put in the absolute paths from `which node` and `npm root -g`.
+To keep it running across logins, use a LaunchAgent. LaunchAgents do not see your shell `PATH`, so put in the absolute paths from `which node` and `npm root -g`. Start it through `node` with the package script as an argument (as below, or `examples/com.apple-tools-indexer.plist`), never the `apple-tools-indexer` bin as the first program: macOS tracks a LaunchAgent by that first file, and every `npm install -g` rewrites the bin, which posts another "App Background Activity ... can run in the background" notice.
 
 Save this as `~/Library/LaunchAgents/com.apple-tools-mcp.indexer.plist` and replace both paths:
 
