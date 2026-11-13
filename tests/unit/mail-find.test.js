@@ -34,10 +34,10 @@ CREATE TABLE mailboxes (ROWID INTEGER PRIMARY KEY, url TEXT);
 CREATE TABLE addresses (ROWID INTEGER PRIMARY KEY, address TEXT, comment TEXT);
 CREATE TABLE recipients (ROWID INTEGER PRIMARY KEY, message INTEGER NOT NULL, address INTEGER NOT NULL, type INTEGER, position INTEGER);
 CREATE TABLE message_global_data (ROWID INTEGER PRIMARY KEY, message_id_header TEXT);
-INSERT INTO mailboxes VALUES (1, 'imap://${ACCT}/INBOX'), (2, 'imap://${ACCT}/Sent%20Messages'), (3, 'imap://${ACCT}/Deleted%20Messages'), (4, 'imap://${ACCT}/Work/Projects%202026');
-INSERT INTO addresses VALUES (1, 'me@me.com', ''), (2, 'me@icloud.com', ''), (3, 'stranger@example.com', ''), (4, 'other@example.com', '');
-INSERT INTO subjects VALUES (1, '[Network] Internet down'), (2, '[Network] Internet back'), (3, 'Lunch?'), (4, '[Network] spoof from a stranger'), (5, '50% off_sale''s here');
-INSERT INTO message_global_data VALUES (1, '<a1@me.com>'), (2, '<a2@me.com>'), (3, '<lunch@example.com>'), (4, '<spoof@example.com>'), (5, '<sale@example.com>'), (6, '<old@me.com>');
+INSERT INTO mailboxes VALUES (1, 'imap://${ACCT}/INBOX'), (2, 'imap://${ACCT}/Sent%20Messages'), (3, 'imap://${ACCT}/Deleted%20Messages'), (4, 'imap://${ACCT}/Work/Projects%202026'), (5, 'imap://${ACCT}/Junk');
+INSERT INTO addresses VALUES (1, 'me@me.com', ''), (2, 'me@icloud.com', ''), (3, 'stranger@example.com', ''), (4, 'other@example.com', ''), (5, 'jane@relay.example', 'Jane via Cloaked (Shop)'), (6, 'jane@other.example', 'Jane via Other'), (7, 'promo@relay2.example', 'VIA CLOAKED (Levi''s)');
+INSERT INTO subjects VALUES (1, '[Network] Internet down'), (2, '[Network] Internet back'), (3, 'Lunch?'), (4, '[Network] spoof from a stranger'), (5, '50% off_sale''s here'), (6, 'Your code');
+INSERT INTO message_global_data VALUES (1, '<a1@me.com>'), (2, '<a2@me.com>'), (3, '<lunch@example.com>'), (4, '<spoof@example.com>'), (5, '<sale@example.com>'), (6, '<old@me.com>'), (7, '<cloaked1@relay.example>'), (8, '<other1@other.example>'), (9, '<cloaked2@relay.example>'), (10, '<levis@relay2.example>');
 -- a1: old alert, copy in Sent and INBOX
 INSERT INTO messages VALUES (10, 1, 1, '', 1, ${nowSec - 30 * HOUR}, 2, 0), (11, 1, 1, '', 1, ${nowSec - 30 * HOUR + 15}, 1, 0);
 -- a2: fresh alert (2h old)
@@ -52,6 +52,8 @@ INSERT INTO messages VALUES (16, 4, 3, '', 4, ${nowSec - 50 * HOUR}, 1, 0);
 INSERT INTO messages VALUES (17, 5, 4, '', 5, ${nowSec - 50 * HOUR}, 4, 0);
 -- deleted row Mail has not purged yet
 INSERT INTO messages VALUES (18, 1, 1, '', 1, ${nowSec - 30 * HOUR}, 1, 1);
+-- sender names for from_name_contains: via Cloaked in Junk, via Other in Junk, via Cloaked in INBOX, upper case in Junk
+INSERT INTO messages VALUES (19, 7, 5, '', 6, ${nowSec - 3 * HOUR}, 5, 0), (20, 8, 6, '', 6, ${nowSec - 3 * HOUR}, 5, 0), (21, 9, 5, '', 6, ${nowSec - 4 * HOUR}, 1, 0), (22, 10, 7, '', 6, ${nowSec - 5 * HOUR}, 5, 0);
 INSERT INTO recipients (message, address, type, position) VALUES
   (10, 2, 0, 0), (11, 2, 0, 0), (12, 2, 0, 0), (13, 2, 0, 0), (14, 2, 0, 0),
   (15, 2, 0, 0), (16, 2, 0, 0), (16, 4, 0, 1), (17, 2, 0, 0), (18, 2, 0, 0);
@@ -191,6 +193,16 @@ describe('findMail against an Envelope Index fixture', () => {
     const { copies, missingIds } = locateMessageCopies(['a1@me.com', 'old@me.com', 'nope@me.com'], { dbPath })
     expect(copies.map((c) => c.id).sort()).toEqual([10, 11])
     expect(missingIds).toEqual(['old@me.com', 'nope@me.com'])
+  })
+
+  it('from_name_contains matches the sender display name in any case, and alone is enough to narrow', () => {
+    const junk = find({ from_name_contains: 'via Cloaked', mailboxes: ['junk'] })
+    expect(junk.map((r) => r.id)).toEqual([19, 22])
+    expect(junk[0]).toMatchObject({ from: 'jane@relay.example', from_name: 'Jane via Cloaked (Shop)', mailbox: 'junk', mailbox_path: 'Junk', account_id: ACCT })
+    expect(find({ from_name_contains: 'via Cloaked' }).map((r) => r.id)).toEqual([19, 21, 22])
+    expect(find({ from_name_contains: 'via Other', mailboxes: ['junk'] }).map((r) => r.id)).toEqual([20])
+    expect(find({ from_name_contains: '100%_' })).toEqual([])
+    expect(validateFindArgs({ from_name_contains: 'x'.repeat(301) }).error).toContain('from_name_contains')
   })
 
   it('explains Full Disk Access when the index cannot be opened', () => {

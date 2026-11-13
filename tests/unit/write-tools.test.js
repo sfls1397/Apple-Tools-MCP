@@ -42,6 +42,8 @@ import {
   mailTrashMany,
   buildBulkTrashScript,
   parseBulkTrashOutput,
+  mailUnjunk,
+  buildUnjunkScript,
   resolveMailMessageId,
   probeMailAutomation,
   probeSystemEventsAutomation,
@@ -1751,6 +1753,89 @@ describe('mail_trash with message_ids (bulk)', () => {
     expect(map.get(5)).toBe('moved')
     expect(map.get(6)).toBe('error -1743')
     expect(map.size).toBe(2)
+  })
+})
+
+describe('mail_unjunk', () => {
+  const ACCT = '4C4A53E8-CD12-47E0-AFBE-F058004EB1D5'
+  const copy = (id, mid, mailboxPath = 'Junk', mailbox = 'junk') => ({ id, message_id: mid, mailbox, mailbox_path: mailboxPath, account_id: ACCT })
+  const locateOf = (copies, missingIds = []) => vi.fn(() => ({ copies, missingIds }))
+
+  it('previews with dry_run and changes nothing', () => {
+    const locate = locateOf([copy(19, 'c1@relay.example'), copy(21, 'c1@relay.example', 'INBOX', 'inbox')])
+    const dry = mailUnjunk({ message_ids: ['c1@relay.example'], dry_run: true }, { locate })
+    expect(dry.planned).toBe(true)
+    expect(dry.message).toContain('move 1 Junk copy of 1 message to the Inbox')
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('refuses empty, oversized, invalid or single-target input without touching Mail', () => {
+    expect(mailUnjunk({ message_ids: [] }).message).toContain('empty')
+    expect(mailUnjunk({ message_ids: Array.from({ length: 501 }, (_, i) => `m${i}@x.com`) }).message).toContain('at most 500')
+    expect(mailUnjunk({ message_ids: ['has space@x.com'] }).message).toContain('invalid')
+    expect(mailUnjunk({ message_id: 'a@b.c' }).message).toContain('message_ids')
+    expect(mailUnjunk({ message_ids: ['a@b.c'], from_name_contains: 'x'.repeat(301) }).message).toContain('from_name_contains')
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('moves only the Junk copies, to that account\'s Inbox, after re-checking Message-ID and sender name', () => {
+    const locate = locateOf([copy(19, 'c1@relay.example'), copy(21, 'c2@relay.example', 'INBOX', 'inbox'), copy(30, 'c2@relay.example', 'Sent Messages', 'sent')])
+    osascript.mockImplementation(() => '19\tmoved\n')
+    const result = mailUnjunk({ message_ids: ['c1@relay.example', 'c2@relay.example'], from_name_contains: 'via Cloaked' }, { locate })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('moved 1 of 1 Junk copy to the Inbox')
+    expect(result.message).toContain('not_in_junk: 1')
+    const script = lastScript()
+    expect(script).toContain(`{"${ACCT}", "Junk", 19, "c1@relay.example"}`)
+    expect(script).not.toContain(', 21,')
+    expect(script).not.toContain(', 30,')
+    expect(script).toContain('whose id is rid')
+    expect(script).toContain('if (message id of msg) is not mid then return "mismatch"')
+    expect(script).toContain('set guardName to "via Cloaked"')
+    expect(script).toContain('return "name_mismatch"')
+    expect(script).toContain('{"INBOX", "Inbox"}')
+    expect(script).not.toMatch(/\bdelete\b/)
+    expect(script).not.toContain('read status')
+    // No screen: nothing comes to the front, no window, no GUI scripting (Peter: no computer control; 9:27 PM CT Nov 12 2026)
+    expect(script).not.toMatch(/\bactivate\b|System Events|\bwindow\b|\breopen\b|\blaunch\b|\bclick\b|keystroke/)
+    expect(osascript).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts stale, name mismatches, budget leftovers and failures separately', () => {
+    const locate = locateOf([copy(1, 'a@x.com'), copy(2, 'b@x.com'), copy(3, 'c@x.com'), copy(4, 'd@x.com'), copy(5, 'e@x.com')])
+    osascript.mockImplementation(() => '1\tmoved\n2\tname_mismatch\n3\tmissing\n4\terror -1728\n')
+    const result = mailUnjunk({ message_ids: ['a@x.com', 'b@x.com', 'c@x.com', 'd@x.com', 'e@x.com'], from_name_contains: 'via Cloaked' }, { locate })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('moved: 1')
+    expect(result.message).toContain('name_mismatch: 1')
+    expect(result.message).toContain('stale: 1')
+    expect(result.message).toContain('remaining: 1')
+    expect(result.message).toContain('failed: 1')
+    expect(result.message).toContain('failure_reasons: error -1728')
+  })
+
+  it('reports nothing to move when no copy is in Junk', () => {
+    const result = mailUnjunk({ message_ids: ['c1@relay.example'] }, { locate: locateOf([copy(21, 'c1@relay.example', 'INBOX', 'inbox')]) })
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('nothing to move')
+    expect(osascript).not.toHaveBeenCalled()
+  })
+
+  it('escapes the name guard and validates ids in the script', () => {
+    const script = buildUnjunkScript([copy(7, 'x@me.com')], { fromNameContains: 'a "b"', budgetSec: 20 })
+    expect(script).toContain('set guardName to "a \\"b\\""')
+    expect(script).toContain('> 20 then')
+    expect(buildUnjunkScript([copy(7, 'x@me.com')])).toContain('set guardName to ""')
+    expect(() => buildUnjunkScript([copy('7; do shell script "x"', 'x@me.com')])).toThrow('id must be an integer')
+  })
+
+  it('maps an osascript hang to timeout guidance', () => {
+    osascript.mockImplementation(() => {
+      throw new Error('spawnSync osascript ETIMEDOUT')
+    })
+    const result = mailUnjunk({ message_ids: ['c1@relay.example'] }, { locate: locateOf([copy(19, 'c1@relay.example')]) })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain(MAIL_SEND_TIMEOUT_GUIDANCE)
   })
 })
 

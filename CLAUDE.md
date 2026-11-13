@@ -1,6 +1,6 @@
 # Project Architecture
 
-Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 40 tools: 24 read/search/admin tools plus the 16 write tools. There are no Apple Reminders tools.
+Apple Tools MCP is a Model Context Protocol server for Apple Mail, iMessages, Calendar, and Contacts on macOS. It reads directly from macOS system databases and `.emlx` files, generates local vector embeddings using `all-MiniLM-L6-v2` (384-dim), and stores them in a LanceDB index at `~/.apple-tools-mcp/vector-index/`. The server communicates over stdio transport and exposes 42 tools: 24 read/search/admin tools plus the 18 write tools. There are no Apple Reminders tools.
 
 A long-lived **indexer daemon** (`--mode=indexer` / `apple-tools-indexer`) owns `~/.apple-tools-mcp/indexer.lock` and refreshes the vector index on an interval from `~/.apple-tools-mcp/config.json` (env `INDEX_INTERVAL_MS` overrides; default 5 minutes, clamped to 15s–6h). MCP stdio clients stay short-lived, exit on stdin close, and index locally only when no daemon holds the lock.
 
@@ -60,7 +60,7 @@ Pure helpers (lookups injected) used by `messages_search`, `messages_recent`, an
 
 ### lib/mailFind.js -- Exact mail lookup (Envelope Index)
 
-`mail_find` and bulk `mail_trash` read Mail's own `~/Library/Mail/V<n>/MailData/Envelope Index` with `sqlite3 -readonly` (Full Disk Access; Mail stays the only writer). Filters are exact (subject prefix/contains with escaped LIKE, sender, recipient, sole recipient, from-me = any address seen as a sender in a Sent mailbox, Message-IDs, mailbox kind, dates) and every copy of a message is its own row. A message's AppleScript `id` is its Envelope Index ROWID, so bulk `mail_trash` addresses each copy as `messages of <its mailbox> whose id is N` (~2s on a 60k INBOX) instead of `atmFindMessage`'s 30-38s scan, re-checks the Message-ID before moving, and stops starting new moves after `MAIL_BULK_TRASH_BUDGET_SEC` so the call answers inside the MCP deadline.
+`mail_find`, bulk `mail_trash` and `mail_unjunk` read Mail's own `~/Library/Mail/V<n>/MailData/Envelope Index` with `sqlite3 -readonly` (Full Disk Access; Mail stays the only writer). Filters are exact (subject prefix/contains with escaped LIKE, sender, sender display name contains (`addresses.comment`, which Mail stores decoded), recipient, sole recipient, from-me = any address seen as a sender in a Sent mailbox, Message-IDs, mailbox kind, dates) and every copy of a message is its own row. A message's AppleScript `id` is its Envelope Index ROWID, so bulk `mail_trash` addresses each copy as `messages of <its mailbox> whose id is N` (~2s on a 60k INBOX) instead of `atmFindMessage`'s 30-38s scan, re-checks the Message-ID before moving, and stops starting new moves after `MAIL_BULK_TRASH_BUDGET_SEC` so the call answers inside the MCP deadline.
 
 ### lib/mailLinks.js -- Links in one message (mail_links)
 
@@ -68,7 +68,7 @@ Pure helpers (lookups injected) used by `messages_search`, `messages_recent`, an
 
 ### lib/writeTools.js -- Write tool surface (2.0.0)
 
-Defines the 16 write tools (`mail_send`, `mail_draft`, `mail_reply`, `mail_forward`, `mail_mark`, `mail_archive`, `mail_trash`, `messages_send`, `calendar_list_calendars`, `calendar_add`, `calendar_edit`, `calendar_remove`, `calendar_rsvp`, `contacts_add`, `contacts_edit`, `contacts_remove`), maps them to handlers, and dispatches each call local-or-daemon. `index.js` spreads these definitions into `ListTools` and routes matching calls before the read-tool switch, so writes never wait on the index gate.
+Defines the 18 write tools (`mail_send_reconcile`, `mail_send`, `mail_draft`, `mail_reply`, `mail_forward`, `mail_mark`, `mail_archive`, `mail_trash`, `mail_unjunk`, `messages_send`, `calendar_list_calendars`, `calendar_add`, `calendar_edit`, `calendar_remove`, `calendar_rsvp`, `contacts_add`, `contacts_edit`, `contacts_remove`), maps them to handlers, and dispatches each call local-or-daemon. `index.js` spreads these definitions into `ListTools` and routes matching calls before the read-tool switch, so writes never wait on the index gate.
 
 ### lib/writeGuards.js -- Confirm / dry-run policy
 
