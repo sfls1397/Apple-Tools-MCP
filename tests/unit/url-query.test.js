@@ -132,6 +132,8 @@ describe('maskPasscodes', () => {
     [`PIN: ${PASS}#`, 'PIN: [hidden]'],
     [`Password:\n${PASS}`, 'Password:\n[hidden]'],
     ['+15550100,,1000000001#,,,,*424242# US', '+15550100,,1000000001#,,,,*[hidden]# US'],
+    [`Passcode ${PASS}`, 'Passcode [hidden]'],
+    [`Enter meeting passcode ${PASS} when prompted`, 'Enter meeting passcode [hidden] when prompted'],
   ]
   for (const [input, want] of cases) {
     it(`hides the passcode in ${JSON.stringify(input.slice(0, 40))}`, () => {
@@ -148,11 +150,21 @@ describe('maskPasscodes', () => {
       'Bring your password manager',
       'Meeting ID: 100 000 0001',
       'Dial +15550100,,1000000001# US',
+      'Password reset meeting tomorrow',
+      'Passcode required for the call',
       '',
     ]) {
       expect(maskPasscodes(text)).toBe(text)
     }
     expect(maskPasscodes(null)).toBe(null)
+  })
+
+  it('stays fast on a long run of commas (no quadratic dial-string scan)', () => {
+    const text = ','.repeat(200000) + '*424242#'
+    const started = Date.now()
+    const out = maskPasscodes(text)
+    expect(Date.now() - started).toBeLessThan(500)
+    expect(out).not.toContain('424242')
   })
 
   it('hides only the passcode line, not the rest of the notes', () => {
