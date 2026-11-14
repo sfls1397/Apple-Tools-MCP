@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { stripUrlQueries } from '../../lib/urlQuery.js'
+import { stripUrlQueries, maskPasscodes, hideMeetingSecrets } from '../../lib/urlQuery.js'
 import {
   formatCalendarResults,
   formatUpcomingEventsResults,
@@ -106,17 +106,98 @@ describe('smart_search and person_search print calendar titles and locations wit
     return src.slice(start, src.indexOf('\n}\n', start))
   }
 
-  it('formatSmartSearchResults strips the timeline titles, event titles and locations', () => {
+  it('formatSmartSearchResults hides secrets in the timeline titles, event titles and locations', () => {
     const fn = body('formatSmartSearchResults')
-    expect(fn).toContain('group.calendar.map(c => stripUrlQueries(c.title))')
-    expect(fn).toContain('Event: ${stripUrlQueries(r.title)}')
-    expect(fn).toContain('Location: ${stripUrlQueries(r.location)}')
+    expect(fn).toContain('group.calendar.map(c => hideMeetingSecrets(c.title))')
+    expect(fn).toContain('Event: ${hideMeetingSecrets(r.title)}')
+    expect(fn).toContain('Location: ${hideMeetingSecrets(r.location)}')
     expect(fn).not.toMatch(/\$\{r\.(title|location)\}/)
   })
 
-  it('formatPersonSearchResults strips event titles', () => {
+  it('formatPersonSearchResults hides secrets in event titles', () => {
     const fn = body('formatPersonSearchResults')
-    expect(fn).toContain('${stripUrlQueries(r.title)}')
+    expect(fn).toContain('${hideMeetingSecrets(r.title)}')
     expect(fn).not.toMatch(/\$\{r\.(title|location)\}/)
+  })
+})
+
+describe('maskPasscodes', () => {
+  const cases = [
+    [`Passcode: ${PASS}`, 'Passcode: [hidden]'],
+    [`Meeting ID: 100 000 0001 Passcode: ${PASS}`, 'Meeting ID: 100 000 0001 Passcode: [hidden]'],
+    [`Meeting password: ${PASS}`, 'Meeting password: [hidden]'],
+    [`Numeric passcode: ${PASS}`, 'Numeric passcode: [hidden]'],
+    [`The password is ${PASS}`, 'The password is [hidden]'],
+    [`pwd=${PASS}`, 'pwd=[hidden]'],
+    [`PIN: ${PASS}#`, 'PIN: [hidden]'],
+    [`Password:\n${PASS}`, 'Password:\n[hidden]'],
+    ['+15550100,,1000000001#,,,,*424242# US', '+15550100,,1000000001#,,,,*[hidden]# US'],
+    [`Passcode ${PASS}`, 'Passcode [hidden]'],
+    [`Enter meeting passcode ${PASS} when prompted`, 'Enter meeting passcode [hidden] when prompted'],
+  ]
+  for (const [input, want] of cases) {
+    it(`hides the passcode in ${JSON.stringify(input.slice(0, 40))}`, () => {
+      const out = maskPasscodes(input)
+      expect(out).toBe(want)
+      expect(out).not.toContain(PASS)
+      expect(out).not.toContain('424242')
+    })
+  }
+
+  it('leaves ordinary text alone', () => {
+    for (const text of [
+      'Pin the doc to the channel',
+      'Bring your password manager',
+      'Meeting ID: 100 000 0001',
+      'Dial +15550100,,1000000001# US',
+      'Password reset meeting tomorrow',
+      'Passcode required for the call',
+      '',
+    ]) {
+      expect(maskPasscodes(text)).toBe(text)
+    }
+    expect(maskPasscodes(null)).toBe(null)
+  })
+
+  it('stays fast on a long run of commas (no quadratic dial-string scan)', () => {
+    const text = ','.repeat(200000) + '*424242#'
+    const started = Date.now()
+    const out = maskPasscodes(text)
+    expect(Date.now() - started).toBeLessThan(500)
+    expect(out).not.toContain('424242')
+  })
+
+  it('hides only the passcode line, not the rest of the notes', () => {
+    const notes = `Join https://example.zoom.us/j/1000000001?pwd=${PASS}\nPasscode: ${PASS}\nAgenda: budget review`
+    expect(hideMeetingSecrets(notes)).toBe('Join https://example.zoom.us/j/1000000001\nPasscode: [hidden]\nAgenda: budget review')
+  })
+})
+
+describe('calendar_search prints event notes without passcodes', () => {
+  it('formatCalendarResults hides URL queries and passcode lines in notes', () => {
+    const text = formatCalendarResults({
+      success: true,
+      results: [{
+        rank: 1,
+        title: 'Planning',
+        calendar: 'Work',
+        start: '2026-11-12 09:00:00',
+        end: '2026-11-12 09:30:00',
+        location: '',
+        notes: `Join Zoom ${ZOOM}\nMeeting ID: 100 000 0001\nPasscode: ${PASS}\nOne tap: +15550100,,1000000001#,,,,*424242#`,
+      }],
+    })
+    expect(text).toContain('Notes: Join Zoom https://example.zoom.us/j/1000000001')
+    expect(text).toContain('Meeting ID: 100 000 0001')
+    expect(text).toContain('Passcode: [hidden]')
+    expect(text).not.toContain(PASS)
+    expect(text).not.toContain('424242')
+    expect(text).not.toContain('pwd=')
+  })
+
+  it('search.js prints every calendar title, location and notes field through hideMeetingSecrets', () => {
+    const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'search.js'), 'utf8')
+    expect(src).not.toMatch(/\$\{(r|e)\.(title|location|notes)\}/)
+    expect(src).not.toContain('stripUrlQueries(')
   })
 })

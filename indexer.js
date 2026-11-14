@@ -1725,6 +1725,10 @@ export async function indexAll(progressCallback = null) {
 
   await maybeOptimizeIndex({ emails: emailResult, messages: messageResult, calendar: calendarResult });
 
+  // Readers of the shared index (the HTTP server, lost-lock stdio clients)
+  // use this to say when the index has stopped refreshing.
+  saveIndexMeta({ ...loadIndexMeta(), lastIndexPassTime: Date.now() });
+
   console.error("Full index complete.");
   return { emails: emailResult, messages: messageResult, calendar: calendarResult };
 }
@@ -1752,6 +1756,15 @@ async function maybeOptimizeIndex(results) {
   indexedIdCache.invalidate();
   saveIndexMeta({ ...loadIndexMeta(), lastIndexOptimizeTime: Date.now() });
   return result;
+}
+
+/**
+ * When the last full index pass (emails, messages, calendar) finished, from
+ * index-meta.json; null when no pass has recorded one yet.
+ */
+export function getLastIndexPassTime() {
+  const t = loadIndexMeta().lastIndexPassTime;
+  return Number.isFinite(t) && t > 0 ? t : null;
 }
 
 export async function isIndexReady(type = "emails") {

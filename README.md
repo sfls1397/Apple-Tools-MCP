@@ -210,7 +210,7 @@ apple-tools-mcp http-token
 
 Under a secrets manager's runtime injection (for example `infisical run -- apple-tools-http`), set `APPLE_TOOLS_HTTP_TOKEN` and the server uses it instead of Keychain, which it then neither reads nor writes. To rotate without cutting off clients, start the server with the new token in `APPLE_TOOLS_HTTP_TOKEN` and the old one in `APPLE_TOOLS_HTTP_TOKEN_PREVIOUS`; once every client has the new token, restart without `APPLE_TOOLS_HTTP_TOKEN_PREVIOUS` and the old token stops working.
 
-The HTTP server never indexes and never takes `indexer.lock`: it serves the index the indexer daemon keeps fresh, so run the indexer too. It also refuses `rebuild_index`; rebuild from a stdio client or as described under the index rebuild below. Restarting either one in any order is safe.
+The HTTP server never indexes and never takes `indexer.lock`: it serves the index the indexer daemon keeps fresh, so run the indexer too. It also refuses `rebuild_index`; rebuild from a stdio client or as described under the index rebuild below. Restarting either one in any order is safe. When the last finished index pass (`lastIndexPassTime` in `index-meta.json`) is older than three refresh intervals (at least 15 minutes), every index-backed reply starts with a note giving its age, so a stopped indexer shows up instead of serving a stale index silently.
 
 An example LaunchAgent is `examples/com.apple-tools-http.plist`. How to point Claude and other clients at it, including `apple-tools-http-proxy`, is in `examples/mcp-client.md`.
 
@@ -303,7 +303,7 @@ Your client can also call `audit_index`.
 | `calendar_free_time` | Open time on a date, read live from Calendar rather than the search index. |
 | `calendar_recurring` | Recurring events with their next occurrence, counting today's. |
 
-Calendar tools print links in event titles and locations without their query string or fragment (`https://zoom.us/j/123?pwd=...` prints as `https://zoom.us/j/123`), so a meeting passcode never reaches a chat that reads the calendar.
+Calendar tools print links in event titles, locations and notes without their query string or fragment (`https://zoom.us/j/123?pwd=...` prints as `https://zoom.us/j/123`), and hide the value after a passcode label (`Passcode: [hidden]`, also `password`, `pwd`, `PIN`) and the passcode in a one-tap dial string (`,,,,*[hidden]#`), so a meeting passcode never reaches a chat that reads the calendar.
 
 ### Contacts
 
