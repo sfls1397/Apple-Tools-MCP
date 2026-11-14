@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage, indexQueryGate, BUILDING_INITIAL_INDEX_MESSAGE, INDEXING_NEW_DATA_MESSAGE } from '../../lib/indexGate.js'
+import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage, indexQueryGate, BUILDING_INITIAL_INDEX_MESSAGE, INDEXING_NEW_DATA_MESSAGE, staleIndexNote, STALE_INDEX_FLOOR_MS } from '../../lib/indexGate.js'
 
 /** Tools PR #1 gated on sessionIndexComplete; lost-lock must not strand them. */
 const INDEX_BACKED_TOOLS = [
@@ -273,5 +273,48 @@ describe('search.js and indexer.js use the shared unavailable message', () => {
     expect(indexerSrc).not.toMatch(/Email index not ready/)
     expect(searchSrc).toContain('indexUnavailableMessage')
     expect(indexerSrc).toContain('indexUnavailableMessage')
+  })
+})
+
+describe('staleIndexNote (index-backed replies say when the shared index stopped refreshing)', () => {
+  const now = Date.UTC(2026, 10, 13, 18, 0, 0)
+  const FIVE_MIN = 5 * 60 * 1000
+
+  it('says nothing while the last pass is within three intervals or the 15 minute floor', () => {
+    expect(staleIndexNote({ lastPassTime: now - 14 * 60 * 1000, now, intervalMs: FIVE_MIN })).toBe(null)
+    expect(staleIndexNote({ lastPassTime: now - STALE_INDEX_FLOOR_MS, now, intervalMs: 15 * 1000 })).toBe(null)
+    expect(staleIndexNote({ lastPassTime: now - 50 * 60 * 1000, now, intervalMs: 20 * 60 * 1000 })).toBe(null)
+  })
+
+  it('says nothing when no pass time is known (first run after an upgrade)', () => {
+    for (const t of [null, undefined, 0, NaN]) {
+      expect(staleIndexNote({ lastPassTime: t, now, intervalMs: FIVE_MIN })).toBe(null)
+    }
+  })
+
+  it('notes the age and the time once the index is older than the limit', () => {
+    const note = staleIndexNote({ lastPassTime: now - (2 * 60 + 10) * 60 * 1000, now, intervalMs: FIVE_MIN })
+    expect(note).toContain('2 h 10 min ago')
+    expect(note).toContain('2026-11-13T15:50:00.000Z')
+    expect(note).toMatch(/indexer daemon/)
+    expect(staleIndexNote({ lastPassTime: now - 16 * 60 * 1000, now, intervalMs: FIVE_MIN })).toContain('16 min ago')
+    expect(staleIndexNote({ lastPassTime: now - 3 * 24 * 3600 * 1000, now, intervalMs: FIVE_MIN })).toContain('3 days ago')
+  })
+})
+
+describe('index.js adds the stale note to every index-backed tool reply', () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
+  const src = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
+  const indexerSrc = fs.readFileSync(path.join(root, 'indexer.js'), 'utf8')
+
+  it('lists the same index-backed tools this file gates', () => {
+    const block = src.slice(src.indexOf('const INDEX_BACKED_TOOLS = new Set(['), src.indexOf(']);', src.indexOf('const INDEX_BACKED_TOOLS')))
+    const listed = [...block.matchAll(/"([a-z_]+)"/g)].map(m => m[1]).sort()
+    expect(listed).toEqual([...INDEX_BACKED_TOOLS].sort())
+  })
+
+  it('wraps the tool result and records each finished pass', () => {
+    expect(src).toContain('text: withStaleIndexNote(name, result)')
+    expect(indexerSrc).toMatch(/saveIndexMeta\(\{ \.\.\.loadIndexMeta\(\), lastIndexPassTime: Date\.now\(\) \}\)/)
   })
 })

@@ -11,7 +11,7 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
-import { cycleEndFlags, indexUnavailableMessage, indexQueryGate } from "./lib/indexGate.js";
+import { cycleEndFlags, indexUnavailableMessage, indexQueryGate, staleIndexNote } from "./lib/indexGate.js";
 import { isIndexerMode, isPermissionsMode, isHttpMode, isHttpTokenMode } from "./lib/processMode.js";
 import { runPermissionsCommand } from "./lib/permissions.js";
 import { loadResolvedIndexInterval, logResolvedInterval, resolveHttpServerConfig } from "./lib/config.js";
@@ -42,7 +42,7 @@ import { closeEventKitSession, ensureEventKitSession } from "./lib/eventKitSessi
 import { EVENTKIT_JXA_HELPERS } from "./lib/calendarWrite.js";
 import { mailFind, MAILBOX_KINDS, MAIL_FIND_MAX_LIMIT } from "./lib/mailFind.js";
 import { mailLinks } from "./lib/mailLinks.js";
-import { stripUrlQueries } from "./lib/urlQuery.js";
+import { hideMeetingSecrets } from "./lib/urlQuery.js";
 
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
@@ -199,7 +199,8 @@ import {
   loadContacts,
   searchContacts,
   lookupContact,
-  getContactIdentifiers
+  getContactIdentifiers,
+  getLastIndexPassTime
 } from "./indexer.js";
 import {
   searchEmails,
@@ -406,6 +407,33 @@ async function requireIndex(type) {
     isFirstEverRun
   });
   return gate.ok ? null : gate.message;
+}
+
+// Tools that answer from the shared vector index. Their replies get a note
+// when the index has not finished a pass in several intervals (indexer down).
+const INDEX_BACKED_TOOLS = new Set([
+  "smart_search",
+  "person_search",
+  "mail_search",
+  "mail_recent",
+  "mail_date",
+  "mail_senders",
+  "mail_thread",
+  "messages_search",
+  "messages_recent",
+  "messages_conversation",
+  "calendar_search"
+]);
+
+function withStaleIndexNote(toolName, text) {
+  if (!INDEX_BACKED_TOOLS.has(toolName) || typeof text !== "string") return text;
+  let note = null;
+  try {
+    note = staleIndexNote({ lastPassTime: getLastIndexPassTime(), intervalMs: INDEX_INTERVAL });
+  } catch (e) {
+    console.error(`Could not read index freshness: ${e.message}`);
+  }
+  return note ? `${note}\n\n${text}` : text;
 }
 
 function waitForLockAndStartDaemon() {
@@ -679,7 +707,7 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
     for (const group of synthesizedGroups.slice(0, 5)) {
       sections.push(`📅 ${group.timeWindow} (${group.totalItems} items)`);
       if (group.calendar.length > 0) {
-        sections.push(`  Calendar: ${group.calendar.map(c => stripUrlQueries(c.title)).join(', ')}`);
+        sections.push(`  Calendar: ${group.calendar.map(c => hideMeetingSecrets(c.title)).join(', ')}`);
       }
       if (group.mail.length > 0) {
         sections.push(`  Emails: ${group.mail.map(m => m.subject).join(', ')}`);
@@ -719,10 +747,10 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
     sections.push("📅 CALENDAR:");
     for (const r of results.calendar.results) {
       sections.push(`  [${r.rank}] Score: ${r.score}`);
-      sections.push(`      Event: ${stripUrlQueries(r.title)}${r.isAllDay ? ' (All Day)' : ''}`);
+      sections.push(`      Event: ${hideMeetingSecrets(r.title)}${r.isAllDay ? ' (All Day)' : ''}`);
       sections.push(`      Start: ${r.start}`);
       sections.push(`      Calendar: ${r.calendar}`);
-      if (r.location) sections.push(`      Location: ${stripUrlQueries(r.location)}`);
+      if (r.location) sections.push(`      Location: ${hideMeetingSecrets(r.location)}`);
     }
     sections.push("");
   }
@@ -1061,7 +1089,7 @@ function formatPersonSearchResults(results) {
   if (results.calendar && results.calendar.results && results.calendar.results.length > 0) {
     sections.push(`📅 CALENDAR (${results.calendar.results.length}):`);
     for (const r of results.calendar.results.slice(0, 10)) {
-      sections.push(`  • ${stripUrlQueries(r.title)}`);
+      sections.push(`  • ${hideMeetingSecrets(r.title)}`);
       sections.push(`    ${r.start} | ${r.calendar}`);
     }
     sections.push("");
@@ -1673,7 +1701,7 @@ function createServer() {
           throw new Error(`Unknown tool: ${name}`);
       }
 
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text", text: withStaleIndexNote(name, result) }] };
     } catch (error) {
       return {
         content: [{ type: "text", text: `Error: ${error.message}` }],

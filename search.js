@@ -4,7 +4,7 @@ import { safeMatch, validateSearchQuery, toUnixMillis } from "./lib/validators.j
 import { embed, getOpenTable, getRecentEmails, getEmailsByDateRange, getRecentMessages, getConversation, getEventsOnDate, resolveEmail, resolvePhone, resolveByExactName, normalizePhone, formatContact } from "./indexer.js";
 import { createMessageContactMatcher, describeMessagePeer } from "./lib/messageContact.js";
 import { indexUnavailableMessage } from "./lib/indexGate.js";
-import { stripUrlQueries } from "./lib/urlQuery.js";
+import { hideMeetingSecrets } from "./lib/urlQuery.js";
 
 // ============ CACHING ============
 
@@ -1525,17 +1525,18 @@ export function formatCalendarResults(searchResult) {
   const results = searchResult.results.map(r => {
     let result = `[${r.rank || r.index}]`;
     if (r.score) result += ` Score: ${r.score}`;
-    // Meeting-link passcodes ride in URL query strings: titles and locations print URLs without them.
-    result += `\nEvent: ${stripUrlQueries(r.title)}`;
+    // Meeting-link passcodes ride in URL query strings and "Passcode:" lines: titles, locations
+    // and notes print URLs without queries and passcode values hidden.
+    result += `\nEvent: ${hideMeetingSecrets(r.title)}`;
     if (r.isAllDay) result += " (All Day)";
     result += `\nCalendar: ${r.calendar}\nStart: ${r.start}\nEnd: ${r.end}`;
     if (r.eventId) result += `\nEvent ID: ${r.eventId}`;
-    if (r.location) result += `\nLocation: ${stripUrlQueries(r.location)}`;
+    if (r.location) result += `\nLocation: ${hideMeetingSecrets(r.location)}`;
     if (r.attendees && r.attendees.length > 0) {
       const attendeeList = r.attendees.map(a => `${a.name} (${a.status})`).join(", ");
       result += `\nAttendees: ${attendeeList}`;
     }
-    if (r.notes) result += `\nNotes: ${r.notes}`;
+    if (r.notes) result += `\nNotes: ${hideMeetingSecrets(r.notes)}`;
     return result + "\n---";
   }).join("\n");
 
@@ -1628,10 +1629,10 @@ export function formatUpcomingEventsResults(result) {
   let output = "";
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
-    output += `${i + 1}. ${stripUrlQueries(e.title) || "No title"}${e.isAllDay ? " (All Day)" : ""}\n`;
+    output += `${i + 1}. ${hideMeetingSecrets(e.title) || "No title"}${e.isAllDay ? " (All Day)" : ""}\n`;
     output += `   ${e.start}${e.isAllDay ? "" : ` - ${e.end}`}\n`;
     output += `   Calendar: ${e.calendar || "Unknown"}`;
-    if (e.location) output += ` | Location: ${stripUrlQueries(e.location)}`;
+    if (e.location) output += ` | Location: ${hideMeetingSecrets(e.location)}`;
     output += "\n\n";
   }
 
@@ -1674,7 +1675,7 @@ export function formatWeekEventsResults(result) {
     output += `${day}:\n`;
     for (const e of dayEvents) {
       const time = e.isAllDay ? "All Day" : e.start.split(" ")[1];
-      output += `  • ${time} - ${stripUrlQueries(e.title) || "No title"}`;
+      output += `  • ${time} - ${hideMeetingSecrets(e.title) || "No title"}`;
       if (e.calendar) output += ` [${e.calendar}]`;
       output += "\n";
     }
@@ -1725,7 +1726,7 @@ export function formatRecurringEventsResults(result) {
 
   let output = "";
   for (const e of events) {
-    output += `  • ${stripUrlQueries(e.title) || "No title"}${e.isAllDay ? " (All Day)" : ""}\n`;
+    output += `  • ${hideMeetingSecrets(e.title) || "No title"}${e.isAllDay ? " (All Day)" : ""}\n`;
     output += `    Next: ${e.start} | Calendar: ${e.calendar || "Unknown"}\n`;
     output += `    Occurrences: ${e.occurrenceCount}\n\n`;
   }
