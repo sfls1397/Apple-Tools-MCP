@@ -17,7 +17,7 @@ import { runPermissionsCommand } from "./lib/permissions.js";
 import { loadResolvedIndexInterval, logResolvedInterval, resolveHttpServerConfig } from "./lib/config.js";
 import { acceptedHttpAuthTokens, loadOrCreateHttpAuthToken, verifyAuthHeader } from "./lib/httpAuth.js";
 import { createHttpRequestHandler } from "./lib/httpTransport.js";
-import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS } from "./lib/indexerLock.js";
+import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS, readIndexerLockHolder } from "./lib/indexerLock.js";
 import {
   shouldConnectMcpStdio,
   bindStdinCloseExit,
@@ -410,7 +410,8 @@ async function requireIndex(type) {
 }
 
 // Tools that answer from the shared vector index. Their replies get a note
-// when the index has not finished a pass in several intervals (indexer down).
+// when the index has not finished a pass in several intervals, worded by
+// whether the indexer.lock holder is alive (still refreshing, stuck, or down).
 const INDEX_BACKED_TOOLS = new Set([
   "smart_search",
   "person_search",
@@ -429,7 +430,11 @@ function withStaleIndexNote(toolName, text) {
   if (!INDEX_BACKED_TOOLS.has(toolName) || typeof text !== "string") return text;
   let note = null;
   try {
-    note = staleIndexNote({ lastPassTime: getLastIndexPassTime(), intervalMs: INDEX_INTERVAL });
+    note = staleIndexNote({
+      lastPassTime: getLastIndexPassTime(),
+      intervalMs: INDEX_INTERVAL,
+      readHolder: () => readIndexerLockHolder({ lockFile: LOCK_FILE })
+    });
   } catch (e) {
     console.error(`Could not read index freshness: ${e.message}`);
   }

@@ -300,6 +300,29 @@ describe('staleIndexNote (index-backed replies say when the shared index stopped
     expect(staleIndexNote({ lastPassTime: now - 16 * 60 * 1000, now, intervalMs: FIVE_MIN })).toContain('16 min ago')
     expect(staleIndexNote({ lastPassTime: now - 3 * 24 * 3600 * 1000, now, intervalMs: FIVE_MIN })).toContain('3 days ago')
   })
+
+  it('words the cause by who holds indexer.lock, and reads it only once stale', () => {
+    const stale = now - 3 * 3600 * 1000
+    let reads = 0
+    const readHolder = (holder) => () => { reads++; return holder }
+    expect(staleIndexNote({ lastPassTime: now - 60 * 1000, now, intervalMs: FIVE_MIN, readHolder: readHolder(null) })).toBe(null)
+    expect(reads).toBe(0)
+
+    const running = staleIndexNote({ lastPassTime: stale, now, intervalMs: FIVE_MIN, readHolder: readHolder({ state: 'running', pid: 4242, checkedInMsAgo: 30 * 1000 }) })
+    expect(running).toContain('The indexer (PID 4242) is running')
+    expect(running).toContain('a rebuild, a long first pass, or catching up after the Mac slept')
+    expect(running).not.toMatch(/may be down/)
+
+    const stuck = staleIndexNote({ lastPassTime: stale, now, intervalMs: FIVE_MIN, readHolder: readHolder({ state: 'stuck', pid: 4242, checkedInMsAgo: 40 * 60 * 1000 }) })
+    expect(stuck).toContain('holds the index lock but last checked in 40 min ago, so it may be stuck')
+
+    for (const holder of [null, { state: 'dead', pid: 4242, checkedInMsAgo: 0 }]) {
+      expect(staleIndexNote({ lastPassTime: stale, now, intervalMs: FIVE_MIN, readHolder: readHolder(holder) })).toMatch(/indexer daemon \(apple-tools-indexer\) may be down\.$/)
+    }
+    const throws = staleIndexNote({ lastPassTime: stale, now, intervalMs: FIVE_MIN, readHolder: () => { throw new Error('EACCES') } })
+    expect(throws).toMatch(/may be down\.$/)
+    expect(reads).toBe(4)
+  })
 })
 
 describe('index.js adds the stale note to every index-backed tool reply', () => {
@@ -315,6 +338,8 @@ describe('index.js adds the stale note to every index-backed tool reply', () => 
 
   it('wraps the tool result and records each finished pass', () => {
     expect(src).toContain('text: withStaleIndexNote(name, result)')
+    expect(src).toContain('readHolder: () => readIndexerLockHolder({ lockFile: LOCK_FILE })')
+    expect(indexerSrc).toMatch(/if \(isFullIndexPass\(sources, results\.errors\)\)/)
     expect(indexerSrc).toMatch(/saveIndexMeta\(\{ \.\.\.loadIndexMeta\(\), lastIndexPassTime: Date\.now\(\) \}\)/)
   })
 })

@@ -7,6 +7,9 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
 import {
   findMissing,
@@ -192,6 +195,34 @@ describe('Audit Module - Discrepancy Detection', () => {
   })
 
   describe('formatAuditReport', () => {
+    it('prints calendar titles without meeting links or passcodes', () => {
+      const PASS = 'FIXTUREpass1234'
+      const title = `Sync https://example.zoom.us/j/1000000001?pwd=${PASS} Passcode: ${PASS}`
+      const results = {
+        calendar: {
+          dataType: 'calendar',
+          counts: { source: 3, indexed: 3, coverage: 1.0 },
+          discrepancies: {
+            missing: [{ id: '1', title, start: '2026-11-12 09:00', reason: 'Not indexed' }],
+            orphaned: [{ id: '2', title, reason: 'Event no longer exists in calendar' }],
+            duplicates: [{ id: '3', count: 2, title }],
+            missingCount: 1,
+            orphanedCount: 1,
+            duplicateCount: 1
+          }
+        }
+      }
+      const report = formatAuditReport(results)
+      expect(report).toContain('Title: Sync https://example.zoom.us/j/1000000001 Passcode: [hidden]')
+      expect(report).not.toContain(PASS)
+      expect(report).not.toContain('pwd=')
+    })
+
+    it('audit.js prints every title through hideMeetingSecrets', () => {
+      const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'lib', 'audit.js'), 'utf8')
+      expect(src).not.toMatch(/\$\{item\.title\}/)
+    })
+
     it('should format report with perfect coverage', () => {
       const results = {
         emails: {

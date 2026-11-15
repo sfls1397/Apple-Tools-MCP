@@ -134,6 +134,13 @@ describe('maskPasscodes', () => {
     ['+15550100,,1000000001#,,,,*424242# US', '+15550100,,1000000001#,,,,*[hidden]# US'],
     [`Passcode ${PASS}`, 'Passcode [hidden]'],
     [`Enter meeting passcode ${PASS} when prompted`, 'Enter meeting passcode [hidden] when prompted'],
+    [`Host key: ${PASS}`, 'Host key: [hidden]'],
+    [`Access code: ${PASS}`, 'Access code: [hidden]'],
+    [`Access code ${PASS}`, 'Access code [hidden]'],
+    [`PIN is ${PASS}#`, 'PIN is [hidden]'],
+    [`Meeting PIN: ${PASS}`, 'Meeting PIN: [hidden]'],
+    [`Passcode\uFF1A${PASS}`, 'Passcode\uFF1A[hidden]'],
+    [`PIN\uFF1A ${PASS}`, 'PIN\uFF1A [hidden]'],
   ]
   for (const [input, want] of cases) {
     it(`hides the passcode in ${JSON.stringify(input.slice(0, 40))}`, () => {
@@ -152,6 +159,10 @@ describe('maskPasscodes', () => {
       'Dial +15550100,,1000000001# US',
       'Password reset meeting tomorrow',
       'Passcode required for the call',
+      'The pin is in the drawer',
+      'Access code required at the gate',
+      'Host key holders meet at noon',
+      'Teams one tap +15550100,,100000001# US',
       '',
     ]) {
       expect(maskPasscodes(text)).toBe(text)
