@@ -15,7 +15,9 @@ import {
   isProcessAlive,
   getTakeoverMutexPath,
   getTakeoverFencePath,
-  DEFAULT_LOCK_TIMEOUT_MS
+  DEFAULT_LOCK_TIMEOUT_MS,
+  LOCK_HOLDER_FRESH_MS,
+  readIndexerLockHolder
 } from '../../lib/indexerLock.js'
 
 const lockSrc = fs.readFileSync(
@@ -729,5 +731,45 @@ describe('createIndexerLock runtime', () => {
     fs.writeFileSync(lockFile, formatLockData(100, 1))
     expect(lock.refresh()).toBe(false)
     expect(fs.readFileSync(lockFile, 'utf8')).toBe(formatLockData(100, 1))
+  })
+})
+
+describe('readIndexerLockHolder (read only, for the stale-index note)', () => {
+  let dir
+  let lockFile
+  beforeEach(() => {
+    ({ dir, lockFile } = makeLockFile())
+  })
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('returns null with no lock file or unreadable contents', () => {
+    expect(readIndexerLockHolder({ lockFile })).toBeNull()
+    fs.writeFileSync(lockFile, '')
+    expect(readIndexerLockHolder({ lockFile })).toBeNull()
+    fs.writeFileSync(lockFile, 'garbage')
+    expect(readIndexerLockHolder({ lockFile })).toBeNull()
+  })
+
+  it('running for a live holder that checked in recently, stuck once it stops, dead for a gone PID', () => {
+    const now = 10_000_000
+    fs.writeFileSync(lockFile, formatLockData(4242, now - 60 * 1000))
+    expect(readIndexerLockHolder({ lockFile, now, isAlive: () => true }))
+      .toEqual({ state: 'running', pid: 4242, checkedInMsAgo: 60 * 1000 })
+    fs.writeFileSync(lockFile, formatLockData(4242, now - LOCK_HOLDER_FRESH_MS - 1))
+    expect(readIndexerLockHolder({ lockFile, now, isAlive: () => true }).state).toBe('stuck')
+    fs.writeFileSync(lockFile, '4242')
+    expect(readIndexerLockHolder({ lockFile, now, isAlive: () => true }).state).toBe('stuck')
+    fs.writeFileSync(lockFile, formatLockData(4242, now))
+    expect(readIndexerLockHolder({ lockFile, now, isAlive: () => false }).state).toBe('dead')
+  })
+
+  it('this process holding the lock reads as running, and the file is left as it was', () => {
+    const data = formatLockData(process.pid, Date.now())
+    fs.writeFileSync(lockFile, data)
+    expect(readIndexerLockHolder({ lockFile }).state).toBe('running')
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(data)
+    expect(fs.readdirSync(dir)).toEqual(['indexer.lock'])
   })
 })

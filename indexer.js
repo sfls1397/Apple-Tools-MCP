@@ -1056,7 +1056,29 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
     }
   }
 
+  // A full clean rebuild is a finished pass over all three sources, like
+  // indexAll; a partial one leaves the other sources as old as they were.
+  if (isFullIndexPass(sources, results.errors)) {
+    try {
+      recordIndexPassTime();
+    } catch (e) {
+      console.error(`Could not record the index pass time: ${e.message}`);
+    }
+  }
+
   return results;
+}
+
+/** True when a pass covered emails, messages and calendar with no error. */
+export function isFullIndexPass(sources, errors = []) {
+  const covered = new Set(Array.isArray(sources) ? sources : []);
+  return INDEX_TABLE_NAMES.every((s) => covered.has(s)) && errors.length === 0;
+}
+
+// Readers of the shared index (the HTTP server, lost-lock stdio clients)
+// use this to say when the index has stopped refreshing.
+function recordIndexPassTime() {
+  saveIndexMeta({ ...loadIndexMeta(), lastIndexPassTime: Date.now() });
 }
 
 async function getIndexedIds(tableName, idField) {
@@ -1725,9 +1747,7 @@ export async function indexAll(progressCallback = null) {
 
   await maybeOptimizeIndex({ emails: emailResult, messages: messageResult, calendar: calendarResult });
 
-  // Readers of the shared index (the HTTP server, lost-lock stdio clients)
-  // use this to say when the index has stopped refreshing.
-  saveIndexMeta({ ...loadIndexMeta(), lastIndexPassTime: Date.now() });
+  recordIndexPassTime();
 
   console.error("Full index complete.");
   return { emails: emailResult, messages: messageResult, calendar: calendarResult };
