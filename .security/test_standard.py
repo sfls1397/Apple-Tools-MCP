@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Security regression probes use only disposable repositories and synthetic data."""
+import contextlib
 import importlib.util
+import io
 import os
 from pathlib import Path
 import shutil
@@ -8,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 def module(name, filename):
@@ -177,6 +180,64 @@ class Standard(unittest.TestCase):
             (tree / '.security/local-gate.json').write_text('{"tests": ["npm test"]}')
             with self.assertRaises(runner.GateError):
                 runner.steps(tree)
+
+    def test_pr_head_lag_after_a_push_is_waited_out(self):
+        # PR 62: right after a push GitHub's PR head still showed the old commit and the gate refused (Toolbox 245897ac).
+        runner = module('local_gate_head', 'local-gate.py')
+        local, old = 'a' * 40, 'b' * 40
+
+        class Clock:
+            def __init__(self):
+                self.now, self.sleeps = 0.0, 0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.now += seconds
+                self.sleeps += 1
+
+        def check(heads, remote, state='OPEN'):
+            """Run check_pr against GitHub answering these heads in turn and origin's branch at remote."""
+            views, clock = iter(heads), Clock()
+            calls = {'view': 0, 'ls-remote': 0}
+
+            def fake_gh(args):
+                calls['view'] += 1
+                return {'headRefOid': next(views), 'headRefName': 'probe', 'baseRefName': 'main',
+                        'state': state, 'isDraft': False}
+
+            def fake_out(args, cwd=None):
+                calls['ls-remote'] += 1
+                self.assertEqual(args, ['git', 'ls-remote', 'origin', 'refs/heads/probe'])
+                if remote is None:
+                    raise runner.GateError('Command failed: git ls-remote origin')
+                return remote + '\trefs/heads/probe'
+            with mock.patch.object(runner, 'gh', fake_gh), mock.patch.object(runner, 'out', fake_out), \
+                    mock.patch.object(runner, 'time', clock), contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    return runner.check_pr('7', local)['headRefOid'], calls, clock
+                except runner.GateError as error:
+                    return str(error), calls, clock
+
+        # Already the PR head: no origin read, no wait.
+        result, calls, clock = check([local], local)
+        self.assertEqual((result, calls, clock.sleeps), (local, {'view': 1, 'ls-remote': 0}, 0))
+        # Pushed, and GitHub catches up on the third recheck.
+        result, calls, clock = check([old, old, old, local], local)
+        self.assertEqual((result, calls['view'], clock.sleeps), (local, 4, 3))
+        # Pushed, and GitHub never catches up: refuse after the wait, saying so.
+        result, calls, clock = check([old] * 100, local)
+        self.assertIn("PR head has not caught up with the pushed branch after %ds" % runner.HEAD_WAIT, result)
+        self.assertEqual(clock.sleeps, runner.HEAD_WAIT)
+        # Not pushed (origin holds another commit) or origin unreadable: refuse at once, as before.
+        for remote in [old, None]:
+            result, calls, clock = check([old] * 100, remote)
+            self.assertEqual(result, 'Check out the PR head first; the local commit is not the PR head')
+            self.assertEqual((calls['view'], clock.sleeps), (1, 0))
+        # A closed PR never waits.
+        result, calls, clock = check([old] * 100, local, state='CLOSED')
+        self.assertEqual((result, calls['ls-remote'], clock.sleeps), ('PR must be open, ready, and target main', 0, 0))
 
 
 if __name__ == '__main__':
