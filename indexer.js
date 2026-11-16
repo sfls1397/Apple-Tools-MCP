@@ -1051,6 +1051,11 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
         const indexResult = await indexCalendar();
         results.indexed.calendar = indexResult;
       }
+      // A source whose read was skipped (lost Full Disk Access, no store)
+      // indexed nothing after its table was cleared: that is not a clean
+      // rebuild, so it must not count toward a full pass.
+      const skipped = results.indexed[source]?.error;
+      if (skipped) results.errors.push({ source, phase: "read", error: skipped });
     } catch (e) {
       results.errors.push({ source, phase: "index", error: e.message });
     }

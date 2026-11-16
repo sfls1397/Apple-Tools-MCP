@@ -26,6 +26,8 @@ import tempfile
 import time
 
 CONTEXT = 'local-gate'
+# Seconds to wait for GitHub's PR head to catch up with a branch that was just pushed (PR 62's gate refused too soon).
+HEAD_WAIT = 15
 ROOT = Path(__file__).resolve().parent.parent
 PINS = {'gitleaks': ('.cursor/install-gitleaks.sh', ['gitleaks', 'version']),
         'semgrep': ('.cursor/install-semgrep.sh', ['semgrep', '--version']),
@@ -147,6 +149,37 @@ def record(repo, sha, number, results, hashes):
     return passed
 
 
+def pushed_tip(branch):
+    """The commit the origin branch points at now, or None when it can't be read."""
+    try:
+        line = out(['git', 'ls-remote', 'origin', 'refs/heads/' + branch])
+    except GateError:
+        return None
+    return line.split('\t')[0] or None
+
+
+def check_pr(number, local):
+    """The open PR to main whose head is the local commit. Right after a push (a force-push too), GitHub's PR
+    head can lag the branch by a few seconds: when the origin branch already holds the local commit, recheck
+    the PR head for up to HEAD_WAIT seconds before refusing (ported from Toolbox commit 245897ac)."""
+    view = ['pr', 'view', number, '--json', 'headRefOid,headRefName,baseRefName,state,isDraft']
+    pr = gh(view)
+    if pr['state'] != 'OPEN' or pr['isDraft'] or pr['baseRefName'] != 'main':
+        raise GateError('PR must be open, ready, and target main')
+    if pr['headRefOid'] != local and pushed_tip(pr['headRefName']) == local:
+        print("Waiting up to %ds for GitHub's PR head to catch up with the push" % HEAD_WAIT)
+        deadline = time.monotonic() + HEAD_WAIT
+        while pr['headRefOid'] != local and time.monotonic() < deadline:
+            time.sleep(1)
+            pr = gh(view)
+        if pr['headRefOid'] != local:
+            raise GateError("GitHub's PR head has not caught up with the pushed branch after %ds; re-run the gate"
+                            % HEAD_WAIT)
+    if pr['headRefOid'] != local:
+        raise GateError('Check out the PR head first; the local commit is not the PR head')
+    return pr
+
+
 def main():
     if len(sys.argv) != 2 or not re.fullmatch(r'[1-9][0-9]*|deploy', sys.argv[1]):
         raise GateError('Use local-gate.py PR_NUMBER (from the reviewed PR checkout) or local-gate.py deploy')
@@ -157,11 +190,7 @@ def main():
     number = None
     if sys.argv[1] != 'deploy':
         number = sys.argv[1]
-        pr = gh(['pr', 'view', number, '--json', 'headRefOid,baseRefName,state,isDraft'])
-        if pr['state'] != 'OPEN' or pr['isDraft'] or pr['baseRefName'] != 'main':
-            raise GateError('PR must be open, ready, and target main')
-        if local != pr['headRefOid']:
-            raise GateError('Check out the PR head first; the local commit is not the PR head')
+        check_pr(number, local)
     with tempfile.TemporaryDirectory(prefix='local-gate-logs-') as logs:
         try:
             results, *hashes = run_gate(local, Path(logs), env)
