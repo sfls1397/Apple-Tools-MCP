@@ -140,4 +140,39 @@ describe('rebuildIndex records the index pass time', () => {
     expect(result.indexed.emails.error).toBeTruthy()
     expect(readMeta().lastIndexPassTime).toBe(1000)
   })
+
+  it.each(Array.from({ length: 8 }, (_, readableMask) => [readableMask]))(
+    'a regular pass counts readable stores, including empty ones (mask %i)',
+    async (readableMask) => {
+      makeStores()
+      for (const [storeIndex, store] of STORES.entries()) {
+        if (!(readableMask & (1 << storeIndex))) {
+          fs.rmSync(path.join(tmp, store), { recursive: true, force: true })
+        }
+      }
+      fs.writeFileSync(metaFile, JSON.stringify({ lastIndexPassTime: 1000, lastIndexOptimizeTime: 7 }))
+      const before = Date.now()
+      const result = await indexer.indexAll()
+      expect(Object.values(result).filter((source) => !source.error)).toHaveLength(
+        STORES.filter((_, storeIndex) => readableMask & (1 << storeIndex)).length
+      )
+      const meta = readMeta()
+      expect(meta.lastIndexOptimizeTime).toBe(7)
+      if (readableMask === 0) {
+        expect(meta.lastIndexPassTime).toBe(1000)
+      } else {
+        expect(meta.lastIndexPassTime).toBeGreaterThanOrEqual(before)
+      }
+      expect(indexer.getLastIndexPassTime()).toBe(meta.lastIndexPassTime)
+    }
+  )
+
+  it('a regular pass with no readable stores does not create a first pass time', async () => {
+    removeStores()
+    fs.rmSync(metaFile, { force: true })
+    const result = await indexer.indexAll()
+    expect(Object.values(result).every((source) => source.error)).toBe(true)
+    expect(readMeta().lastIndexPassTime).toBeUndefined()
+    expect(indexer.getLastIndexPassTime()).toBeNull()
+  })
 })

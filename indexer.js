@@ -1752,7 +1752,9 @@ export async function indexAll(progressCallback = null) {
 
   await maybeOptimizeIndex({ emails: emailResult, messages: messageResult, calendar: calendarResult });
 
-  recordIndexPassTime();
+  if ([emailResult, messageResult, calendarResult].some(result => !result.error)) {
+    recordIndexPassTime();
+  }
 
   console.error("Full index complete.");
   return { emails: emailResult, messages: messageResult, calendar: calendarResult };
