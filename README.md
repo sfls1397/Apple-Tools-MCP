@@ -212,6 +212,8 @@ Under a secrets manager's runtime injection (for example `infisical run -- apple
 
 The HTTP server never indexes and never takes `indexer.lock`: it serves the index the indexer daemon keeps fresh, so run the indexer too. It also refuses `rebuild_index`; rebuild from a stdio client or as described under the index rebuild below. Restarting either one in any order is safe. When the last finished index pass (`lastIndexPassTime` in `index-meta.json`) is older than three refresh intervals (at least 15 minutes), every index-backed reply starts with a note giving its age, so a stopped indexer shows up instead of serving a stale index silently. The note says why from `indexer.lock`: a live indexer that keeps checking in is still refreshing (a rebuild, a long first pass, or catching up after the Mac slept), one that stopped checking in may be stuck, and with no live holder the indexer may be down. A clean `rebuild_index` of all three sources counts as a finished pass; one where a source could not be read (no Full Disk Access, or no Mail, Messages or Calendar store) does not, and lists that source in its errors.
 
+A regular background refresh counts as a finished pass when at least one source was readable, even if it contained no items. If every source read was skipped, it leaves `lastIndexPassTime` alone rather than hiding a stale index. A missing individual store, such as Calendar on a Mac that does not use it, does not stop the other sources from counting.
+
 An example LaunchAgent is `examples/com.apple-tools-http.plist`. How to point Claude and other clients at it, including `apple-tools-http-proxy`, is in `examples/mcp-client.md`.
 
 ## Index commands
