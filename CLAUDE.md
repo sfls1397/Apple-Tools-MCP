@@ -50,6 +50,10 @@ Detects `--mode=indexer` / `--mode indexer` / `apple-tools-indexer` bin so the s
 
 Acquire/release/heartbeat for `~/.apple-tools-mcp/indexer.lock`. Never steals from a live PID (even if the timestamp is old). Dead-PID takeover uses a `wx` mutex beside the lock (`indexer.lock.takeover`), re-reads, unlinks only if contents are still the expected dead lock, then `wx`-creates — never renames the live path. A crash-orphaned `.takeover` file is not stolen with compare-then-unlink; waiters `wx` a fence named by the dead PID. Empty or unparsable mutex/lock bytes are unknown (no fence, no steal), so a peer cannot sneak past an in-flight `wx` or heartbeat truncate. MCP local-fallback starts the same lock heartbeat as the daemon.
 
+### lib/orphanWorker.js -- Orphaned index worker reaping
+
+The indexer daemon keeps the write bridge in its parent and indexes in one forked worker (`--mode=indexer --indexer-worker`). A worker whose daemon died abruptly with its event loop blocked keeps `indexer.lock`, and launchd does not kill it: on a job's death launchd signals the rest of the process group but never escalates to SIGKILL. Before each worker start the daemon stops the lock holder only if its parent is PID 1, it runs as this user and its command line has both worker flags: SIGTERM, then SIGKILL after 5 s once the same checks pass again. Nothing else that holds the lock is touched, and the worker never serves writes.
+
 ### lib/indexerRuntime.js -- Daemon vs stdio control flow
 
 Stdin-exit policy, overlapping-cycle skip, lock retention across daemon cycles, MCP local-fallback startup, and daemon lock retry.
@@ -135,4 +139,5 @@ Reads and writes hit different gates and must not be conflated. Contacts and Cal
 - **CI/CD**: GitHub Release `published` triggers npm Trusted Publishing through OIDC after the macOS unit/security test gate. Privacy scanning covers full Git history on push/PR and package contents before publish.
 - **Security pattern**: All subprocess execution goes through `lib/shell.js` wrappers with `shell: false`; all user input goes through `lib/validators.js`
 - **Test graceful skipping**: Tests use `describe.skipIf(!condition)` to skip when macOS data sources are unavailable
+- **Daemon mode changes**: `tests/unit/write-tools.test.js` (`only the indexer daemon serves the write bridge`) asserts the text of the `index.js` daemon startup branch. Run it before the first exact-head gate whenever you split or rename a daemon mode. `tests/unit/indexer-bridge-isolation.test.js` is the production-entrypoint regression (disposable HOME, stalled or blocked index worker, `dry_run` mail preview only, never a send); keep it passing and extend it rather than replacing it.
 - **Caching pattern**: In-memory `Map`-based caches with TTL expiry and max-entry limits throughout `search.js` and `contacts.js`

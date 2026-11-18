@@ -19,6 +19,7 @@ import { loadResolvedIndexInterval, logResolvedInterval, resolveHttpServerConfig
 import { acceptedHttpAuthTokens, loadOrCreateHttpAuthToken, verifyAuthHeader } from "./lib/httpAuth.js";
 import { createHttpRequestHandler } from "./lib/httpTransport.js";
 import { createIndexerLock, DEFAULT_LOCK_HEARTBEAT_MS, readIndexerLockHolder } from "./lib/indexerLock.js";
+import { reapOrphanedIndexWorker } from "./lib/orphanWorker.js";
 import {
   shouldConnectMcpStdio,
   bindStdinCloseExit,
@@ -132,7 +133,11 @@ async function startWriteBridge() {
   }
 }
 
-function startIndexerWorker() {
+async function startIndexerWorker() {
+  if (shuttingDown) return;
+  // A worker orphaned by an abrupt parent death with its event loop blocked
+  // still holds indexer.lock; launchd never kills it (lib/orphanWorker.js).
+  await reapOrphanedIndexWorker({ lockFile: LOCK_FILE, log: (msg) => console.error(msg) });
   if (shuttingDown) return;
   const worker = fork(new URL("./index.js", import.meta.url), ["--mode=indexer", "--indexer-worker"], {
     stdio: ["ignore", "ignore", "inherit", "ipc"]
@@ -217,7 +222,8 @@ import {
   searchContacts,
   lookupContact,
   getContactIdentifiers,
-  getLastIndexPassTime
+  getLastIndexPassTime,
+  getLastSkippedIndexPassTime
 } from "./indexer.js";
 import {
   searchEmails,
@@ -449,6 +455,7 @@ function withStaleIndexNote(toolName, text) {
   try {
     note = staleIndexNote({
       lastPassTime: getLastIndexPassTime(),
+      lastSkippedPassTime: getLastSkippedIndexPassTime(),
       intervalMs: INDEX_INTERVAL,
       readHolder: () => readIndexerLockHolder({ lockFile: LOCK_FILE })
     });
