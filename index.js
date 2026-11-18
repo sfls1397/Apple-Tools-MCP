@@ -10,6 +10,7 @@ import {
 import http from "http";
 import fs from "fs";
 import path from "path";
+import { fork } from "node:child_process";
 import { validateEmailPath, stripHtmlTags, unfoldRfc822Headers, validateLimit, validateDaysBack, validateWeekOffset, toUnixMillis } from "./lib/validators.js";
 import { cycleEndFlags, indexUnavailableMessage, indexQueryGate, staleIndexNote } from "./lib/indexGate.js";
 import { isIndexerMode, isPermissionsMode, isHttpMode, isHttpTokenMode } from "./lib/processMode.js";
@@ -55,6 +56,7 @@ const PACKAGE_VERSION = JSON.parse(
 // Token CLI: `apple-tools-mcp http-token` — short-lived, prints the token.
 const PERMISSIONS_MODE = isPermissionsMode();
 const INDEXER_MODE = isIndexerMode();
+const INDEXER_WORKER = INDEXER_MODE && process.connected && process.argv.includes("--indexer-worker");
 const HTTP_MODE = isHttpMode();
 const HTTP_TOKEN_MODE = isHttpTokenMode();
 const resolvedIndexInterval = loadResolvedIndexInterval();
@@ -83,6 +85,7 @@ function acquireLock() {
 }
 
 function releaseLock() {
+  if (INDEXER_MODE && !INDEXER_WORKER) return;
   indexerLock.release();
   ownsIndexLock = indexerLock.ownsLock;
   if (!ownsIndexLock) {
@@ -102,6 +105,8 @@ function stopLockHeartbeat() {
 // granted Contacts/Calendar automation (see lib/writeBridge.js).
 const WRITE_SOCKET_PATH = defaultSocketPath();
 let writeBridge = null;
+let indexerWorker = null;
+let shuttingDown = false;
 
 function stopWriteBridge() {
   closeEventKitSession();
@@ -127,35 +132,47 @@ async function startWriteBridge() {
   }
 }
 
-function shutdownIndexing(exitCode) {
+function startIndexerWorker() {
+  if (shuttingDown) return;
+  const worker = fork(new URL("./index.js", import.meta.url), ["--mode=indexer", "--indexer-worker"], {
+    stdio: ["ignore", "ignore", "inherit", "ipc"]
+  });
+  indexerWorker = worker;
+  worker.on("spawn", () => console.error(`Index worker started (PID ${worker.pid})`));
+  worker.on("error", (error) => console.error(`Index worker error: ${error.message}`));
+  worker.once("close", (code, signal) => {
+    indexerWorker = null;
+    if (shuttingDown) return;
+    console.error(`Index worker exited (${signal ?? code}); restarting in ${LOCK_RETRY_MS / 1000}s`);
+    setTimeout(startIndexerWorker, LOCK_RETRY_MS);
+  });
+}
+
+function shutdownIndexing(exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   stopBackgroundIndexing();
   stopLockHeartbeat();
   stopWriteBridge();
   releaseLock();
-  if (exitCode !== undefined) {
-    process.exit(exitCode);
-  }
+  const worker = indexerWorker;
+  if (!worker?.pid || worker.exitCode !== null || worker.signalCode !== null) process.exit(exitCode);
+  worker.once("exit", () => process.exit(exitCode));
+  worker.kill("SIGTERM");
+  setTimeout(() => worker.kill("SIGKILL"), 2000);
+  setTimeout(() => process.exit(exitCode), 3000);
 }
 
 // Clean up lock and timer on exit
 process.on("exit", () => {
+  indexerWorker?.kill("SIGKILL");
   stopBackgroundIndexing();
   stopLockHeartbeat();
   stopWriteBridge();
   releaseLock();
 });
-process.on("SIGINT", () => {
-  shutdownIndexing();
-  process.exit();
-});
-process.on("SIGTERM", () => {
-  shutdownIndexing();
-  process.exit();
-});
-process.on("SIGHUP", () => {
-  shutdownIndexing();
-  process.exit();
-});
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => shutdownIndexing());
+if (INDEXER_WORKER) process.once("disconnect", () => shutdownIndexing());
 
 // Handle uncaught errors - cleanup before crashing
 process.on("uncaughtException", (err) => {
@@ -455,7 +472,7 @@ function waitForLockAndStartDaemon() {
 
 // Initialize and start indexing
 async function initializeIndexing() {
-  if (INDEXER_MODE) {
+  if (INDEXER_MODE && !INDEXER_WORKER) {
     console.error(`Apple Tools MCP indexer running (v${PACKAGE_VERSION})`);
     logResolvedInterval(resolvedIndexInterval);
     loggedIndexInterval = true;
@@ -464,6 +481,8 @@ async function initializeIndexing() {
     // This happens before any index work: writes must stay available even if
     // the vector index is missing, locked, or unreadable.
     await startWriteBridge();
+    startIndexerWorker();
+    return;
   }
 
   try {

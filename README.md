@@ -340,7 +340,9 @@ Deletes need `confirm: true`: `mail_trash`, `calendar_remove`, `contacts_remove`
 
 Send and reconciliation results expose `structuredContent.mail_send` (schema version 1), separating suppression without current handler entry, attempted-but-unresolved transport, accepted historical replay, terminal suppression, identity/writer/evidence refusal and uncertain bridge handoff. Suppression and uncertainty authorize no retry or page-ledger update. Historical send replay also sets MCP `isError` so text-only clients cannot mistake it for a newly sent message. Global writer locks/fences do not expire or auto-recover after a crash; availability recovery requires a separate explicit maintenance decision.
 
-A bridge request that expires before execution is rejected. After a handoff with an unknown outcome, local fallback is suppressed. The System Events preflight allows 10 seconds (12-second process cap); timeout reports `probe_timeout` and unknown permission status, separately from an explicit permission denial.
+The LaunchAgent's Node process serves the write socket; a separate child holds `indexer.lock` and refreshes the search index. Slow or stalled indexing cannot block the writer's event loop. If the index child exits, the daemon starts another without replacing the write socket.
+
+A bridge request has a 90-second total response deadline, not an idle timeout. An expired request that has not started is rejected. After a handoff with an unknown outcome, local fallback is suppressed. The System Events preflight allows 10 seconds (12-second process cap); timeout reports `probe_timeout` and unknown permission status, separately from an explicit permission denial.
 
 Sends to more than one person need `confirm: true`: `mail_send` and `mail_forward` when To, Cc, and Bcc add up to more than one address, `mail_reply` with `reply_all: true`, and `messages_send` to several people or to a group chat. A single recipient sends on the first call. `mail_draft` never sends, so it does not need that confirm.
 

@@ -14,6 +14,8 @@ import { describe, it, expect, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import net from 'node:net'
+import { once } from 'node:events'
 import {
   startWriteBridgeServer,
   requestWriteViaBridge,
@@ -129,6 +131,31 @@ describe('write bridge transport', () => {
     const result = await requestWriteViaBridge({ socketPath: missing, tool: 'mail_send', args: {} })
     expect(result.delivered).toBe(false)
     expect(result.error).toBeTruthy()
+  })
+
+  it('times out from request start even if the peer drips response bytes', async () => {
+    const dir = fs.mkdtempSync('/tmp/atm-deadline-')
+    const socketPath = path.join(dir, WRITE_SOCKET_NAME)
+    const server = net.createServer(socket => {
+      socket.write(' ')
+      const drip = setInterval(() => socket.write(' '), 15)
+      const end = setTimeout(() => socket.end('{"ok":true}\n'), 850)
+      socket.on('close', () => {
+        clearInterval(drip)
+        clearTimeout(end)
+      })
+      socket.on('error', () => socket.destroy())
+    })
+    try {
+      server.listen(socketPath)
+      await once(server, 'listening')
+      await expect(requestWriteViaBridge({ socketPath, tool: 'mail_send', timeoutMs: 300 })).resolves.toMatchObject({
+        delivered: false, error: 'write bridge timed out', mayHaveStarted: true
+      })
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('takes over a stale socket file left by a crash', async () => {
