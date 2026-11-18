@@ -2810,9 +2810,10 @@ describe('write tool definitions', () => {
 
   it('only the indexer daemon serves the write bridge', () => {
     const indexSrc = fs.readFileSync(path.join(root, 'index.js'), 'utf8')
-    const daemonBranch = indexSrc.slice(indexSrc.indexOf('if (INDEXER_MODE) {'))
+    const daemonBranch = indexSrc.match(/if \(INDEXER_MODE && !INDEXER_WORKER\) \{([\s\S]*?)\n  \}/)?.[1]
 
     expect(daemonBranch).toContain('await startWriteBridge()')
+    expect(daemonBranch.indexOf('startIndexerWorker()')).toBeGreaterThan(daemonBranch.indexOf('await startWriteBridge()'))
     expect(indexSrc).toContain('stopWriteBridge()')
   })
 
