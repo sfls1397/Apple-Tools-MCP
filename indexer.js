@@ -1083,7 +1083,18 @@ export function isFullIndexPass(sources, errors = []) {
 // Readers of the shared index (the HTTP server, lost-lock stdio clients)
 // use this to say when the index has stopped refreshing.
 function recordIndexPassTime() {
-  saveIndexMeta({ ...loadIndexMeta(), lastIndexPassTime: Date.now() });
+  const { lastSkippedIndexPassTime, ...meta } = loadIndexMeta();
+  saveIndexMeta({ ...meta, lastIndexPassTime: Date.now() });
+}
+
+// A regular pass that finished with every source read skipped. Never a
+// success time: it only lets readers say the index has never refreshed.
+function recordSkippedIndexPass() {
+  try {
+    saveIndexMeta({ ...loadIndexMeta(), lastSkippedIndexPassTime: Date.now() });
+  } catch (e) {
+    console.error(`Could not record the skipped index pass: ${e.message}`);
+  }
 }
 
 async function getIndexedIds(tableName, idField) {
@@ -1754,6 +1765,8 @@ export async function indexAll(progressCallback = null) {
 
   if ([emailResult, messageResult, calendarResult].some(result => !result.error)) {
     recordIndexPassTime();
+  } else {
+    recordSkippedIndexPass();
   }
 
   console.error("Full index complete.");
@@ -1791,6 +1804,15 @@ async function maybeOptimizeIndex(results) {
  */
 export function getLastIndexPassTime() {
   const t = loadIndexMeta().lastIndexPassTime;
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+/**
+ * When the last regular pass that could read no source at all finished, from
+ * index-meta.json; null when none is recorded. Cleared by a finished pass.
+ */
+export function getLastSkippedIndexPassTime() {
+  const t = loadIndexMeta().lastSkippedIndexPassTime;
   return Number.isFinite(t) && t > 0 ? t : null;
 }
 

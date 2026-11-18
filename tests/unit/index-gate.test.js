@@ -286,6 +286,28 @@ describe('staleIndexNote (index-backed replies say when the shared index stopped
     expect(staleIndexNote({ lastPassTime: now - 50 * 60 * 1000, now, intervalMs: 20 * 60 * 1000 })).toBe(null)
   })
 
+  it('with no finished pass, says the index never refreshed only after a pass skipped every source', () => {
+    for (const skipped of [undefined, null, 0, -1, Number.NaN]) {
+      expect(staleIndexNote({ lastPassTime: null, lastSkippedPassTime: skipped, now, intervalMs: FIVE_MIN })).toBe(null)
+    }
+    let reads = 0
+    const note = staleIndexNote({
+      lastPassTime: undefined,
+      lastSkippedPassTime: now - 60 * 1000,
+      now,
+      intervalMs: FIVE_MIN,
+      readHolder: () => { reads += 1; return null }
+    })
+    expect(note).toContain('never finished a refresh')
+    expect(note).toContain('2026-11-13T17:59:00.000Z')
+    expect(note).toContain('could not read Mail, Messages or Calendar')
+    expect(note).toContain('Full Disk Access')
+    expect(note).not.toMatch(/\u2014|\u2013| - /)
+    expect(reads).toBe(0)
+    // A finished pass wins: a skipped marker never overrides a fresh index.
+    expect(staleIndexNote({ lastPassTime: now - 60 * 1000, lastSkippedPassTime: now, now, intervalMs: FIVE_MIN })).toBe(null)
+  })
+
   it('says nothing when no pass time is known (first run after an upgrade)', () => {
     for (const t of [null, undefined, 0, NaN]) {
       expect(staleIndexNote({ lastPassTime: t, now, intervalMs: FIVE_MIN })).toBe(null)
@@ -340,6 +362,8 @@ describe('index.js adds the stale note to every index-backed tool reply', () => 
     expect(src).toContain('text: withStaleIndexNote(name, result)')
     expect(src).toContain('readHolder: () => readIndexerLockHolder({ lockFile: LOCK_FILE })')
     expect(indexerSrc).toMatch(/if \(isFullIndexPass\(sources, results\.errors\)\)/)
-    expect(indexerSrc).toMatch(/saveIndexMeta\(\{ \.\.\.loadIndexMeta\(\), lastIndexPassTime: Date\.now\(\) \}\)/)
+    expect(indexerSrc).toMatch(/saveIndexMeta\(\{ \.\.\.meta, lastIndexPassTime: Date\.now\(\) \}\)/)
+    expect(indexerSrc).toMatch(/saveIndexMeta\(\{ \.\.\.loadIndexMeta\(\), lastSkippedIndexPassTime: Date\.now\(\) \}\)/)
+    expect(src).toContain('lastSkippedPassTime: getLastSkippedIndexPassTime()')
   })
 })

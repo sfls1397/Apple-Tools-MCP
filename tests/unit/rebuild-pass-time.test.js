@@ -175,4 +175,27 @@ describe('rebuildIndex records the index pass time', () => {
     expect(readMeta().lastIndexPassTime).toBeUndefined()
     expect(indexer.getLastIndexPassTime()).toBeNull()
   })
+
+  it('a regular pass with no readable stores records only a skipped-pass time', async () => {
+    removeStores()
+    fs.writeFileSync(metaFile, JSON.stringify({ lastIndexOptimizeTime: 7 }))
+    const before = Date.now()
+    await indexer.indexAll()
+    const meta = readMeta()
+    expect(meta.lastIndexPassTime).toBeUndefined()
+    expect(meta.lastSkippedIndexPassTime).toBeGreaterThanOrEqual(before)
+    expect(meta.lastIndexOptimizeTime).toBe(7)
+    expect(indexer.getLastSkippedIndexPassTime()).toBe(meta.lastSkippedIndexPassTime)
+  })
+
+  it('a finished pass clears the skipped-pass time', async () => {
+    makeStores()
+    fs.writeFileSync(metaFile, JSON.stringify({ lastSkippedIndexPassTime: 1000, lastIndexOptimizeTime: 7 }))
+    await indexer.indexAll()
+    const meta = readMeta()
+    expect(meta.lastIndexPassTime).toBeGreaterThan(1000)
+    expect(meta.lastSkippedIndexPassTime).toBeUndefined()
+    expect(meta.lastIndexOptimizeTime).toBe(7)
+    expect(indexer.getLastSkippedIndexPassTime()).toBeNull()
+  })
 })
