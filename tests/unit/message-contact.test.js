@@ -1,9 +1,3 @@
-/**
- * Unit tests for Messages contact matching and from-me peer naming.
- *
- * Contacts lookups are injected fakes (555 numbers), so these need no
- * AddressBook and no chat.db.
- */
 
 import { describe, it, expect } from 'vitest'
 import { createMessageContactMatcher, describeMessagePeer } from '../../lib/messageContact.js'

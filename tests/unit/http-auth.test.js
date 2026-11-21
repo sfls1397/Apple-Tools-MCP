@@ -37,7 +37,6 @@ describe('loadOrCreateHttpAuthToken', () => {
     expect(writes).toHaveLength(1)
     expect(writes[0][1]).toEqual(['-i'])
     expect(JSON.stringify(writes[0][1])).not.toContain(result.token)
-    // Generation guidance must keep the token out of logs.
     expect(log.mock.calls.some(([msg]) => msg.includes(result.token))).toBe(false)
   })
 
@@ -49,7 +48,6 @@ describe('loadOrCreateHttpAuthToken', () => {
 
     expect(result.generated).toBe(true)
     expect(result.token).toBe('1'.repeat(64))
-    // Force-new skips credential reads; compilation and the stdin write remain.
     expect(execFileSync.mock.calls.some(([, args]) => args[0] === 'find-generic-password')).toBe(false)
     expect(execFileSync.mock.calls.filter(([, , options]) => options?.input?.includes(result.token))).toHaveLength(1)
   })
@@ -101,10 +99,6 @@ describe('verifyAuthHeader', () => {
   })
 })
 
-// Infisical pilot (R100; Peter: start the Infisical migration, about 8:50 AM CT Nov 11 2026; Toolbox board job
-// mcp:9ac156f9-5029-473b-8a4f-7aa4dee11333): under `infisical run` the server takes its token from the environment,
-// never touching Keychain, and during a rotation also accepts the previous token until clients have switched.
-// Token values here are fake fixtures built at run time.
 describe('HTTP auth token from the environment (infisical run)', () => {
   const fake = (digit) => String(digit).repeat(64)
 
@@ -128,7 +122,6 @@ describe('HTTP auth token from the environment (infisical run)', () => {
     expect(acceptedHttpAuthTokens(fake(4), env)).toEqual([fake(4), fake(5)])
     expect(acceptedHttpAuthTokens(fake(4), { APPLE_TOOLS_HTTP_TOKEN: fake(4) })).toEqual([fake(4)])
     expect(acceptedHttpAuthTokens(fake(4), { APPLE_TOOLS_HTTP_TOKEN: fake(4), APPLE_TOOLS_HTTP_TOKEN_PREVIOUS: fake(4) })).toEqual([fake(4)])
-    // The previous token is a rotation overlap for the env token only; a Keychain-run server never takes it.
     expect(acceptedHttpAuthTokens(fake(4), { APPLE_TOOLS_HTTP_TOKEN_PREVIOUS: fake(5) })).toEqual([fake(4)])
     const accepted = acceptedHttpAuthTokens(fake(4), env)
     expect(verifyAuthHeader(`Bearer ${fake(4)}`, accepted)).toBe(true)

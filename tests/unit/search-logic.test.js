@@ -1,25 +1,17 @@
-/**
- * Unit tests for search logic in search.js
- * Tests query expansion, negation parsing, keyword extraction, hybrid scoring, etc.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs'
 
-// ============ QUERY EXPANSION ============
 
 describe('Query Expansion', () => {
-  // Reimplementing expandQuery for testing
   const expandQuery = (query) => {
     const expansions = [query]
 
-    // Simplified (remove time modifiers)
     const simplified = query.replace(/\b(recently|last \w+|this \w+|next \w+|about|regarding)\b/gi, '').trim()
     if (simplified && simplified !== query && simplified.length > 3) {
       expansions.push(simplified)
     }
 
-    // Synonym replacement
     const synonymMap = {
       'meeting': ['call', 'sync', 'standup', 'discussion'],
       'budget': ['financial', 'costs', 'expense', 'spending'],
@@ -80,7 +72,6 @@ describe('Query Expansion', () => {
   })
 })
 
-// ============ NEGATION PARSING ============
 
 describe('Negation Parsing', () => {
   const parseNegation = (query) => {
@@ -146,7 +137,6 @@ describe('Negation Parsing', () => {
   })
 })
 
-// ============ KEYWORD EXTRACTION ============
 
 describe('Keyword Extraction', () => {
   const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
@@ -201,7 +191,6 @@ describe('Keyword Extraction', () => {
   })
 })
 
-// ============ KEYWORD MATCHING ============
 
 describe('Keyword Matching', () => {
   const keywordMatch = (text, keywords) => {
@@ -215,9 +204,9 @@ describe('Keyword Matching', () => {
       const kwLower = kw.toLowerCase()
       const wordBoundary = new RegExp(`\\b${kwLower}\\b`, 'i')
       if (wordBoundary.test(text)) {
-        matches += 1.0 // Exact word match
+        matches += 1.0
       } else if (textLower.includes(kwLower)) {
-        matches += 0.5 // Partial match
+        matches += 0.5
       }
       totalWeight += 1
     }
@@ -232,8 +221,6 @@ describe('Keyword Matching', () => {
 
   it('should return 0.5 for partial match', () => {
     const score = keywordMatch('Meetings are scheduled', ['meeting'])
-    // "meeting" is contained in "Meetings" but not exact word boundary
-    // Actually "Meetings" contains "meeting" as substring, score = 0.5
     expect(score).toBe(0.5)
   })
 
@@ -244,12 +231,12 @@ describe('Keyword Matching', () => {
 
   it('should average scores for multiple keywords', () => {
     const score = keywordMatch('Team meeting about budget', ['meeting', 'budget'])
-    expect(score).toBe(1.0) // Both exact matches
+    expect(score).toBe(1.0)
   })
 
   it('should handle mixed matches', () => {
     const score = keywordMatch('Team meeting', ['meeting', 'budget'])
-    expect(score).toBe(0.5) // 1 match out of 2
+    expect(score).toBe(0.5)
   })
 
   it('should return 0 for empty inputs', () => {
@@ -259,14 +246,12 @@ describe('Keyword Matching', () => {
   })
 })
 
-// ============ FILTER EXTRACTION FROM QUERY ============
 
 describe('Filter Extraction from Natural Language', () => {
   const extractFiltersFromQuery = (query) => {
     const filters = {}
     const q = query.toLowerCase()
 
-    // Extract person names
     const safeQuery = query.length > 500 ? query.substring(0, 500) : query
     const personPatterns = [
       /(?:from|with|to)\s+([A-Z][a-z]{1,20}(?:\s[A-Z][a-z]{1,20})?)/,
@@ -282,7 +267,6 @@ describe('Filter Extraction from Natural Language', () => {
       }
     }
 
-    // Extract date ranges
     const datePatterns = {
       'yesterday': 1,
       'last week': 7,
@@ -304,7 +288,6 @@ describe('Filter Extraction from Natural Language', () => {
       }
     }
 
-    // Extract "last N days" pattern
     const lastNDays = q.match(/last\s+(\d+)\s+days?/i)
     if (lastNDays) {
       filters.daysBack = parseInt(lastNDays[1], 10)
@@ -363,7 +346,6 @@ describe('Filter Extraction from Natural Language', () => {
   })
 })
 
-// ============ MODULE LOAD (no Xenova / sharp native) ============
 
 describe('search.js module load', () => {
   it('imports without loading the Xenova / sharp native', async () => {
@@ -373,7 +355,6 @@ describe('search.js module load', () => {
   })
 })
 
-// ============ PRONOUN RESOLUTION ============
 
 describe('Pronoun Resolution', () => {
   it('should replace a leading pronoun (RegExp lastIndex must not skip it)', async () => {
@@ -413,7 +394,6 @@ describe('Pronoun Resolution', () => {
   })
 })
 
-// ============ RESULT QUALITY ASSESSMENT ============
 
 describe('Result Quality Assessment', () => {
   const MIN_CONFIDENCE_SCORE = 0.5
@@ -442,21 +422,21 @@ describe('Result Quality Assessment', () => {
   })
 
   it('should return low_confidence for poor top score', () => {
-    const results = [{ _distance: 0.8 }] // score = 0.2
+    const results = [{ _distance: 0.8 }]
     const quality = assessResultQuality(results)
     expect(quality.quality).toBe('low_confidence')
     expect(quality.shouldRetry).toBe(true)
   })
 
   it('should return sparse for few results with moderate score', () => {
-    const results = [{ _distance: 0.35 }, { _distance: 0.4 }] // scores 0.65, 0.6
+    const results = [{ _distance: 0.35 }, { _distance: 0.4 }]
     const quality = assessResultQuality(results)
     expect(quality.quality).toBe('sparse')
   })
 
   it('should return good for high-quality results', () => {
     const results = [
-      { _distance: 0.1 }, // score 0.9
+      { _distance: 0.1 },
       { _distance: 0.2 },
       { _distance: 0.3 }
     ]
@@ -466,7 +446,6 @@ describe('Result Quality Assessment', () => {
   })
 })
 
-// ============ QUERY BROADENING ============
 
 describe('Query Broadening', () => {
   const broadenQuery = (query) => {
@@ -496,7 +475,6 @@ describe('Query Broadening', () => {
   })
 })
 
-// ============ RECIPROCAL RANK FUSION ============
 
 describe('Reciprocal Rank Fusion (RRF)', () => {
   const RRF_K = 60
@@ -536,7 +514,6 @@ describe('Reciprocal Rank Fusion (RRF)', () => {
     const merged = reciprocalRankFusion([set1, set2], 'id')
 
     expect(merged.length).toBe(3)
-    // 'b' appears in both sets, should have higher RRF score
     const bResult = merged.find(r => r.id === 'b')
     const aResult = merged.find(r => r.id === 'a')
     expect(bResult._rrfScore).toBeGreaterThan(aResult._rrfScore)
@@ -548,8 +525,6 @@ describe('Reciprocal Rank Fusion (RRF)', () => {
 
     const merged = reciprocalRankFusion([set1, set2], 'id')
 
-    // All items appear in both sets at different ranks
-    // Verify sorted by _rrfScore
     for (let i = 0; i < merged.length - 1; i++) {
       expect(merged[i]._rrfScore).toBeGreaterThanOrEqual(merged[i + 1]._rrfScore)
     }
@@ -571,7 +546,6 @@ describe('Reciprocal Rank Fusion (RRF)', () => {
   })
 })
 
-// ============ JUNK MAIL FILTERING ============
 
 describe('Junk Mail Filtering', () => {
   const EXCLUDED_MAILBOXES = ['junk', 'trash', 'deleted messages', 'spam']

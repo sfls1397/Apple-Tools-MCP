@@ -1,12 +1,3 @@
-/**
- * Stress/Load Testing
- *
- * Tests system behavior under high load:
- * - Large result sets
- * - Rapid sequential queries
- * - Memory pressure
- * - Resource exhaustion
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { connect } from '@lancedb/lancedb'
@@ -28,14 +19,13 @@ describe.skipIf(!indexExists)('Stress: Large Result Sets', () => {
   it('should handle 1000 result limit', async () => {
     const tables = await db.tableNames()
     if (!tables.includes('messages')) {
-      return // Skip if no data
+      return
     }
 
     const tbl = await db.openTable('messages')
     const results = await tbl.query().limit(1000).toArray()
 
     expect(results.length).toBeLessThanOrEqual(1000)
-    // Each result should have expected structure
     if (results.length > 0) {
       expect(results[0]).toHaveProperty('text')
     }
@@ -57,7 +47,6 @@ describe.skipIf(!indexExists)('Stress: Large Result Sets', () => {
 
     console.log(`  → Retrieved ${results.length} emails, memory growth: ${memGrowth.toFixed(1)}MB`)
 
-    // Should not use more than 500MB for results
     expect(memGrowth).toBeLessThan(500)
   })
 
@@ -74,14 +63,12 @@ describe.skipIf(!indexExists)('Stress: Large Result Sets', () => {
     const results = await tbl.query().limit(2000).toArray()
     for (const row of results) {
       count++
-      // Simulate processing each row
       const _ = row.text?.length || 0
     }
 
     const duration = performance.now() - start
     console.log(`  → Processed ${count} rows in ${duration.toFixed(0)}ms`)
 
-    // Should process 2000 rows in under 2 seconds
     expect(duration).toBeLessThan(2000)
   })
 })
@@ -115,7 +102,7 @@ describe.skipIf(!indexExists)('Stress: Rapid Sequential Queries', () => {
     console.log(`  → 100 queries in ${duration.toFixed(0)}ms (${errors.length} errors)`)
 
     expect(errors.length).toBe(0)
-    expect(duration).toBeLessThan(10000) // 10 seconds max
+    expect(duration).toBeLessThan(10000)
   })
 
   it('should maintain consistent performance over 50 iterations', async () => {
@@ -133,7 +120,6 @@ describe.skipIf(!indexExists)('Stress: Rapid Sequential Queries', () => {
       latencies.push(performance.now() - start)
     }
 
-    // Calculate statistics
     const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length
     const sorted = [...latencies].sort((a, b) => a - b)
     const p50 = sorted[Math.floor(sorted.length * 0.5)]
@@ -142,7 +128,6 @@ describe.skipIf(!indexExists)('Stress: Rapid Sequential Queries', () => {
 
     console.log(`  → Latency: avg=${avg.toFixed(1)}ms, p50=${p50.toFixed(1)}ms, p95=${p95.toFixed(1)}ms, p99=${p99.toFixed(1)}ms`)
 
-    // p99 should not be more than 10x average
     expect(p99).toBeLessThan(avg * 10)
   })
 
@@ -154,7 +139,6 @@ describe.skipIf(!indexExists)('Stress: Rapid Sequential Queries', () => {
 
     const tbl = await db.openTable('calendar')
 
-    // Burst of 20 queries
     const start = performance.now()
     const promises = []
     for (let i = 0; i < 20; i++) {
@@ -167,7 +151,7 @@ describe.skipIf(!indexExists)('Stress: Rapid Sequential Queries', () => {
     console.log(`  → 20 parallel queries in ${duration.toFixed(0)}ms`)
 
     expect(results.every(r => Array.isArray(r))).toBe(true)
-    expect(duration).toBeLessThan(5000) // 5 seconds max
+    expect(duration).toBeLessThan(5000)
   })
 })
 
@@ -186,13 +170,12 @@ describe('Stress: Validation Under Load', () => {
     const duration = performance.now() - start
     console.log(`  → 3000 validations in ${duration.toFixed(1)}ms`)
 
-    expect(duration).toBeLessThan(100) // Should be very fast
+    expect(duration).toBeLessThan(100)
   })
 
   it('should handle HTML stripping for large documents', async () => {
     const { stripHtmlTags } = await import('../../lib/validators.js')
 
-    // Generate large HTML document
     const largeHtml = '<div>' + '<p>Paragraph content here.</p>'.repeat(1000) + '</div>'
 
     const start = performance.now()
@@ -262,19 +245,16 @@ describe('Stress: Memory Stability', () => {
   it('should not leak memory during repeated operations', async () => {
     const { validateSearchQuery, escapeSQL, stripHtmlTags } = await import('../../lib/validators.js')
 
-    // Force GC if available
     if (global.gc) global.gc()
 
     const initialMem = process.memoryUsage().heapUsed
 
-    // Run 10000 operations
     for (let i = 0; i < 10000; i++) {
       validateSearchQuery(`query ${i}`)
       escapeSQL(`string ${i}`)
       stripHtmlTags(`<p>text ${i}</p>`)
     }
 
-    // Force GC if available
     if (global.gc) global.gc()
 
     const finalMem = process.memoryUsage().heapUsed
@@ -282,7 +262,6 @@ describe('Stress: Memory Stability', () => {
 
     console.log(`  → Memory growth after 30k operations: ${growth.toFixed(1)}MB`)
 
-    // Should not grow more than 50MB
     expect(growth).toBeLessThan(50)
   })
 
@@ -297,7 +276,6 @@ describe('Stress: Memory Stability', () => {
       })
     }
 
-    // Format results
     const formatted = results.map(r =>
       `[${r.rank}] ${r.text}`
     ).join('\n---\n')

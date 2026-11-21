@@ -1,16 +1,8 @@
-/**
- * Unit tests for data parsing functions in indexer.js
- * Tests email parsing, date conversion, and extraction utilities
- *
- * These tests validate pure functions with inline test data.
- * No mocking required - these are algorithm tests.
- */
 
 import { describe, it, expect } from 'vitest'
 
 describe('Email Parsing Patterns', () => {
   describe('extractEmail pattern', () => {
-    // Testing the regex pattern used in extractEmail
     const extractEmail = (str) => {
       if (!str) return ""
       const match = str.match(/<([^>]+)>/)
@@ -100,7 +92,6 @@ describe('Email Parsing Patterns', () => {
         let d = new Date(dateStr)
         if (!isNaN(d.getTime())) return d.getTime()
 
-        // Handle AppleScript format
         const appleMatch = dateStr.match(/(\w+), (\w+ \d+, \d+) at (\d+:\d+:\d+ [AP]M)/i)
         if (appleMatch) {
           d = new Date(`${appleMatch[2]} ${appleMatch[3]}`)
@@ -156,28 +147,22 @@ describe('Email Parsing Patterns', () => {
 })
 
 describe('Mac Absolute Time Conversion', () => {
-  // Mac Absolute Time epoch: Jan 1, 2001 00:00:00 UTC
   const MAC_ABSOLUTE_EPOCH = 978307200
 
   const macAbsoluteToUnix = (macTime) => {
-    // macTime is in seconds since Jan 1, 2001
-    return (macTime + MAC_ABSOLUTE_EPOCH) * 1000 // Convert to milliseconds
+    return (macTime + MAC_ABSOLUTE_EPOCH) * 1000
   }
 
   it('should convert Mac Absolute Time to Unix timestamp', () => {
-    // Mac Absolute Time for a known date
-    // Jan 1, 2024 00:00:00 UTC = 1704067200 Unix timestamp
-    // 1704067200 - 978307200 = 725760000 Mac Absolute Time
     const macTime = 725760000
     const result = macAbsoluteToUnix(macTime)
     const date = new Date(result)
     expect(date.getUTCFullYear()).toBe(2024)
-    expect(date.getUTCMonth()).toBe(0) // January
+    expect(date.getUTCMonth()).toBe(0)
     expect(date.getUTCDate()).toBe(1)
   })
 
   it('should handle the epoch correctly', () => {
-    // Mac Absolute Time 0 = Jan 1, 2001 00:00:00 UTC
     const result = macAbsoluteToUnix(0)
     const date = new Date(result)
     expect(date.getUTCFullYear()).toBe(2001)
@@ -296,7 +281,6 @@ It has multiple lines.
 })
 
 describe('Phone Number Normalization', () => {
-  // Testing the normalizePhone pattern from contacts.js
   const normalizePhone = (phone) => {
     if (!phone) return ""
     const hasPlus = phone.startsWith("+")

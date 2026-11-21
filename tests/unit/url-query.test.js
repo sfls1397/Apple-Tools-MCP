@@ -1,9 +1,3 @@
-/**
- * Calendar tools print meeting links without their query strings, so a join passcode
- * (zoom.us/j/...?pwd=...) in an event title or location never reaches a chat that reads
- * the calendar (Office Manager reads calendar_date up to four times a day).
- * Synthetic links only: example meeting ids and passcodes, no real ones.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
@@ -98,7 +92,6 @@ describe('calendar formatters print titles and locations without URL queries', (
 })
 
 describe('smart_search and person_search print calendar titles and locations without URL queries', () => {
-  // formatSmartSearchResults and formatPersonSearchResults live inside index.js (not exported).
   const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'index.js'), 'utf8')
   const body = (name) => {
     const start = src.indexOf(`function ${name}(`)

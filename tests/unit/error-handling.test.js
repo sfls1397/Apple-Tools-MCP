@@ -1,12 +1,3 @@
-/**
- * Error Handling Tests - Edge cases and error conditions
- *
- * Tests for graceful handling of:
- * - Missing/unavailable resources
- * - Invalid/malformed input
- * - Boundary conditions
- * - Special characters and unicode
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
@@ -21,7 +12,6 @@ import {
   validateLanceDBId
 } from '../../lib/validators.js'
 
-// ============ EMPTY/NULL INPUT HANDLING ============
 
 describe('Empty and Null Input Handling', () => {
   describe('validateSearchQuery', () => {
@@ -42,7 +32,6 @@ describe('Empty and Null Input Handling', () => {
     })
 
     it('should handle query with only special characters', () => {
-      // Should not throw - just return the special chars (may find nothing)
       const result = validateSearchQuery('!@#$%^&*()')
       expect(result).toBe('!@#$%^&*()')
     })
@@ -107,7 +96,6 @@ describe('Empty and Null Input Handling', () => {
   })
 })
 
-// ============ VERY LONG INPUT HANDLING ============
 
 describe('Very Long Input Handling', () => {
   describe('validateSearchQuery with long input', () => {
@@ -133,8 +121,8 @@ describe('Very Long Input Handling', () => {
     it('should handle very long SQL strings', () => {
       const longString = "test's value ".repeat(500)
       const result = escapeSQL(longString)
-      expect(result).toContain("''") // Escaped quotes
-      expect(result.length).toBeGreaterThan(longString.length) // Escaping adds chars
+      expect(result).toContain("''")
+      expect(result.length).toBeGreaterThan(longString.length)
     })
   })
 
@@ -144,13 +132,12 @@ describe('Very Long Input Handling', () => {
       const start = Date.now()
       const result = stripHtmlTags(longHtml)
       const elapsed = Date.now() - start
-      expect(elapsed).toBeLessThan(1000) // Should complete in under 1 second
+      expect(elapsed).toBeLessThan(1000)
       expect(result).not.toContain('<div>')
     })
   })
 })
 
-// ============ SPECIAL CHARACTERS AND UNICODE ============
 
 describe('Special Characters and Unicode', () => {
   describe('Unicode in search queries', () => {
@@ -228,7 +215,6 @@ describe('Special Characters and Unicode', () => {
     it('should handle semicolons (SQL statement separator)', () => {
       const input = 'test; DROP TABLE users;--'
       const result = escapeSQL(input)
-      // Should escape but not remove - content is escaped for safety
       expect(result).toBeDefined()
     })
   })
@@ -248,18 +234,17 @@ describe('Special Characters and Unicode', () => {
   })
 })
 
-// ============ BOUNDARY CONDITIONS ============
 
 describe('Boundary Conditions', () => {
   describe('validateLimit boundaries', () => {
     it('should handle limit = 0', () => {
       const result = validateLimit(0, 10, 100)
-      expect(result).toBe(10) // Returns default for invalid
+      expect(result).toBe(10)
     })
 
     it('should handle limit = -1', () => {
       const result = validateLimit(-1, 10, 100)
-      expect(result).toBe(10) // Returns default for invalid
+      expect(result).toBe(10)
     })
 
     it('should cap at maximum', () => {
@@ -279,7 +264,7 @@ describe('Boundary Conditions', () => {
 
     it('should handle floating point numbers', () => {
       const result = validateLimit(5.7, 10, 100)
-      expect(result).toBe(5) // Should floor to integer
+      expect(result).toBe(5)
     })
 
     it('should handle string numbers', () => {
@@ -296,7 +281,7 @@ describe('Boundary Conditions', () => {
 
     it('should handle negative daysBack', () => {
       const result = validateDaysBack(-5)
-      expect(result).toBe(0) // Invalid, returns default
+      expect(result).toBe(0)
     })
 
     it('should cap at maximum (3650 days = ~10 years)', () => {
@@ -307,7 +292,6 @@ describe('Boundary Conditions', () => {
 
   describe('validateDate boundaries', () => {
     it('should accept dates within valid range', () => {
-      // Use a date well within range to avoid timezone edge cases
       const result = validateDate('2020-06-15')
       expect(result).not.toBeNull()
     })
@@ -323,10 +307,7 @@ describe('Boundary Conditions', () => {
     })
 
     it('should handle far future dates based on validator config', () => {
-      // Note: The validator allows year <= 2100
-      // Due to timezone parsing, boundary dates may behave unexpectedly
       const result = validateDate('2150-01-01')
-      // 2150 > 2100 so should be rejected
       expect(result).toBeNull()
     })
 
@@ -336,35 +317,27 @@ describe('Boundary Conditions', () => {
     })
 
     it('should auto-correct invalid leap year date', () => {
-      // JavaScript Date auto-corrects Feb 29 in non-leap years to March 1
-      // The validator doesn't catch this - it just validates the parsed date
       const result = validateDate('2023-02-29')
-      // This gets parsed as 2023-03-01, which is valid
       expect(result).not.toBeNull()
     })
   })
 })
 
-// ============ MALFORMED INPUT ============
 
 describe('Malformed Input Handling', () => {
   describe('validateDate with malformed dates', () => {
     it('should reject date with wrong format (DD/MM/YYYY)', () => {
-      // May be interpreted incorrectly, test behavior
       const result = validateDate('31/12/2024')
-      // Either parses wrong or returns null - both acceptable
-      expect(true).toBe(true) // Document the behavior
+      expect(true).toBe(true)
     })
 
     it('should reject partial date', () => {
       const result = validateDate('2024-12')
-      // Behavior may vary - document it
       expect(typeof result === 'object' || result === null).toBe(true)
     })
 
     it('should reject date with extra characters', () => {
       const result = validateDate('2024-12-15abc')
-      // Should either parse the valid part or reject
       expect(true).toBe(true)
     })
   })
@@ -376,9 +349,7 @@ describe('Malformed Input Handling', () => {
     })
 
     it('should handle ID with whitespace (including newlines)', () => {
-      // Note: \s in regex matches newlines, so they're technically allowed
       const result = validateLanceDBId('test\nid')
-      // The validator's regex includes \s which matches newlines
       expect(result).toBe('test\nid')
     })
 
@@ -388,7 +359,6 @@ describe('Malformed Input Handling', () => {
     })
 
     it('should accept ID with hyphens and colons', () => {
-      // Note: underscores are NOT allowed by the validator regex
       const result = validateLanceDBId('test-id:123')
       expect(result).toBe('test-id:123')
     })
@@ -401,7 +371,6 @@ describe('Malformed Input Handling', () => {
   })
 })
 
-// ============ TYPE COERCION ============
 
 describe('Type Coercion', () => {
   describe('validateLimit type handling', () => {
@@ -412,23 +381,21 @@ describe('Type Coercion', () => {
 
     it('should handle boolean true', () => {
       const result = validateLimit(true, 10, 100)
-      // Boolean true is not a valid number, returns default
       expect(result).toBe(10)
     })
 
     it('should handle boolean false', () => {
       const result = validateLimit(false, 10, 100)
-      expect(result).toBe(10) // false/0 is invalid, returns default
+      expect(result).toBe(10)
     })
 
     it('should handle object input', () => {
       const result = validateLimit({}, 10, 100)
-      expect(result).toBe(10) // Invalid, returns default
+      expect(result).toBe(10)
     })
 
     it('should handle array input', () => {
       const result = validateLimit([5], 10, 100)
-      // May convert or return default
       expect(typeof result).toBe('number')
     })
   })
@@ -436,17 +403,16 @@ describe('Type Coercion', () => {
   describe('validateContact type handling', () => {
     it('should handle number input', () => {
       const result = validateContact(12345)
-      expect(result).toBeNull() // Not a string
+      expect(result).toBeNull()
     })
 
     it('should handle object input', () => {
       const result = validateContact({ name: 'John' })
-      expect(result).toBeNull() // Not a string
+      expect(result).toBeNull()
     })
   })
 })
 
-// ============ CONCURRENT/RAPID CALLS ============
 
 describe('Rapid Sequential Calls', () => {
   it('should handle many rapid validateSearchQuery calls', () => {

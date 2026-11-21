@@ -1,10 +1,3 @@
-/**
- * Unit tests for audit module (lib/audit.js)
- * Tests discrepancy detection, counting, and report formatting
- *
- * These tests validate pure functions with inline test data.
- * No mocking required - these are algorithm tests.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
@@ -65,7 +58,6 @@ describe('Audit Module - Discrepancy Detection', () => {
 
       const missing = findMissing(sourceIds, indexedIds)
 
-      // Set iteration order is insertion order
       expect(missing).toEqual(['z', 'm'])
     })
   })
@@ -94,7 +86,7 @@ describe('Audit Module - Discrepancy Detection', () => {
       const indexedIds = new Set(['file1', 'file2', 'file3'])
       const sourceValidator = async (id) => {
         await new Promise(resolve => setTimeout(resolve, 1))
-        return id !== 'file2' // file2 doesn't exist
+        return id !== 'file2'
       }
 
       const orphaned = await findOrphaned(indexedIds, sourceValidator)
@@ -188,7 +180,6 @@ describe('Audit Module - Discrepancy Detection', () => {
 
       const duplicates = findDuplicates(indexedItems, 'id')
 
-      // All treated as string "123"
       expect(duplicates).toHaveLength(1)
       expect(duplicates[0]).toEqual({ id: '123', count: 3 })
     })
@@ -501,11 +492,9 @@ describe('Audit Module - Discrepancy Detection', () => {
       const sourceIds = new Set()
       const indexedIds = new Set()
 
-      // Create 100k items
       for (let i = 0; i < 100000; i++) {
         sourceIds.add(`item-${i}`)
       }
-      // Index only 99k
       for (let i = 0; i < 99000; i++) {
         indexedIds.add(`item-${i}`)
       }
@@ -515,13 +504,12 @@ describe('Audit Module - Discrepancy Detection', () => {
       const duration = Date.now() - start
 
       expect(missing).toHaveLength(1000)
-      expect(duration).toBeLessThan(1000) // Should complete in under 1 second
+      expect(duration).toBeLessThan(1000)
     })
 
     it('findDuplicates should handle many duplicates', () => {
       const indexedItems = []
 
-      // Create items where each ID appears 5 times
       for (let i = 0; i < 100; i++) {
         for (let j = 0; j < 5; j++) {
           indexedItems.push({ id: `item-${i}`, value: `value-${j}` })

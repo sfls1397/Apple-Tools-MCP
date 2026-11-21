@@ -3,14 +3,6 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-/*
- * macOS Background Task Management tracks a LaunchAgent by its first program
- * (ProgramArguments[0]). When that is a file the npm package rewrites (a bin
- * symlink such as ~/.local/node/bin/apple-tools-indexer, or a package script),
- * every `npm install -g` posts another "App Background Activity ... can run in
- * the background" notice. Start through node (or /usr/bin/env node) and pass the
- * package script as an argument: node never changes, so the identity holds.
- */
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8')
 const args = (xml) => {

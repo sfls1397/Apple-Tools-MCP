@@ -1,11 +1,3 @@
-/**
- * Snapshot Testing
- *
- * Captures expected output structures and detects unexpected changes:
- * - Search result format
- * - Error message format
- * - Tool schema structure
- */
 
 import { describe, it, expect } from 'vitest'
 
@@ -27,7 +19,6 @@ describe('Snapshots: Search Result Structure', () => {
       messageId: '<message@id.com>'
     }
 
-    // Verify structure
     expect(emailResult).toMatchInlineSnapshot(`
       {
         "date": "2024-01-15 10:30 AM",
@@ -221,28 +212,24 @@ describe('Snapshots: Validation Errors', () => {
   it('should produce consistent error messages', async () => {
     const { validateSearchQuery, validateEmailPath } = await import('../../lib/validators.js')
 
-    // Empty query (empty string is falsy, throws "is required")
     try {
       validateSearchQuery('')
     } catch (e) {
       expect(e.message).toMatchInlineSnapshot(`"Search query is required"`)
     }
 
-    // Whitespace-only query (passes truthiness, fails trim check)
     try {
       validateSearchQuery('   ')
     } catch (e) {
       expect(e.message).toMatchInlineSnapshot(`"Search query cannot be empty"`)
     }
 
-    // Null query
     try {
       validateSearchQuery(null)
     } catch (e) {
       expect(e.message).toMatchInlineSnapshot(`"Search query is required"`)
     }
 
-    // Path traversal (with .emlx extension to pass extension check first)
     try {
       validateEmailPath('../etc/passwd.emlx', '/home/user/Mail')
     } catch (e) {

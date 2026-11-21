@@ -1,10 +1,3 @@
-/**
- * Unit tests for mail_find (exact lookup in Mail's Envelope Index).
- *
- * The query tests run against a throwaway SQLite file with the slice of
- * Mail's schema the lookup reads, built with the sqlite3 CLI, so they need
- * no Mail data and never touch the real Envelope Index.
- */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'fs'

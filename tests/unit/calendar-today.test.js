@@ -1,12 +1,3 @@
-/**
- * Today's events never vanish, and a failed calendar read is an MCP error, never an empty day.
- *
- * The Thu Nov 12 2026 07:00 morning brief said the calendar was empty and put the next NAD+ on Mon Nov 16.
- * calendar_upcoming filtered OccurrenceCache.day >= now; day is the occurrence's local midnight, so every
- * event on the current day dropped out after midnight. The fixture below is that day's shape with
- * synthetic titles: a recurring all-day "Take NAD+" series whose master is dated Oct 21, plus one-offs
- * at 6:30 PM and 8:00 PM. It runs on a throwaway Calendar.sqlitedb under a temp HOME; never the real one.
- */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { spawnSync } from 'child_process'
@@ -16,9 +7,7 @@ import path from 'path'
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..')
 const MAC_EPOCH = 978307200
-// Core Data seconds for a Chicago wall time in Nov 2026 (CST, UTC-6).
 const mac = (y, mo, d, h = 0, mi = 0, s = 0) => Date.UTC(y, mo - 1, d, h + 6, mi, s) / 1000 - MAC_EPOCH
-// 7:00 AM CT Thu Nov 12 2026, when the brief ran.
 const BRIEF_TIME = new Date(Date.UTC(2026, 10, 12, 13, 0, 0))
 
 const SCHEMA = `
@@ -71,7 +60,6 @@ beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'apple-tools-calendar-today-'))
   calendarDir = path.join(home, 'Library', 'Group Containers', 'group.com.apple.calendar')
   calendarDb = path.join(calendarDir, 'Calendar.sqlitedb')
-  // The Mini runs in America/Chicago; the day must be that local day whatever the test host's zone.
   process.env.TZ = 'America/Chicago'
   process.env.HOME = home
   vi.resetModules()
@@ -125,7 +113,6 @@ describe('calendar_upcoming keeps every event on the current day (Nov 12 2026 sh
   })
 })
 
-// Recurring series in the fixture: NAD+ (today and Nov 16), Veterans Day (yesterday only) and Book club (tomorrow).
 const RECURRENCE = `
 CREATE TABLE Recurrence (ROWID INTEGER PRIMARY KEY, owner_id INTEGER);
 INSERT INTO Recurrence VALUES (1, 1), (2, 4), (3, 5);

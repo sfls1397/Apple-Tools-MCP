@@ -1,8 +1,3 @@
-/**
- * Short-lived stdio callers (`printf ... | apple-tools-mcp`) close stdin right
- * after writing the batch. The server must still answer tools/call before it
- * exits instead of dying on stdin `close` mid-call.
- */
 
 import { describe, it, expect } from 'vitest'
 import { spawn } from 'child_process'
@@ -147,7 +142,6 @@ describe('drainInFlightThenExit', () => {
 
 describe('closed-pipe stdio host (batched NDJSON then EOF)', () => {
   it('answers tools/call before exiting, including a large reply', async () => {
-    // 512KB > the pipe buffer, so exit must wait for stdout to drain too.
     const { code, replies, stderr } = await runClosedPipe({ DELAY_MS: '300', REPLY_BYTES: String(512 * 1024) })
     expect(code).toBe(0)
     expect(replies.map((r) => r.id)).toEqual([1, 2])
