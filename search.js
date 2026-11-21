@@ -6,18 +6,14 @@ import { createMessageContactMatcher, describeMessagePeer } from "./lib/messageC
 import { indexUnavailableMessage } from "./lib/indexGate.js";
 import { hideMeetingSecrets } from "./lib/urlQuery.js";
 
-// ============ CACHING ============
 
-// Embedding cache with TTL (5 minutes)
 const EMBEDDING_CACHE_TTL = 5 * 60 * 1000;
 const EMBEDDING_CACHE_MAX = 100;
 const embeddingCache = new Map();
 
-// Mailboxes to exclude by default (junk, trash, etc.)
 const EXCLUDED_MAILBOXES = ['junk', 'trash', 'deleted messages', 'spam'];
 
 function excludeJunkMail(results, includeJunk = false, explicitMailbox = null) {
-  // Don't filter if user explicitly requested junk/trash or specified a mailbox
   if (includeJunk || explicitMailbox) return results;
   return results.filter(r =>
     !EXCLUDED_MAILBOXES.some(mb =>
@@ -34,7 +30,6 @@ async function cachedEmbed(text) {
 
   const vector = await embed(text);
 
-  // Evict oldest if at capacity
   if (embeddingCache.size >= EMBEDDING_CACHE_MAX) {
     const oldest = [...embeddingCache.entries()]
       .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
@@ -45,7 +40,6 @@ async function cachedEmbed(text) {
   return vector;
 }
 
-// Result cache with TTL (5 minutes)
 const RESULT_CACHE_TTL = 5 * 60 * 1000;
 const RESULT_CACHE_MAX = 50;
 const resultCache = new Map();
@@ -59,7 +53,6 @@ function getCachedResult(cacheKey) {
 }
 
 function setCachedResult(cacheKey, results) {
-  // Evict oldest if at capacity
   if (resultCache.size >= RESULT_CACHE_MAX) {
     const oldest = [...resultCache.entries()]
       .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
@@ -72,19 +65,16 @@ function buildCacheKey(type, query, options) {
   return JSON.stringify({ type, query, options });
 }
 
-// ============ AGENTIC RAG HELPERS ============
 
-// Follow-up context: Track recent queries and extracted entities for pronoun resolution
 const queryContext = {
   lastQuery: null,
   lastPerson: null,
-  lastSource: null,  // 'mail', 'messages', 'calendar'
+  lastSource: null,
   lastTimestamp: 0
 };
 
-const CONTEXT_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+const CONTEXT_EXPIRY_MS = 5 * 60 * 1000;
 
-// Update context after a search
 function updateContext(query, extractedFilters, source) {
   queryContext.lastQuery = query;
   queryContext.lastSource = source;
@@ -94,9 +84,7 @@ function updateContext(query, extractedFilters, source) {
   }
 }
 
-// Resolve pronouns like "they", "them", "their" to previous context
 function resolvePronouns(query) {
-  // Check if context is still valid
   if (Date.now() - queryContext.lastTimestamp > CONTEXT_EXPIRY_MS) {
     return query;
   }
@@ -105,26 +93,19 @@ function resolvePronouns(query) {
     return query;
   }
 
-  // Never use RegExp#test with a /g regex — lastIndex is stateful and can
-  // skip the first (or only) pronoun on this or a later call. A fresh
-  // regex plus replace() is lastIndex-safe; do not hoist or test() it.
   const pronounRe = new RegExp('\\b(they|them|their|he|him|his|she|her|hers)\\b', 'gi');
   return query.replace(pronounRe, queryContext.lastPerson);
 }
 
-// Extract entities (people, dates) from natural language query and convert to filters
 function extractFiltersFromQuery(query) {
   const filters = {};
   const q = query.toLowerCase();
 
-  // Extract person names: "from John", "with Sarah", "John said", "to Mike"
-  // Use simpler patterns with possessive quantifiers to prevent ReDoS
-  // Limit input length for safety
   const safeQuery = query.length > 500 ? query.substring(0, 500) : query;
   const personPatterns = [
-    /(?:from|with|to)\s+([A-Z][a-z]{1,20}(?:\s[A-Z][a-z]{1,20})?)/,  // "from John Smith" - limited name length
-    /([A-Z][a-z]{1,20}(?:\s[A-Z][a-z]{1,20})?)\s+(?:said|sent|wrote|messaged|texted|emailed)/,  // "John said"
-    /(?:emails?|messages?|texts?|calls?)\s+(?:from|to|with)\s+([A-Z][a-z]{1,20})/i  // "emails from John"
+    /(?:from|with|to)\s+([A-Z][a-z]{1,20}(?:\s[A-Z][a-z]{1,20})?)/,
+    /([A-Z][a-z]{1,20}(?:\s[A-Z][a-z]{1,20})?)\s+(?:said|sent|wrote|messaged|texted|emailed)/,
+    /(?:emails?|messages?|texts?|calls?)\s+(?:from|to|with)\s+([A-Z][a-z]{1,20})/i
   ];
 
   for (const pattern of personPatterns) {
@@ -135,7 +116,6 @@ function extractFiltersFromQuery(query) {
     }
   }
 
-  // Extract date ranges using chrono-node (already imported)
   const datePatterns = {
     'yesterday': 1,
     'last week': 7,
@@ -157,7 +137,6 @@ function extractFiltersFromQuery(query) {
     }
   }
 
-  // Extract "last N days" pattern
   const lastNDays = q.match(/last\s+(\d+)\s+days?/i);
   if (lastNDays) {
     filters.daysBack = parseInt(lastNDays[1], 10);
@@ -166,11 +145,9 @@ function extractFiltersFromQuery(query) {
   return filters;
 }
 
-// Apply extracted filters to search options
 function applyExtractedFilters(options, extractedFilters) {
   const merged = { ...options };
 
-  // Only apply if not already set by explicit options
   if (extractedFilters.person && !options.sender && !options.contact) {
     merged.sender = extractedFilters.person;
     merged.contact = extractedFilters.person;
@@ -183,17 +160,14 @@ function applyExtractedFilters(options, extractedFilters) {
   return merged;
 }
 
-// Query expansion - generate alternative search queries for better recall
 function expandQuery(query) {
-  const expansions = [query]; // Always include original
+  const expansions = [query];
 
-  // 1. Simplified (remove time modifiers that don't affect meaning)
   const simplified = query.replace(/\b(recently|last \w+ days?|this \w+|next \w+|about|regarding)\b/gi, '').trim();
   if (simplified && simplified !== query && simplified.length > 3) {
     expansions.push(simplified);
   }
 
-  // 2. Synonym replacement for common terms
   const synonymMap = {
     'meeting': ['call', 'sync', 'standup', 'discussion'],
     'budget': ['financial', 'costs', 'expense', 'spending'],
@@ -209,19 +183,16 @@ function expandQuery(query) {
 
   for (const [word, syns] of Object.entries(synonymMap)) {
     if (query.toLowerCase().includes(word)) {
-      // Add first synonym variant
       expansions.push(query.replace(new RegExp(`\\b${word}\\b`, 'gi'), syns[0]));
-      break; // Only one synonym expansion
+      break;
     }
   }
 
-  return [...new Set(expansions)].slice(0, 3); // Max 3 variants, deduplicated
+  return [...new Set(expansions)].slice(0, 3);
 }
 
-// Parse negation terms from query: "meeting NOT weekly" -> { cleanQuery: "meeting", negations: ["weekly"] }
 function parseNegation(query) {
   const negations = [];
-  // Match "NOT term", "-term", "without term"
   const negationPatterns = [
     /\bNOT\s+(\w+)/gi,
     /\s-(\w+)/g,
@@ -244,7 +215,6 @@ function parseNegation(query) {
   };
 }
 
-// Filter out results containing negated terms
 function applyNegationFilter(results, negations, textFields = ['text', 'body', 'subject', 'title', 'notes']) {
   if (!negations || negations.length === 0) return results;
 
@@ -253,7 +223,7 @@ function applyNegationFilter(results, negations, textFields = ['text', 'body', '
       const text = (r[field] || '').toLowerCase();
       for (const neg of negations) {
         if (text.includes(neg)) {
-          return false; // Exclude this result
+          return false;
         }
       }
     }
@@ -261,12 +231,10 @@ function applyNegationFilter(results, negations, textFields = ['text', 'body', '
   });
 }
 
-// Reciprocal Rank Fusion (RRF) for merging results from multiple query variants
-// RRF(d) = Σ 1/(k + rank(d)) where k is typically 60
 const RRF_K = 60;
 
 function reciprocalRankFusion(resultSets, keyField) {
-  const scores = new Map(); // key -> { doc, rrfScore }
+  const scores = new Map();
 
   for (const results of resultSets) {
     for (let rank = 0; rank < results.length; rank++) {
@@ -279,7 +247,6 @@ function reciprocalRankFusion(resultSets, keyField) {
 
       if (existing) {
         existing.rrfScore += rrfScore;
-        // Keep the doc with better original score
         if (doc._distance && (!existing.doc._distance || doc._distance < existing.doc._distance)) {
           existing.doc = doc;
         }
@@ -289,13 +256,11 @@ function reciprocalRankFusion(resultSets, keyField) {
     }
   }
 
-  // Sort by RRF score descending
   return Array.from(scores.values())
     .sort((a, b) => b.rrfScore - a.rrfScore)
     .map(({ doc, rrfScore }) => ({ ...doc, _rrfScore: rrfScore }));
 }
 
-// Deduplicate results by a key field, keeping highest score (legacy, used for single-query dedup)
 function deduplicateResults(results, keyField) {
   const seen = new Map();
 
@@ -315,15 +280,13 @@ function deduplicateResults(results, keyField) {
   return Array.from(seen.values());
 }
 
-// Self-correcting retrieval - validates results and retries with broader query if needed
-const MIN_CONFIDENCE_SCORE = 0.5; // Below this score, results are considered low confidence
+const MIN_CONFIDENCE_SCORE = 0.5;
 
 function assessResultQuality(results) {
   if (!results || results.length === 0) {
     return { quality: 'empty', shouldRetry: true };
   }
 
-  // Check top result confidence
   const topScore = results[0]._distance ? (1 - results[0]._distance) : 0;
 
   if (topScore < MIN_CONFIDENCE_SCORE) {
@@ -337,20 +300,14 @@ function assessResultQuality(results) {
   return { quality: 'good', shouldRetry: false, topScore };
 }
 
-// Broaden a query by removing restrictive modifiers
 function broadenQuery(query) {
-  // Remove time constraints
   let broader = query.replace(/\b(recently|last \w+ days?|this \w+|next \w+|yesterday|today|tomorrow)\b/gi, '');
-  // Remove prepositions that narrow scope
   broader = broader.replace(/\b(about|regarding|concerning|from|to|with)\b/gi, '');
-  // Clean up extra spaces
   broader = broader.replace(/\s+/g, ' ').trim();
 
   return broader.length > 3 ? broader : query;
 }
 
-// Hybrid search: combine vector search with keyword matching
-// Returns combined score: (1 - vector_distance) * 0.7 + keyword_score * 0.3
 function keywordMatch(text, keywords) {
   if (!text || !keywords || keywords.length === 0) return 0;
 
@@ -360,12 +317,11 @@ function keywordMatch(text, keywords) {
 
   for (const kw of keywords) {
     const kwLower = kw.toLowerCase();
-    // Exact word match gets higher score
     const wordBoundary = new RegExp(`\\b${kwLower}\\b`, 'i');
     if (wordBoundary.test(text)) {
       matches += 1.0;
     } else if (textLower.includes(kwLower)) {
-      matches += 0.5; // Partial match
+      matches += 0.5;
     }
     totalWeight += 1;
   }
@@ -374,7 +330,6 @@ function keywordMatch(text, keywords) {
 }
 
 function extractKeywords(query) {
-  // Remove common stop words and extract significant terms
   const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
     'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
     'may', 'might', 'must', 'can', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
@@ -399,7 +354,6 @@ function applyHybridScoring(results, keywords, textFields = ['text', 'body', 'su
   return results.map(r => {
     const vectorScore = r._distance ? (1 - r._distance) : 0;
 
-    // Calculate keyword score across relevant text fields
     let keywordScore = 0;
     let fieldCount = 0;
     for (const field of textFields) {
@@ -416,26 +370,20 @@ function applyHybridScoring(results, keywords, textFields = ['text', 'body', 'su
   }).sort((a, b) => b._hybridScore - a._hybridScore);
 }
 
-// Self-correcting search wrapper with RRF, hybrid scoring, and retry logic
 async function searchWithRetry(_searchFn, tbl, query, options, keyField) {
   const { limit = 10 } = options;
 
-  // First attempt with query expansion
   const queries = expandQuery(query);
   const fetchLimitPerQuery = Math.max(limit * 5, 50);
 
-  // PARALLEL: Embed all query variants simultaneously using cached embeddings
   const vectors = await Promise.all(queries.map(q => cachedEmbed(q)));
 
-  // PARALLEL: Search all variants simultaneously
   const searchPromises = vectors.map(v => tbl.search(v).limit(fetchLimitPerQuery).toArray());
   const resultSets = await Promise.all(searchPromises);
 
-  // Use RRF to merge results from multiple query variants
   let results = reciprocalRankFusion(resultSets, keyField);
   const quality = assessResultQuality(results);
 
-  // Only retry if NO results (not just low confidence - reduces unnecessary embedding calls)
   if (quality.quality === 'empty') {
     const broadened = broadenQuery(query);
     if (broadened !== query) {
@@ -446,7 +394,6 @@ async function searchWithRetry(_searchFn, tbl, query, options, keyField) {
     }
   }
 
-  // Apply hybrid scoring (vector + keyword)
   const keywords = extractKeywords(query);
   if (keywords.length > 0) {
     results = applyHybridScoring(results, keywords);
@@ -456,12 +403,9 @@ async function searchWithRetry(_searchFn, tbl, query, options, keyField) {
 }
 
 async function getTable(type) {
-  // Share indexer.js's connection so a first empty catalog is refreshed the
-  // same way isIndexReady() is — not a second handle that can stay empty.
   return getOpenTable(type);
 }
 
-// Pre-warm all tables to eliminate first-query latency
 export async function prewarmTables() {
   try {
     await Promise.all([
@@ -475,9 +419,7 @@ export async function prewarmTables() {
   }
 }
 
-// ============ DATE PARSING UTILITIES ============
 
-// Format a date string to local timezone
 function formatLocalDate(dateStr) {
   if (!dateStr || dateStr === "Unknown") return dateStr;
   try {
@@ -489,19 +431,15 @@ function formatLocalDate(dateStr) {
   }
 }
 
-// Parse natural language date to start of day timestamp
 export function parseNaturalDate(dateStr) {
   if (!dateStr) return null;
 
-  // Try chrono-node first for natural language
   const parsed = chrono.parseDate(dateStr);
   if (parsed) {
-    // Set to start of day
     parsed.setHours(0, 0, 0, 0);
     return parsed.getTime();
   }
 
-  // Fallback to direct Date parsing
   const d = new Date(dateStr);
   if (!isNaN(d.getTime())) {
     d.setHours(0, 0, 0, 0);
@@ -511,26 +449,21 @@ export function parseNaturalDate(dateStr) {
   return null;
 }
 
-// Get start and end timestamps for a specific date
 export function getDateRange(dateStr) {
   const start = parseNaturalDate(dateStr);
   if (!start) return null;
 
-  // Local next midnight — not +24h, which is wrong on DST transition days
   const endDate = new Date(start);
   endDate.setDate(endDate.getDate() + 1);
   return { start, end: endDate.getTime() };
 }
 
-// Parse various date formats and return timestamp (for filtering results)
 function parseDate(dateStr) {
   if (!dateStr) return null;
   try {
-    // Try direct parsing first
     let d = new Date(dateStr);
     if (!isNaN(d.getTime())) return d.getTime();
 
-    // Handle AppleScript format like "Friday, January 10, 2025 at 9:00:00 AM"
     const appleMatch = dateStr.match(/(\w+), (\w+ \d+, \d+) at (\d+:\d+:\d+ [AP]M)/i);
     if (appleMatch) {
       d = new Date(`${appleMatch[2]} ${appleMatch[3]}`);
@@ -543,7 +476,6 @@ function parseDate(dateStr) {
   }
 }
 
-// Filter results by date range
 function filterByDateRange(results, daysBack, daysAhead, dateField = "date") {
   const now = Date.now();
   const cutoffPast = daysBack > 0 ? now - (daysBack * 24 * 60 * 60 * 1000) : 0;
@@ -558,7 +490,6 @@ function filterByDateRange(results, daysBack, daysAhead, dateField = "date") {
   });
 }
 
-// Sort results by date (newest first)
 function sortByDate(results, descending = true) {
   return results.sort((a, b) => {
     const tsA = toUnixMillis(a.dateTimestamp) || parseDate(a.date) || parseDate(a.start) || 0;
@@ -567,10 +498,8 @@ function sortByDate(results, descending = true) {
   });
 }
 
-// ============ EMAIL SEARCH ============
 
 export async function searchEmails(query, options = {}) {
-  // Validate and sanitize query input
   let validatedQuery;
   try {
     validatedQuery = validateSearchQuery(query);
@@ -578,23 +507,18 @@ export async function searchEmails(query, options = {}) {
     return { success: false, results: [], error: e.message };
   }
 
-  // Check result cache first
   const cacheKey = buildCacheKey('emails', validatedQuery, options);
   const cached = getCachedResult(cacheKey);
   if (cached) {
     return cached;
   }
 
-  // Resolve pronouns from previous context (e.g., "what else did they send")
   const resolvedQuery = resolvePronouns(validatedQuery);
 
-  // Extract entities and filters from natural language
   const extractedFilters = extractFiltersFromQuery(resolvedQuery);
 
-  // Parse negation terms (e.g., "meeting NOT weekly")
   const { cleanQuery, negations } = parseNegation(resolvedQuery);
 
-  // Merge extracted filters with explicit options (explicit options take precedence)
   const mergedOptions = applyExtractedFilters(options, extractedFilters);
 
   const {
@@ -604,10 +528,10 @@ export async function searchEmails(query, options = {}) {
     recipient = null,
     hasAttachment = null,
     mailbox = null,
-    sentOnly = null, // true = sent, false = received, null = all
+    sentOnly = null,
     flaggedOnly = false,
-    includeJunk = false, // whether to include junk/trash/spam folders
-    sortBy = "relevance" // "relevance" or "date"
+    includeJunk = false,
+    sortBy = "relevance"
   } = mergedOptions;
 
   const tbl = await getTable("emails");
@@ -620,13 +544,10 @@ export async function searchEmails(query, options = {}) {
   }
 
   try {
-    // Self-correcting search with query expansion, RRF, and hybrid scoring
     let results = await searchWithRetry(null, tbl, cleanQuery, { limit }, 'filePath');
 
-    // Apply negation filter
     results = applyNegationFilter(results, negations, ['subject', 'body', 'snippet']);
 
-    // Apply filters
     if (daysBack > 0) {
       results = filterByDateRange(results, daysBack, 0, "date");
     }
@@ -668,15 +589,12 @@ export async function searchEmails(query, options = {}) {
       results = results.filter(r => r.isFlagged === true);
     }
 
-    // Exclude junk/trash by default unless explicitly included or mailbox specified
     results = excludeJunkMail(results, includeJunk, mailbox);
 
-    // Sort by date if requested
     if (sortBy === "date") {
       results = sortByDate(results, true);
     }
 
-    // Track count before slicing for "more results" indicator
     const totalBeforeLimit = results.length;
     results = results.slice(0, limit);
     const hasMore = totalBeforeLimit > limit;
@@ -695,7 +613,6 @@ export async function searchEmails(query, options = {}) {
     }
 
     const formattedResults = results.map((row, idx) => {
-      // Resolve sender email to contact name
       const contact = resolveEmail(row.fromEmail);
       const contactName = contact ? formatContact(contact) : null;
 
@@ -703,7 +620,7 @@ export async function searchEmails(query, options = {}) {
         rank: idx + 1,
         score: row._hybridScore ? row._hybridScore.toFixed(3) : (row._distance ? (1 - row._distance).toFixed(3) : "N/A"),
         from: row.from || "Unknown",
-        fromContact: contactName,  // Resolved contact name (if found)
+        fromContact: contactName,
         to: row.to || "Unknown",
         subject: row.subject || "No subject",
         date: formatLocalDate(row.date) || "Unknown",
@@ -717,7 +634,6 @@ export async function searchEmails(query, options = {}) {
       };
     });
 
-    // Update context for follow-up queries
     updateContext(resolvedQuery, extractedFilters, 'mail');
 
     const result = {
@@ -733,12 +649,8 @@ export async function searchEmails(query, options = {}) {
   }
 }
 
-// Get unread email subjects and senders from Mail.app via AppleScript
-// Returns { emails: [{subject, sender}, ...], error: null } or { emails: [], error: "message" }
 function getUnreadEmails() {
   try {
-    // Query all mailboxes (not just inbox) for unread emails
-    // Returns subject and sender for precise matching
     const script = `
 tell application "Mail"
     set unreadList to {}
@@ -791,21 +703,16 @@ end tell`;
   }
 }
 
-// Get recent emails without semantic search
 export async function getRecentEmailResults(limit = 30, daysBack = 7, unreadOnly = false, includeJunk = false) {
   try {
-    // When filtering for unread, fetch more emails since unread ones might not be the most recent
     const fetchLimit = unreadOnly ? Math.max(limit * 10, 500) : limit * 3;
     let results = await getRecentEmails(fetchLimit, daysBack);
 
-    // Exclude junk/trash by default
     results = excludeJunkMail(results, includeJunk, null);
 
-    // If unreadOnly, filter using AppleScript unread check
     if (unreadOnly) {
       const unreadResult = getUnreadEmails();
 
-      // Handle AppleScript failure
       if (unreadResult.error) {
         return {
           success: false,
@@ -814,26 +721,16 @@ export async function getRecentEmailResults(limit = 30, daysBack = 7, unreadOnly
       }
 
       if (unreadResult.emails.length > 0) {
-        // Filter to only emails with matching subject AND sender
-        // This prevents false positives when multiple emails have similar subjects
         results = results.filter(r => {
           const subject = (r.subject || "").trim().toLowerCase();
-          // Index from field has two formats:
-          // 1. "Coinbase via Cloaked (Coinbase)" - just display name
-          // 2. "Jane Smith via Cloaked (Company)" <email@domain.com> - display name + email
-          // Extract just the display name from both formats
           const fromRaw = (r.from || "").trim().toLowerCase();
           const fromName = fromRaw.replace(/<[^>]+>$/, "").trim().replace(/^"|"$/g, "");
 
           return unreadResult.emails.some(unread => {
             const unreadSubject = (unread.subject || "").trim().toLowerCase();
-            // AppleScript returns: Coinbase via Cloaked (Coinbase) <email@domain.com>
-            // Extract just the display name (everything before the <email>)
             const unreadSender = (unread.sender || "").trim().toLowerCase();
             const unreadName = unreadSender.replace(/<[^>]+>$/, "").trim().replace(/^"|"$/g, "");
 
-            // Compare display names - must be strict to avoid false matches
-            // Extract just the name part before "via Cloaked" if present
             const extractName = (s) => {
               const viaIndex = s.indexOf(" via cloaked");
               return viaIndex > 0 ? s.substring(0, viaIndex).trim() : s;
@@ -841,23 +738,15 @@ export async function getRecentEmailResults(limit = 30, daysBack = 7, unreadOnly
             const fromNamePart = extractName(fromName);
             const unreadNamePart = extractName(unreadName);
 
-            // Sender matches if:
-            // 1. Full names are equal, OR
-            // 2. Name parts (before "via Cloaked") are equal AND not empty
             const senderMatches =
               fromName === unreadName ||
               (fromNamePart.length > 0 && unreadNamePart.length > 0 && fromNamePart === unreadNamePart);
 
             if (!senderMatches) return false;
 
-            // Now check subject match with fuzzy matching
-            // Exact match
             if (unreadSubject === subject) return true;
-            // Index subject is prefix of Mail.app subject (truncated in index)
             if (unreadSubject.startsWith(subject) && subject.length > 20) return true;
-            // Mail.app subject is prefix of index subject
             if (subject.startsWith(unreadSubject) && unreadSubject.length > 20) return true;
-            // First 40 chars match (handles calendar invites with different times)
             const prefix1 = subject.substring(0, 40);
             const prefix2 = unreadSubject.substring(0, 40);
             if (prefix1 === prefix2 && prefix1.length >= 30) return true;
@@ -865,12 +754,10 @@ export async function getRecentEmailResults(limit = 30, daysBack = 7, unreadOnly
           });
         });
       } else {
-        // AppleScript succeeded but no unread emails
         return { success: true, results: [], message: "You're all caught up — no unread emails found!" };
       }
     }
 
-    // Track count before slicing
     const totalBeforeLimit = results.length;
     const hasMore = totalBeforeLimit > limit;
 
@@ -901,7 +788,6 @@ export async function getRecentEmailResults(limit = 30, daysBack = 7, unreadOnly
   }
 }
 
-// Get emails from a specific date
 export async function getEmailDateResults(dateStr, includeJunk = false) {
   try {
     const range = getDateRange(dateStr);
@@ -911,7 +797,6 @@ export async function getEmailDateResults(dateStr, includeJunk = false) {
 
     let results = await getEmailsByDateRange(range.start, range.end);
 
-    // Exclude junk/trash by default
     results = excludeJunkMail(results, includeJunk, null);
 
     const formattedResults = results.map((row, idx) => ({
@@ -950,7 +835,6 @@ export function formatEmailResults(searchResult) {
   const results = searchResult.results.map(r => {
     let result = `[${r.rank}]`;
     if (r.score) result += ` Score: ${r.score}`;
-    // Show contact name if resolved, otherwise show raw from
     const fromDisplay = r.fromContact ? `${r.fromContact} <${r.from}>` : r.from;
     result += `\nFrom: ${fromDisplay}\nTo: ${r.to}\nSubject: ${r.subject}\nDate: ${r.date}`;
     if (r.hasAttachment) result += "\n📎 Has attachment";
@@ -965,10 +849,8 @@ export function formatEmailResults(searchResult) {
   return results;
 }
 
-// ============ MESSAGES SEARCH ============
 
 export async function searchMessages(query, options = {}) {
-  // Validate and sanitize query input
   let validatedQuery;
   try {
     validatedQuery = validateSearchQuery(query);
@@ -976,23 +858,18 @@ export async function searchMessages(query, options = {}) {
     return { success: false, results: [], error: e.message };
   }
 
-  // Check result cache first
   const cacheKey = buildCacheKey('messages', validatedQuery, options);
   const cached = getCachedResult(cacheKey);
   if (cached) {
     return cached;
   }
 
-  // Resolve pronouns from previous context
   const resolvedQuery = resolvePronouns(validatedQuery);
 
-  // Extract entities and filters from natural language
   const extractedFilters = extractFiltersFromQuery(resolvedQuery);
 
-  // Parse negation terms
   const { cleanQuery, negations } = parseNegation(resolvedQuery);
 
-  // Merge extracted filters with explicit options
   const mergedOptions = applyExtractedFilters(options, extractedFilters);
 
   const {
@@ -1015,10 +892,8 @@ export async function searchMessages(query, options = {}) {
   }
 
   try {
-    // Self-correcting search with query expansion, RRF, and hybrid scoring
     let results = await searchWithRetry(null, tbl, cleanQuery, { limit }, 'id');
 
-    // Apply negation filter
     results = applyNegationFilter(results, negations, ['text']);
 
     if (daysBack > 0) {
@@ -1047,7 +922,6 @@ export async function searchMessages(query, options = {}) {
       results = sortByDate(results, true);
     }
 
-    // Track count before slicing
     const totalBeforeLimit = results.length;
     results = results.slice(0, limit);
     const hasMore = totalBeforeLimit > limit;
@@ -1067,7 +941,6 @@ export async function searchMessages(query, options = {}) {
     }
 
     const formattedResults = results.map((row, idx) => {
-      // Resolve sender (phone/iMessage) to contact name
       const sender = row.sender || "Unknown";
       let senderContact = null;
       if (sender !== "Me" && sender !== "Unknown") {
@@ -1083,7 +956,7 @@ export async function searchMessages(query, options = {}) {
         date: formatLocalDate(row.date) || "Unknown",
         dateTimestamp: toUnixMillis(row.dateTimestamp) || null,
         sender: sender,
-        senderContact: senderContact,  // Resolved contact name (if found)
+        senderContact: senderContact,
         to: sender === "Me" ? messagePeer(row) : null,
         text: row.text || "",
         chatName: row.chatName || "",
@@ -1092,7 +965,6 @@ export async function searchMessages(query, options = {}) {
       };
     });
 
-    // Update context for follow-up queries
     updateContext(resolvedQuery, extractedFilters, 'messages');
 
     const result = {
@@ -1108,12 +980,10 @@ export async function searchMessages(query, options = {}) {
   }
 }
 
-// Who a from-me message was sent to (contact name + handle, or the group chat)
 function messagePeer(row) {
   return describeMessagePeer(row, { resolvePhone, resolveEmail, formatContact });
 }
 
-// Get recent messages without semantic search
 export async function getRecentMessageResults(limit = 10, daysBack = 1) {
   try {
     const { messages, hasMore } = await getRecentMessages(limit, daysBack);
@@ -1149,7 +1019,6 @@ export async function getRecentMessageResults(limit = 10, daysBack = 1) {
   }
 }
 
-// Get full conversation with a contact
 export async function getConversationResults(contact, limit = 50) {
   try {
     const results = await getConversation(contact, limit);
@@ -1182,7 +1051,6 @@ export function formatMessageResults(searchResult) {
   const results = searchResult.results.map(r => {
     let result = `[${r.rank || r.index}]`;
     if (r.score) result += ` Score: ${r.score}`;
-    // Show contact name if resolved, otherwise show raw sender
     const senderDisplay = r.senderContact ? `${r.senderContact} (${r.sender})` : r.sender;
     result += `\nDate: ${r.date}\nFrom: ${senderDisplay}`;
     if (r.isGroupChat) result += " (Group)";
@@ -1208,10 +1076,8 @@ export function formatConversationResults(searchResult) {
   return output;
 }
 
-// ============ CALENDAR SEARCH ============
 
 export async function searchCalendar(query, options = {}) {
-  // Validate and sanitize query input
   let validatedQuery;
   try {
     validatedQuery = validateSearchQuery(query);
@@ -1219,23 +1085,18 @@ export async function searchCalendar(query, options = {}) {
     return { success: false, results: [], error: e.message };
   }
 
-  // Check result cache first
   const cacheKey = buildCacheKey('calendar', validatedQuery, options);
   const cached = getCachedResult(cacheKey);
   if (cached) {
     return cached;
   }
 
-  // Resolve pronouns from previous context
   const resolvedQuery = resolvePronouns(validatedQuery);
 
-  // Extract entities and filters from natural language
   const extractedFilters = extractFiltersFromQuery(resolvedQuery);
 
-  // Parse negation terms
   const { cleanQuery, negations } = parseNegation(resolvedQuery);
 
-  // Merge extracted filters with explicit options
   const mergedOptions = applyExtractedFilters(options, extractedFilters);
 
   const {
@@ -1257,10 +1118,8 @@ export async function searchCalendar(query, options = {}) {
   }
 
   try {
-    // Self-correcting search with query expansion, RRF, and hybrid scoring
     let results = await searchWithRetry(null, tbl, cleanQuery, { limit }, 'id');
 
-    // Apply negation filter
     results = applyNegationFilter(results, negations, ['title', 'notes', 'location']);
 
     if (daysBack > 0 || daysAhead > 0) {
@@ -1277,10 +1136,9 @@ export async function searchCalendar(query, options = {}) {
     }
 
     if (sortBy === "date") {
-      results = sortByDate(results, false); // Ascending for calendar
+      results = sortByDate(results, false);
     }
 
-    // Track count before slicing
     const totalBeforeLimit = results.length;
     results = results.slice(0, limit);
     const hasMore = totalBeforeLimit > limit;
@@ -1295,7 +1153,6 @@ export async function searchCalendar(query, options = {}) {
     }
 
     const formattedResults = results.map((row, idx) => {
-      // Parse attendees JSON
       let attendees = [];
       try {
         attendees = JSON.parse(row.attendees || "[]");
@@ -1317,7 +1174,6 @@ export async function searchCalendar(query, options = {}) {
       };
     });
 
-    // Update context for follow-up queries
     updateContext(resolvedQuery, extractedFilters, 'calendar');
 
     const result = {
@@ -1333,7 +1189,6 @@ export async function searchCalendar(query, options = {}) {
   }
 }
 
-// Local midnight of parsed date through next local midnight (handles DST; not +24h)
 export function getLocalDayBounds(dateStr) {
   const start = parseNaturalDate(dateStr);
   if (start == null) return null;
@@ -1342,7 +1197,6 @@ export function getLocalDayBounds(dateStr) {
   return { start, end: endDate.getTime() };
 }
 
-// Get events on a specific date from live Calendar.sqlitedb (not the vector index)
 export async function getCalendarDateResults(dateStr) {
   try {
     const range = getLocalDayBounds(dateStr);
@@ -1360,7 +1214,6 @@ export async function getCalendarDateResults(dateStr) {
 
     const formattedResults = events.map((row, idx) => ({
       index: idx + 1,
-      // iCal UID: the id the calendar write tools address events by.
       eventId: row.uid || "",
       title: row.title || "No title",
       start: formatLocalDate(row.start) || row.start || "Unknown",
@@ -1388,8 +1241,6 @@ export async function getCalendarDateResults(dateStr) {
   }
 }
 
-// Clamp a timed event to [dayStartMs, dayEndMs) and return minutes from local midnight.
-// Overnight events (23:00–01:00) contribute only the slice that falls on this day.
 export function clampBusyToLocalDay(evtStartMs, evtEndMs, dayStartMs, dayEndMs) {
   const clampedStart = Math.max(evtStartMs, dayStartMs);
   const clampedEnd = Math.min(evtEndMs, dayEndMs);
@@ -1406,7 +1257,6 @@ export function clampBusyToLocalDay(evtStartMs, evtEndMs, dayStartMs, dayEndMs) 
   return { startMinutes, endMinutes };
 }
 
-// Calculate free time slots on a specific date
 export async function calculateFreeTime(dateStr, options = {}) {
   const {
     startHour = 9,
@@ -1427,14 +1277,11 @@ export async function calculateFreeTime(dateStr, options = {}) {
 
     let events = liveEvents;
 
-    // Filter by calendar if specified
     if (calendarName) {
       const calLower = calendarName.toLowerCase();
       events = events.filter(e => (e.calendar || "").toLowerCase().includes(calLower));
     }
 
-    // Calculate busy periods (in minutes from start of day)
-    // Skip all-day events - they're typically reminders/holidays, not actual time blocks
     const busyPeriods = [];
     for (const evt of events) {
       if (evt.isAllDay) {
@@ -1458,10 +1305,8 @@ export async function calculateFreeTime(dateStr, options = {}) {
       }
     }
 
-    // Sort busy periods
     busyPeriods.sort((a, b) => a.start - b.start);
 
-    // Find free slots
     const freeSlots = [];
     let currentStart = startHour * 60;
 
@@ -1476,7 +1321,6 @@ export async function calculateFreeTime(dateStr, options = {}) {
       currentStart = Math.max(currentStart, busy.end);
     }
 
-    // Check for free time after last event
     if (currentStart < endHour * 60) {
       freeSlots.push({
         start: formatMinutes(currentStart),
@@ -1525,8 +1369,6 @@ export function formatCalendarResults(searchResult) {
   const results = searchResult.results.map(r => {
     let result = `[${r.rank || r.index}]`;
     if (r.score) result += ` Score: ${r.score}`;
-    // Meeting-link passcodes ride in URL query strings and "Passcode:" lines: titles, locations
-    // and notes print URLs without queries and passcode values hidden.
     result += `\nEvent: ${hideMeetingSecrets(r.title)}`;
     if (r.isAllDay) result += " (All Day)";
     result += `\nCalendar: ${r.calendar}\nStart: ${r.start}\nEnd: ${r.end}`;
@@ -1571,9 +1413,7 @@ export function formatFreeTimeResults(result) {
   return output;
 }
 
-// ============ NEW TOOLS FORMATTING - PHASE 1 ============
 
-// Format mail_senders results
 export function formatSendersResults(senders) {
   if (!senders || senders.length === 0) {
     return "No senders found in the index.";
@@ -1587,7 +1427,6 @@ export function formatSendersResults(senders) {
   return output;
 }
 
-// Format messages_contacts results
 export function formatMessageContactsResults(contacts) {
   if (contacts?.error) {
     return `Error getting message contacts: ${contacts.error}`;
@@ -1604,8 +1443,6 @@ export function formatMessageContactsResults(contacts) {
   return output;
 }
 
-// A calendar tool result that failed to read the calendar becomes a thrown error, so the MCP
-// dispatcher answers isError: true. A failed read must never look like an empty day.
 export function requireCalendarRead(result) {
   if (result?.success === false) {
     throw new Error(result.error || "The calendar could not be read");
@@ -1616,12 +1453,11 @@ export function requireCalendarRead(result) {
   return result;
 }
 
-// Format calendar_upcoming results
 export function formatUpcomingEventsResults(result) {
   if (result?.error) {
     return `Error getting upcoming events: ${result.error}`;
   }
-  const events = result.events || result; // Handle both new {events, showing, hasMore} and old array format
+  const events = result.events || result;
   if (!events || events.length === 0) {
     return "No upcoming events found.";
   }
@@ -1639,9 +1475,7 @@ export function formatUpcomingEventsResults(result) {
   return output;
 }
 
-// ============ NEW TOOLS FORMATTING - PHASE 2 ============
 
-// Format mail_unread_count results
 export function formatUnreadCountResults(result) {
   if (result.error) {
     return `Error getting unread count: ${result.error}`;
@@ -1649,7 +1483,6 @@ export function formatUnreadCountResults(result) {
   return `Unread emails in ${result.mailbox}: ${result.unreadCount}`;
 }
 
-// Format calendar_week results
 export function formatWeekEventsResults(result) {
   if (result.error) {
     return `Error getting week events: ${result.error}`;
@@ -1663,10 +1496,9 @@ export function formatWeekEventsResults(result) {
   let output = `${result.weekLabel} (${result.dateRange})\n`;
   output += `${events.length} events scheduled:\n\n`;
 
-  // Group by day
   const byDay = {};
   for (const e of events) {
-    const day = e.start.split(" ")[0]; // Extract date part
+    const day = e.start.split(" ")[0];
     if (!byDay[day]) byDay[day] = [];
     byDay[day].push(e);
   }
@@ -1685,9 +1517,7 @@ export function formatWeekEventsResults(result) {
   return output;
 }
 
-// ============ NEW TOOLS FORMATTING - PHASE 3 ============
 
-// Format mail_thread results
 export function formatEmailThreadResults(result) {
   if (result.error) {
     if (result.error === indexUnavailableMessage("emails")) {
@@ -1714,12 +1544,11 @@ export function formatEmailThreadResults(result) {
   return output;
 }
 
-// Format calendar_recurring results
 export function formatRecurringEventsResults(result) {
   if (result?.error) {
     return `Error getting recurring events: ${result.error}`;
   }
-  const events = result.events || result; // Handle both new {events, showing, hasMore} and old array format
+  const events = result.events || result;
   if (!events || events.length === 0) {
     return "No recurring events found.";
   }
@@ -1734,5 +1563,4 @@ export function formatRecurringEventsResults(result) {
   return output;
 }
 
-// Export internal functions for testing
 export { expandQuery, parseNegation, extractKeywords, resolvePronouns, updateContext };
