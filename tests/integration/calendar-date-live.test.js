@@ -1,7 +1,3 @@
-/**
- * Live calendar_date: OccurrenceCache per occurrence, /tmp copy, local TZ bounds.
- * Does not use the vector index. Skips live sqlite when Calendar.sqlitedb is missing.
- */
 
 import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'child_process'
@@ -112,7 +108,7 @@ describe('calendar_date live query SQL', () => {
 
 describe('calendar_date local Mac bounds', () => {
   it('converts local midnight to Apple/Core Data seconds', () => {
-    const start = new Date(2026, 8, 1) // local Sep 1, 2026 00:00
+    const start = new Date(2026, 8, 1)
     start.setHours(0, 0, 0, 0)
     const end = new Date(start)
     end.setDate(end.getDate() + 1)

@@ -1,7 +1,3 @@
-/**
- * Edge Case Performance Tests
- * Tests: boundary conditions, data limits, unusual inputs
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -39,7 +35,6 @@ describe('Edge Case Performance', () => {
           const messages = []
           const events = []
 
-          // Process empty arrays
           const emailTexts = emails.map(e => e.subject).filter(Boolean)
           const messageTexts = messages.map(m => m.text).filter(Boolean)
           const eventTexts = events.map(e => e.title).filter(Boolean)
@@ -170,8 +165,8 @@ describe('Edge Case Performance', () => {
         '\t\t\t',
         '\n\n\n',
         '  \t  \n  ',
-        '\u00A0\u00A0\u00A0', // Non-breaking spaces
-        '\u2003\u2003\u2003'  // Em spaces
+        '\u00A0\u00A0\u00A0',
+        '\u2003\u2003\u2003'
       ]
 
       const result = await benchmark(
@@ -179,7 +174,6 @@ describe('Edge Case Performance', () => {
           for (const content of whitespaceContent) {
             const trimmed = content.trim()
             if (trimmed.length === 0) {
-              // Skip empty content
               continue
             }
             await mocks.embedder.embedder([trimmed])
@@ -238,11 +232,11 @@ describe('Edge Case Performance', () => {
   describe('Date/Time Edge Cases', () => {
     it('should handle epoch boundary dates', async () => {
       const epochDates = [
-        new Date(0),                         // Unix epoch (1970)
-        new Date(978307200000),              // Mac epoch (2001)
-        new Date(2147483647000),             // 32-bit overflow (2038)
-        new Date('1969-12-31T23:59:59Z'),    // Just before Unix epoch
-        new Date('2001-01-01T00:00:00Z'),    // Mac epoch exactly
+        new Date(0),
+        new Date(978307200000),
+        new Date(2147483647000),
+        new Date('1969-12-31T23:59:59Z'),
+        new Date('2001-01-01T00:00:00Z'),
       ]
 
       const result = await benchmark(
@@ -272,7 +266,6 @@ describe('Edge Case Performance', () => {
           for (const date of futureDates) {
             const timestamp = date.getTime()
             if (timestamp > Date.now()) {
-              // Future date handling
             }
           }
         },
@@ -306,12 +299,11 @@ describe('Edge Case Performance', () => {
     })
 
     it('should handle DST transition dates', async () => {
-      // US DST transitions (approximate - varies by year)
       const dstDates = [
-        new Date('2024-03-10T02:30:00'),  // Spring forward
-        new Date('2024-11-03T01:30:00'),  // Fall back
-        new Date('2024-03-10T01:59:59'),  // Just before
-        new Date('2024-03-10T03:00:01'),  // Just after
+        new Date('2024-03-10T02:30:00'),
+        new Date('2024-11-03T01:30:00'),
+        new Date('2024-03-10T01:59:59'),
+        new Date('2024-03-10T03:00:01'),
       ]
 
       const result = await benchmark(
@@ -331,8 +323,8 @@ describe('Edge Case Performance', () => {
 
     it('should handle timezone extremes', async () => {
       const timezones = [
-        'Pacific/Kiritimati',  // UTC+14
-        'Pacific/Midway',      // UTC-11
+        'Pacific/Kiritimati',
+        'Pacific/Midway',
         'UTC',
         'America/New_York',
         'Asia/Tokyo',
@@ -345,7 +337,6 @@ describe('Edge Case Performance', () => {
             try {
               const formatted = now.toLocaleString('en-US', { timeZone: tz })
             } catch (e) {
-              // Timezone not supported
             }
           }
         },
@@ -358,9 +349,9 @@ describe('Edge Case Performance', () => {
 
     it('should handle leap year dates', async () => {
       const leapDates = [
-        new Date('2024-02-29'),  // Leap year
-        new Date('2000-02-29'),  // Century leap year
-        new Date('2100-02-28'),  // Not a leap year (century rule)
+        new Date('2024-02-29'),
+        new Date('2000-02-29'),
+        new Date('2100-02-28'),
       ]
 
       const result = await benchmark(
@@ -402,7 +393,6 @@ describe('Edge Case Performance', () => {
 
     it('should handle query matching all results', async () => {
       const emails = generateEmails(100)
-      // Add common word to all
       emails.forEach(e => e.subject = 'meeting ' + e.subject)
 
       const result = await benchmark(
@@ -431,7 +421,6 @@ describe('Edge Case Performance', () => {
       const result = await benchmark(
         async () => {
           for (const query of stopWordQueries) {
-            // Stop words should still be processed
             await mocks.embedder.embedder([query])
           }
         },
@@ -457,7 +446,6 @@ describe('Edge Case Performance', () => {
             const isNegation = query.startsWith('-') ||
                                query.startsWith('NOT ') ||
                                query.includes('without')
-            // Process negation
           }
         },
         { name: 'Negation-only queries', iterations: 50, warmup: 10 }
@@ -484,7 +472,6 @@ describe('Edge Case Performance', () => {
       const result = await benchmark(
         async () => {
           for (const query of regexQueries) {
-            // Escape regex special chars
             const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
             await mocks.embedder.embedder([query])
           }
@@ -513,13 +500,11 @@ describe('Edge Case Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Build thread tree
           const threadMap = new Map()
           for (const email of emails) {
             threadMap.set(email.messageId, email)
           }
 
-          // Find root
           let current = emails[emails.length - 1]
           let depth = 0
           while (current.inReplyTo && threadMap.has(current.inReplyTo)) {
@@ -538,7 +523,6 @@ describe('Edge Case Performance', () => {
 
     it('should handle orphaned thread messages', async () => {
       const emails = generateEmails(50)
-      // Create orphans (reference non-existent parents)
       emails.forEach((e, i) => {
         if (i % 5 === 0) {
           e.inReplyTo = '<nonexistent@example.com>'
@@ -575,7 +559,6 @@ describe('Edge Case Performance', () => {
         async () => {
           for (const contact of contacts) {
             for (const email of contact.emails) {
-              // Look up by each email
             }
           }
         },
@@ -653,7 +636,7 @@ describe('Edge Case Performance', () => {
         title: `Multi-day event ${i}`,
         isAllDay: true,
         startTimestamp: Date.now(),
-        endTimestamp: Date.now() + (i + 1) * 24 * 60 * 60 * 1000  // 1-10 days
+        endTimestamp: Date.now() + (i + 1) * 24 * 60 * 60 * 1000
       }))
 
       const result = await benchmark(
@@ -662,7 +645,6 @@ describe('Edge Case Performance', () => {
             const days = Math.ceil(
               (event.endTimestamp - event.startTimestamp) / (24 * 60 * 60 * 1000)
             )
-            // Expand to individual day occurrences
             for (let d = 0; d < days; d++) {
               const dayStart = event.startTimestamp + d * 24 * 60 * 60 * 1000
             }
@@ -692,7 +674,6 @@ describe('Edge Case Performance', () => {
             recurringEvent.exceptions.map(e => [e.date.toISOString(), e])
           )
 
-          // Generate 52 weeks of occurrences
           const occurrences = []
           for (let w = 0; w < 52; w++) {
             const date = new Date(Date.now() + w * 7 * 24 * 60 * 60 * 1000)
@@ -715,13 +696,12 @@ describe('Edge Case Performance', () => {
       const now = Date.now()
       const events = Array(20).fill(null).map((_, i) => ({
         id: i,
-        startTimestamp: now + (i % 5) * 30 * 60 * 1000,  // Staggered starts
-        endTimestamp: now + ((i % 5) + 2) * 30 * 60 * 1000  // 1-hour events
+        startTimestamp: now + (i % 5) * 30 * 60 * 1000,
+        endTimestamp: now + ((i % 5) + 2) * 30 * 60 * 1000
       }))
 
       const result = await benchmark(
         async () => {
-          // Find overlapping events
           const overlaps = []
           for (let i = 0; i < events.length; i++) {
             for (let j = i + 1; j < events.length; j++) {
@@ -745,7 +725,6 @@ describe('Edge Case Performance', () => {
   describe('Result Edge Cases', () => {
     it('should handle duplicate results efficiently', async () => {
       const emails = generateEmails(50)
-      // Create duplicates
       const withDuplicates = [...emails, ...emails.slice(0, 25)]
 
       const result = await benchmark(
@@ -767,7 +746,6 @@ describe('Edge Case Performance', () => {
 
     it('should handle results with missing fields', async () => {
       const emails = generateEmails(50)
-      // Remove random fields
       emails.forEach((e, i) => {
         if (i % 3 === 0) delete e.subject
         if (i % 4 === 0) delete e.from

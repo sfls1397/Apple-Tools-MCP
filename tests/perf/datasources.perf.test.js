@@ -1,7 +1,3 @@
-/**
- * Performance tests for data source operations
- * Tests: Mail, Messages, Calendar, Contacts - parsing, querying, formatting
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -124,7 +120,6 @@ describe('Data Source Performance', () => {
 
     describe('File Discovery', () => {
       it('should handle mdfind results efficiently', async () => {
-        // Simulate mdfind output with 5000 file paths
         const paths = Array(5000).fill(null)
           .map((_, i) => `/Users/test/Library/Mail/V10/INBOX.mbox/${i + 1}.emlx`)
           .join('\n')
@@ -189,11 +184,9 @@ describe('Data Source Performance', () => {
 
     describe('Binary Format Parsing', () => {
       it('should parse attributedBody efficiently', async () => {
-        // Simulate NSAttributedString binary data
         const mockBinaryData = Buffer.from('NSString+Test message content here')
 
         const extractText = (data) => {
-          // Simplified extraction
           const str = data.toString('utf-8')
           const plusIndex = str.indexOf('+')
           if (plusIndex >= 0) {
@@ -338,12 +331,10 @@ describe('Data Source Performance', () => {
         const result = await benchmark(
           () => {
             const slots = []
-            const workStart = 9 * 60 // 9 AM
-            const workEnd = 17 * 60 // 5 PM
 
             for (let i = 0; i < events.length - 1; i++) {
               const gap = events[i + 1].startTimestamp - events[i].endTimestamp
-              if (gap > 30 * 60 * 1000) { // 30+ minute gap
+              if (gap > 30 * 60 * 1000) {
                 slots.push({
                   start: new Date(events[i].endTimestamp),
                   end: new Date(events[i + 1].startTimestamp),
@@ -352,7 +343,7 @@ describe('Data Source Performance', () => {
               }
             }
 
-            return slots.filter(s => s.duration >= 60 * 60 * 1000) // 1+ hour
+            return slots.filter(s => s.duration >= 60 * 60 * 1000)
           },
           { name: 'Calculate free time (50 events)', iterations: 100, warmup: 20 }
         )
@@ -369,7 +360,7 @@ describe('Data Source Performance', () => {
         const result = await benchmark(
           () => {
             const expanded = []
-            const occurrences = 52 // Weekly for a year
+            const occurrences = 52
 
             for (const event of events) {
               for (let i = 0; i < occurrences; i++) {

@@ -1,12 +1,3 @@
-/**
- * Performance & Boundary Tests - Stress testing and performance validation
- *
- * Tests for:
- * - Large result sets
- * - Concurrent operations
- * - Response time boundaries
- * - Memory-efficient processing
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
@@ -19,7 +10,6 @@ import {
   lookupContact
 } from '../../contacts.js'
 
-// Real paths
 const DATA_DIR = path.join(process.env.HOME, '.apple-tools-mcp')
 const DB_PATH = path.join(DATA_DIR, 'vector-index')
 
@@ -49,9 +39,6 @@ async function searchTable(tableName, query, limit = 10) {
   }
 }
 
-// ============================================================================
-// LARGE RESULT SET TESTS
-// ============================================================================
 
 describe.skipIf(!indexExists)('Large Result Set Handling', () => {
   beforeAll(async () => {
@@ -68,7 +55,7 @@ describe.skipIf(!indexExists)('Large Result Set Handling', () => {
     console.log(`  → Retrieved ${results.length} emails in ${elapsed}ms`)
 
     expect(results.length).toBeLessThanOrEqual(100)
-    expect(elapsed).toBeLessThan(10000) // Should complete within 10 seconds
+    expect(elapsed).toBeLessThan(10000)
   })
 
   it('should handle 200 result limit', async () => {
@@ -103,9 +90,6 @@ describe.skipIf(!indexExists)('Large Result Set Handling', () => {
   })
 })
 
-// ============================================================================
-// CONCURRENT OPERATION TESTS
-// ============================================================================
 
 describe.skipIf(!indexExists)('Concurrent Operations', () => {
   beforeAll(async () => {
@@ -131,7 +115,6 @@ describe.skipIf(!indexExists)('Concurrent Operations', () => {
     expect(Array.isArray(results1)).toBe(true)
     expect(Array.isArray(results2)).toBe(true)
     expect(Array.isArray(results3)).toBe(true)
-    // Concurrent should be faster than sequential (or at least not crash)
     expect(elapsed).toBeLessThan(30000)
   })
 
@@ -171,9 +154,6 @@ describe.skipIf(!indexExists)('Concurrent Operations', () => {
   })
 })
 
-// ============================================================================
-// RESPONSE TIME TESTS
-// ============================================================================
 
 describe.skipIf(!indexExists)('Response Time Boundaries', () => {
   beforeAll(async () => {
@@ -199,33 +179,25 @@ describe.skipIf(!indexExists)('Response Time Boundaries', () => {
 
     console.log(`  → Obscure query result in ${elapsed}ms, found ${results.length} results`)
 
-    // Vector search always returns nearest neighbors, even for nonsense queries
-    // The important thing is that it completes quickly
     expect(elapsed).toBeLessThan(5000)
     expect(Array.isArray(results)).toBe(true)
   })
 
   it('should handle repeated queries efficiently (caching)', async () => {
-    // First query (cold)
     const start1 = Date.now()
     await searchTable('emails', 'test query for cache', 10)
     const elapsed1 = Date.now() - start1
 
-    // Second query (potentially cached)
     const start2 = Date.now()
     await searchTable('emails', 'test query for cache', 10)
     const elapsed2 = Date.now() - start2
 
     console.log(`  → First query: ${elapsed1}ms, Second query: ${elapsed2}ms`)
 
-    // Second should be same or faster (caching may help)
-    expect(elapsed2).toBeLessThanOrEqual(elapsed1 * 1.5) // Allow some variance
+    expect(elapsed2).toBeLessThanOrEqual(elapsed1 * 1.5)
   })
 })
 
-// ============================================================================
-// CONTACT PERFORMANCE TESTS
-// ============================================================================
 
 describe('Contact Operations Performance', () => {
   beforeAll(() => {
@@ -235,7 +207,6 @@ describe('Contact Operations Performance', () => {
   it('should handle rapid lookups', () => {
     const start = Date.now()
 
-    // Perform 100 lookups
     for (let i = 0; i < 100; i++) {
       lookupContact('john@example.com')
     }
@@ -243,13 +214,12 @@ describe('Contact Operations Performance', () => {
     const elapsed = Date.now() - start
     console.log(`  → 100 contact lookups in ${elapsed}ms`)
 
-    expect(elapsed).toBeLessThan(1000) // Should be very fast
+    expect(elapsed).toBeLessThan(1000)
   })
 
   it('should handle rapid searches', () => {
     const start = Date.now()
 
-    // Perform 50 searches
     for (let i = 0; i < 50; i++) {
       searchContacts('john', 10)
     }
@@ -262,7 +232,7 @@ describe('Contact Operations Performance', () => {
 
   it('should search entire contact database efficiently', () => {
     const start = Date.now()
-    const results = searchContacts('a', 1000) // Wide search
+    const results = searchContacts('a', 1000)
     const elapsed = Date.now() - start
 
     console.log(`  → Full contact search: ${results.length} results in ${elapsed}ms`)
@@ -271,9 +241,6 @@ describe('Contact Operations Performance', () => {
   })
 })
 
-// ============================================================================
-// MEMORY EFFICIENCY TESTS
-// ============================================================================
 
 describe.skipIf(!indexExists)('Memory Efficiency', () => {
   beforeAll(async () => {
@@ -283,12 +250,10 @@ describe.skipIf(!indexExists)('Memory Efficiency', () => {
   })
 
   it('should not accumulate memory over repeated queries', async () => {
-    // Run multiple queries and check we can complete without issues
     for (let i = 0; i < 20; i++) {
       await searchTable('emails', `query ${i}`, 10)
     }
 
-    // If we get here without crashing, memory is managed
     expect(true).toBe(true)
   })
 
@@ -303,9 +268,6 @@ describe.skipIf(!indexExists)('Memory Efficiency', () => {
   })
 })
 
-// ============================================================================
-// QUERY EXPANSION TESTS
-// ============================================================================
 
 describe('Query Processing Performance', () => {
   it('should handle query with many synonyms efficiently', async () => {
@@ -345,9 +307,6 @@ describe('Query Processing Performance', () => {
   })
 })
 
-// ============================================================================
-// BATCH OPERATION TESTS
-// ============================================================================
 
 describe.skipIf(!indexExists)('Batch Operations', () => {
   beforeAll(async () => {

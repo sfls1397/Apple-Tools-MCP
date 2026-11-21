@@ -1,13 +1,3 @@
-/**
- * Advanced Features Tests - Test complex search features
- *
- * Tests for:
- * - Query expansion and synonyms
- * - Negation filtering
- * - Pronoun resolution
- * - Result quality assessment
- * - RRF (Reciprocal Rank Fusion) merging
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
@@ -19,9 +9,6 @@ import {
   resolveByName
 } from '../../contacts.js'
 
-// ============================================================================
-// Re-implement search logic functions for testing (not exported from search.js)
-// ============================================================================
 
 const synonymMap = {
   'meeting': ['call', 'sync', 'standup', 'discussion'],
@@ -149,7 +136,6 @@ function extractFilters(query) {
   return filters
 }
 
-// Real paths
 const DATA_DIR = path.join(process.env.HOME, '.apple-tools-mcp')
 const DB_PATH = path.join(DATA_DIR, 'vector-index')
 
@@ -179,9 +165,6 @@ async function searchTable(tableName, query, limit = 10) {
   }
 }
 
-// ============================================================================
-// QUERY EXPANSION TESTS
-// ============================================================================
 
 describe('Query Expansion', () => {
   it('should expand meeting-related terms', () => {
@@ -200,7 +183,6 @@ describe('Query Expansion', () => {
     console.log('  → Variants:', variants)
 
     expect(variants.length).toBeGreaterThan(0)
-    // Should include synonyms like bill, payment, etc.
     const allVariants = variants.join(' ').toLowerCase()
     const hasExpansion = allVariants.includes('bill') ||
                          allVariants.includes('receipt') ||
@@ -214,7 +196,6 @@ describe('Query Expansion', () => {
     console.log('  → Variants:', variants)
 
     expect(variants.length).toBeGreaterThan(0)
-    // Should create a simplified version without time modifiers
   })
 
   it('should not expand simple queries excessively', () => {
@@ -231,9 +212,6 @@ describe('Query Expansion', () => {
   })
 })
 
-// ============================================================================
-// NEGATION PARSING TESTS
-// ============================================================================
 
 describe('Negation Parsing', () => {
   it('should parse NOT keyword', () => {
@@ -278,9 +256,6 @@ describe('Negation Parsing', () => {
   })
 })
 
-// ============================================================================
-// KEYWORD EXTRACTION TESTS
-// ============================================================================
 
 describe('Keyword Extraction', () => {
   it('should extract significant words', () => {
@@ -319,14 +294,10 @@ describe('Keyword Extraction', () => {
   it('should filter short words', () => {
     const keywords = extractKeywords('I am a test of at to')
 
-    // Short words should be filtered
     expect(keywords.filter(k => k.length <= 2).length).toBe(0)
   })
 })
 
-// ============================================================================
-// KEYWORD MATCHING TESTS
-// ============================================================================
 
 describe('Keyword Matching', () => {
   it('should return 1.0 for exact match', () => {
@@ -360,9 +331,6 @@ describe('Keyword Matching', () => {
   })
 })
 
-// ============================================================================
-// RESULT QUALITY ASSESSMENT TESTS
-// ============================================================================
 
 describe('Result Quality Assessment', () => {
   it('should return "empty" for no results', () => {
@@ -404,9 +372,6 @@ describe('Result Quality Assessment', () => {
   })
 })
 
-// ============================================================================
-// QUERY BROADENING TESTS
-// ============================================================================
 
 describe('Query Broadening', () => {
   it('should remove time constraints', () => {
@@ -421,7 +386,6 @@ describe('Query Broadening', () => {
     const broadened = broadenQuery('emails from john about budget')
 
     const hasFewer = broadened.split(' ').length < 'emails from john about budget'.split(' ').length
-    // Should have simplified
     expect(true).toBe(true)
   })
 
@@ -429,14 +393,10 @@ describe('Query Broadening', () => {
     const original = 'a b'
     const broadened = broadenQuery(original)
 
-    // Should return something usable
     expect(broadened.length).toBeGreaterThan(0)
   })
 })
 
-// ============================================================================
-// RRF (RECIPROCAL RANK FUSION) TESTS
-// ============================================================================
 
 describe('Reciprocal Rank Fusion', () => {
   it('should merge results from multiple sets', () => {
@@ -445,7 +405,7 @@ describe('Reciprocal Rank Fusion', () => {
 
     const merged = reciprocalRankFusion([set1, set2], 'id')
 
-    expect(merged.length).toBe(4) // a, b, c, d (deduplicated)
+    expect(merged.length).toBe(4)
   })
 
   it('should boost items appearing in multiple sets', () => {
@@ -454,7 +414,6 @@ describe('Reciprocal Rank Fusion', () => {
 
     const merged = reciprocalRankFusion([set1, set2], 'id')
 
-    // 'a' appears in both, should be ranked higher
     expect(merged[0].id).toBe('a')
   })
 
@@ -474,9 +433,6 @@ describe('Reciprocal Rank Fusion', () => {
   })
 })
 
-// ============================================================================
-// NEGATION FILTER TESTS
-// ============================================================================
 
 describe('Negation Filtering', () => {
   it('should filter out results containing negated terms', () => {
@@ -511,22 +467,17 @@ describe('Negation Filtering', () => {
   })
 })
 
-// ============================================================================
-// FILTER EXTRACTION TESTS
-// ============================================================================
 
 describe('Filter Extraction from Natural Language', () => {
   describe('Person extraction', () => {
     it('should extract "from John" pattern', () => {
       const filters = extractFilters('emails from John about budget')
-      // The regex matches the first name after "from"
       expect(filters.person).toBeDefined()
       expect(filters.person.toLowerCase()).toContain('john')
     })
 
     it('should extract "from John Smith" pattern', () => {
       const filters = extractFilters('messages from John Smith')
-      // Should capture at least the first name
       expect(filters.person).toBeDefined()
       expect(filters.person.toLowerCase()).toContain('john')
     })
@@ -553,9 +504,6 @@ describe('Filter Extraction from Natural Language', () => {
   })
 })
 
-// ============================================================================
-// INTEGRATION WITH REAL DATA
-// ============================================================================
 
 describe.skipIf(!indexExists)('Advanced Features with Real Data', () => {
   beforeAll(async () => {
@@ -613,15 +561,10 @@ describe.skipIf(!indexExists)('Advanced Features with Real Data', () => {
     console.log(`  → Good query quality: ${goodQuality}`)
     console.log(`  → Bad query quality: ${badQuality}`)
 
-    // Vector search returns nearest neighbors even for nonsense queries
-    // Bad queries should have low confidence (high distance scores)
     expect(['empty', 'low_confidence', 'sparse']).toContain(badQuality)
   })
 })
 
-// ============================================================================
-// CONTACT-BASED SEARCH TESTS
-// ============================================================================
 
 describe('Contact-Based Search Features', () => {
   beforeAll(() => {

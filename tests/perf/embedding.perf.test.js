@@ -1,11 +1,3 @@
-/**
- * Performance tests for embedding and vector operations
- * Tests: model loading, embedding generation, vector similarity
- *
- * NOTE: These tests require real embeddings via Xenova/all-MiniLM-L6-v2
- * All mock embedding support has been removed as of the real-data-only architecture.
- * Tests will skip if real embeddings are not available.
- */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import {
@@ -28,7 +20,6 @@ import {
   cleanup as cleanupRealData
 } from './helpers/real-data.js'
 
-// Check if we should use real data
 const USE_REAL_DATA = process.env.USE_REAL_DATA === '1' || process.env.USE_REAL_DATA === 'true'
 const REAL_DATA_AVAILABLE = isRealDataAvailable()
 const useRealData = USE_REAL_DATA && REAL_DATA_AVAILABLE
@@ -40,7 +31,6 @@ describe('Embedding Performance', () => {
     if (useRealData) {
       console.log('\n=== USING REAL EMBEDDING MODEL ===')
       console.log('Loading Xenova/all-MiniLM-L6-v2...')
-      // Pre-load the model
       await getRealEmbedder()
       console.log('Model loaded.\n')
     } else {
@@ -74,7 +64,7 @@ describe('Embedding Performance', () => {
           { name: 'Access real embedding pipeline (cached)', iterations: 10, warmup: 2 }
         )
         reporter.addResult(result)
-        expect(result.mean).toBeLessThan(50) // Should be cached
+        expect(result.mean).toBeLessThan(50)
       } else {
         const mock = createFastEmbedder()
         const result = await benchmark(
@@ -90,7 +80,6 @@ describe('Embedding Performance', () => {
 
     it('should cache pipeline after first load', async () => {
       if (useRealData) {
-        // Real model is already cached in beforeAll
         const cachedResult = await benchmark(
           async () => {
             await getRealEmbedder()
@@ -141,7 +130,7 @@ describe('Embedding Performance', () => {
           { name: 'Real single text embedding', iterations: 20, warmup: 5 }
         )
         reporter.addResult(result)
-        expect(result.mean).toBeLessThan(100) // Real embedding takes longer
+        expect(result.mean).toBeLessThan(100)
       } else {
         const mock = createFastEmbedder()
         const result = await benchmark(
@@ -184,9 +173,7 @@ describe('Embedding Performance', () => {
         }
       }
 
-      // Longer texts should not be dramatically slower
       console.log(`10 words: ${results[0].mean}ms, 500 words: ${results[4].mean}ms`)
-      // Allow up to 10x slowdown for 50x longer text (measured 7.7x on this hardware)
       expect(results[4].mean).toBeLessThan(results[0].mean * 10)
     })
   })
@@ -258,7 +245,7 @@ describe('Embedding Performance', () => {
 
       const throughput8 = calculateThroughput(results[0].size, results[0].mean)
       const throughput64 = calculateThroughput(results[3].size, results[3].mean)
-      expect(throughput64).toBeGreaterThanOrEqual(throughput8 * 0.3) // Batch should help throughput
+      expect(throughput64).toBeGreaterThanOrEqual(throughput8 * 0.3)
     })
 
     it('should handle 100 texts in batches', async () => {
@@ -395,7 +382,6 @@ describe('Embedding Performance', () => {
       const texts = generateEmbeddingTexts(100)
 
       if (useRealData) {
-        // Populate cache with real embeddings
         for (const text of texts.slice(0, 20)) {
           const embedding = await realEmbed(text)
           cache.set(text, embedding)
@@ -446,7 +432,6 @@ describe('Embedding Performance', () => {
 
         const texts = generateEmbeddingTexts(10)
 
-        // First pass - all misses
         const missResult = await benchmark(
           async () => {
             cache.clear()
@@ -457,7 +442,6 @@ describe('Embedding Performance', () => {
           { name: 'Real cold cache', iterations: 2, warmup: 0 }
         )
 
-        // Second pass - all hits
         const hitResult = await benchmark(
           async () => {
             for (const text of texts) {
@@ -519,7 +503,6 @@ describe('Embedding Performance', () => {
       const memBefore = getMemoryUsage()
 
       if (useRealData) {
-        // Generate embeddings
         for (let i = 0; i < 20; i++) {
           const texts = generateEmbeddingTexts(10)
           await realEmbedBatch(texts)
@@ -536,7 +519,7 @@ describe('Embedding Performance', () => {
       const growth = memAfter.heapUsed - memBefore.heapUsed
 
       console.log(`\nMemory growth: ${growth.toFixed(2)}MB`)
-      expect(growth).toBeLessThan(200) // Allow more for real model
+      expect(growth).toBeLessThan(200)
     })
 
     it('should not leak memory in batch processing', async () => {

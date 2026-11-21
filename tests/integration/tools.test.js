@@ -1,16 +1,8 @@
-/**
- * Integration tests for MCP tool handlers
- * Tests the front-end/API layer - tool invocation, response format, error handling
- *
- * These tests validate pure logic patterns. No mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// ============ TOOL DEFINITION TESTS ============
 
 describe('MCP Tool Definitions', () => {
-  // These tests verify the tool schemas are correct
 
   describe('Mail Tools Schema', () => {
     const mailSearchSchema = {
@@ -115,7 +107,6 @@ describe('MCP Tool Definitions', () => {
   })
 })
 
-// ============ TOOL RESPONSE FORMAT TESTS ============
 
 describe('MCP Response Format', () => {
   const formatMCPResponse = (content, isError = false) => {
@@ -141,7 +132,6 @@ describe('MCP Response Format', () => {
   })
 })
 
-// ============ INPUT VALIDATION TESTS ============
 
 describe('Tool Input Validation', () => {
   describe('Required Parameters', () => {
@@ -214,7 +204,6 @@ describe('Tool Input Validation', () => {
   })
 })
 
-// ============ ERROR HANDLING TESTS ============
 
 describe('Tool Error Handling', () => {
   describe('Unknown Tool', () => {
@@ -289,7 +278,6 @@ describe('Tool Error Handling', () => {
   })
 })
 
-// ============ CROSS-TOOL WORKFLOW TESTS ============
 
 describe('Cross-Tool Workflows', () => {
   describe('Search → Read Flow', () => {
@@ -312,7 +300,6 @@ describe('Cross-Tool Workflows', () => {
         messageId: '<unique@example.com>'
       }
 
-      // These fields enable follow-up queries
       expect(searchResult.sender || searchResult.chatIdentifier).toBeTruthy()
     })
   })
@@ -342,28 +329,23 @@ describe('Cross-Tool Workflows', () => {
   })
 })
 
-// ============ SMART SEARCH INTENT DETECTION ============
 
 describe('Smart Search Intent Detection', () => {
   const detectIntent = (query) => {
     const q = query.toLowerCase()
 
-    // Calendar intent signals
     if (q.match(/\b(meeting|event|calendar|schedule|appointment|when|free|busy|available)\b/)) {
       return 'calendar'
     }
 
-    // Messages intent signals
     if (q.match(/\b(text|message|imessage|sms|chat|conversation|say|said|told)\b/)) {
       return 'messages'
     }
 
-    // Email intent signals
     if (q.match(/\b(email|mail|inbox|sent|attachment|forward|reply)\b/)) {
       return 'mail'
     }
 
-    // Default to searching all sources
     return 'all'
   }
 
@@ -391,7 +373,6 @@ describe('Smart Search Intent Detection', () => {
   })
 })
 
-// ============ RESULT FORMATTING TESTS ============
 
 describe('Result Formatting', () => {
   describe('Email Result Format', () => {
@@ -489,11 +470,10 @@ describe('Result Formatting', () => {
   })
 })
 
-// ============ CACHING BEHAVIOR TESTS ============
 
 describe('Caching Behavior', () => {
   describe('Embedding Cache', () => {
-    const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+    const CACHE_TTL = 5 * 60 * 1000
     const CACHE_MAX = 100
 
     class EmbeddingCache {
@@ -511,7 +491,6 @@ describe('Caching Behavior', () => {
 
       set(text, vector) {
         if (this.cache.size >= CACHE_MAX) {
-          // Evict oldest
           const oldest = [...this.cache.entries()]
             .sort((a, b) => a[1].timestamp - b[1].timestamp)[0]
           if (oldest) this.cache.delete(oldest[0])
@@ -536,7 +515,7 @@ describe('Caching Behavior', () => {
       const cache = new EmbeddingCache()
       cache.cache.set('test', {
         vector: [0.1],
-        timestamp: Date.now() - (10 * 60 * 1000) // 10 minutes ago
+        timestamp: Date.now() - (10 * 60 * 1000)
       })
 
       const result = cache.get('test')
@@ -546,17 +525,15 @@ describe('Caching Behavior', () => {
     it('should evict oldest when at capacity', () => {
       const cache = new EmbeddingCache()
 
-      // Fill cache
       for (let i = 0; i < 100; i++) {
         cache.set(`query${i}`, [i])
       }
 
       expect(cache.size).toBe(100)
 
-      // Add one more
       cache.set('newQuery', [999])
 
-      expect(cache.size).toBe(100) // Still at max
+      expect(cache.size).toBe(100)
       expect(cache.get('newQuery')).toEqual([999])
     })
   })
