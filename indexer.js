@@ -30,7 +30,6 @@ import {
 import { createMessageContactMatcher } from "./lib/messageContact.js";
 import { resolveByExactName, normalizePhone } from "./contacts.js";
 
-// Re-export contact functions for use by other modules
 export {
   loadContacts,
   resolveEmail,
@@ -45,20 +44,15 @@ export {
   getContactStats
 } from "./contacts.js";
 
-// Support env var overrides for testing with separate index
 export const INDEX_DIR = process.env.APPLE_TOOLS_INDEX_DIR ||
   path.join(process.env.HOME, ".apple-tools-mcp", "vector-index");
 const META_FILE = process.env.APPLE_TOOLS_META_FILE ||
   path.join(process.env.HOME, ".apple-tools-mcp", "index-meta.json");
-// Optional date filter for email indexing. Default is unlimited (index all emails).
-// Set APPLE_TOOLS_INDEX_DAYS_BACK=30 to cap the window (tests do this).
-// Set APPLE_TOOLS_INDEX_DAYS_BACK=0 to explicitly disable filtering.
 const DAYS_BACK = process.env.APPLE_TOOLS_INDEX_DAYS_BACK !== undefined
-  ? parseInt(process.env.APPLE_TOOLS_INDEX_DAYS_BACK, 10) || null  // 0 means null (no filter)
-  : null;  // Default: no date filter
+  ? parseInt(process.env.APPLE_TOOLS_INDEX_DAYS_BACK, 10) || null
+  : null;
 const MAIL_DIR = path.join(process.env.HOME, "Library", "Mail");
 
-// Load/save index metadata (timestamps, etc.)
 function loadIndexMeta() {
   try {
     if (fs.existsSync(META_FILE)) {
@@ -77,19 +71,14 @@ function saveIndexMeta(meta) {
 }
 const MESSAGES_DB = path.join(process.env.HOME, "Library", "Messages", "chat.db");
 const CALENDAR_DB = path.join(process.env.HOME, "Library", "Group Containers", "group.com.apple.calendar", "Calendar.sqlitedb");
-const BATCH_SIZE = 64; // Optimized for batch embedding throughput (increased for faster indexing)
-const BATCH_DELAY_MS = 0; // No delay needed - benchmarks showed no thermal throttling
+const BATCH_SIZE = 64;
+const BATCH_DELAY_MS = 0;
 
-// Mac Absolute Time epoch: Jan 1, 2001 00:00:00 UTC
 const MAC_ABSOLUTE_EPOCH = 978307200;
 export const CALENDAR_TMP_PREFIX = "apple-tools-cal-";
 
 let embeddingPipeline = null;
 
-// One connection per process. Do not early-return a first connect that saw an
-// empty catalog — MCP stdio must pick up tables the indexer daemon already wrote.
-// The capped Session keeps LanceDB's caches from growing to their 6 GB / 1 GB
-// defaults in the long-lived indexer daemon.
 const lanceCache = createLanceTableCache({
   connect: (uri, options, session) => lancedb.connect(uri, options, session),
   indexDir: INDEX_DIR,
@@ -100,9 +89,6 @@ const lanceCache = createLanceTableCache({
 const tables = lanceCache.tables;
 let db = null;
 
-// Indexed ID sets stay in memory between passes; a table is re-read only when
-// its version moves. Email files skipped as Message-ID duplicates are
-// remembered so the same IMAP copies are not parsed every pass.
 const EMAIL_ID_FIELDS = ["filePath", "messageId"];
 const indexedIdCache = createIndexedIdCache({
   getTable: async (name) => {
@@ -115,9 +101,6 @@ const duplicateEmailPaths = createDuplicatePathTracker();
 async function getEmbedder() {
   if (!embeddingPipeline) {
     console.error("Loading embedding model (first time may take a minute)...");
-    // Lazy import: @huggingface/transformers loads sharp at import time. A static
-    // import crashes Linux (and any host without the platform sharp native)
-    // before search.js formatters / pronoun helpers can load.
     const { pipeline } = await import("@huggingface/transformers");
     embeddingPipeline = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
     console.error("Embedding model loaded.");
@@ -131,10 +114,8 @@ export async function embed(text) {
   return Array.from(result.data);
 }
 
-// True batch embedding - single forward pass for multiple texts
-const EMBEDDING_DIM = 384; // all-MiniLM-L6-v2 dimension
+const EMBEDDING_DIM = 384;
 
-// Timeout wrapper for promises
 function withTimeout(promise, timeoutMs, operation = "Operation") {
   let timer;
   const timeoutPromise = new Promise((_, reject) => {
@@ -152,19 +133,15 @@ export async function embedBatch(texts) {
 
   const embedder = await getEmbedder();
 
-  // Add timeout protection: 30 seconds per batch
-  // This prevents the process from hanging if embedding gets stuck
   const EMBEDDING_TIMEOUT_MS = 30000;
 
   try {
-    // Process all texts in a single forward pass
     const result = await withTimeout(
       embedder(texts, { pooling: "mean", normalize: true }),
       EMBEDDING_TIMEOUT_MS,
       "Batch embedding"
     );
 
-    // Result.data is a flat Float32Array of shape [batch_size * embedding_dim]
     const embeddings = [];
     for (let i = 0; i < texts.length; i++) {
       const start = i * EMBEDDING_DIM;
@@ -175,7 +152,6 @@ export async function embedBatch(texts) {
   } catch (error) {
     if (error.message.includes("timed out")) {
       console.error(`⚠️  Embedding batch timed out (${texts.length} texts). Retrying with smaller batches...`);
-      // Fall back to processing one at a time with timeouts
       const embeddings = [];
       for (const text of texts) {
         try {
@@ -183,7 +159,6 @@ export async function embedBatch(texts) {
           embeddings.push(emb);
         } catch (e) {
           console.error(`Failed to embed text: ${e.message}`);
-          // Return zero vector as fallback
           embeddings.push(new Array(EMBEDDING_DIM).fill(0));
         }
       }
@@ -193,23 +168,18 @@ export async function embedBatch(texts) {
   }
 }
 
-// ============ UTILITY FUNCTIONS ============
 
-// Extract email address from "Name <email>" format
 function extractEmail(str) {
   if (!str) return "";
   const match = str.match(/<([^>]+)>/);
   if (match) return match[1].toLowerCase();
-  // If no angle brackets, check if it looks like an email
   if (str.includes("@")) return str.trim().toLowerCase();
-  return ""; // Return empty string if no email found
+  return "";
 }
 
-// Extract all email addresses from a string (handles multiple recipients)
 function extractEmails(str) {
   if (!str) return [];
   const emails = [];
-  // Split by comma and process each
   for (const part of str.split(",")) {
     const email = extractEmail(part.trim());
     if (email && email.includes("@")) {
@@ -219,15 +189,12 @@ function extractEmails(str) {
   return emails;
 }
 
-// Parse date string to timestamp
 function parseDateTime(dateStr) {
   if (!dateStr) return 0;
   try {
-    // Try direct parsing
     let d = new Date(dateStr);
     if (!isNaN(d.getTime())) return d.getTime();
 
-    // Handle AppleScript format: "Friday, January 10, 2025 at 9:00:00 AM"
     const appleMatch = dateStr.match(/(\w+), (\w+ \d+, \d+) at (\d+:\d+:\d+ [AP]M)/i);
     if (appleMatch) {
       d = new Date(`${appleMatch[2]} ${appleMatch[3]}`);
@@ -240,19 +207,13 @@ function parseDateTime(dateStr) {
   }
 }
 
-// ============ EMAIL INDEXING ============
 
-// Extract mailbox name from file path (e.g., "INBOX.mbox" -> "INBOX")
 function extractMailbox(filePath) {
   const match = filePath.match(/([^/]+)\.mbox/);
   return match ? match[1] : "Unknown";
 }
 
-// Mailbox priority for deduplication - lower number = higher priority
-// When the same email exists in multiple folders (IMAP behavior), we prefer
-// to index the copy from higher-priority folders so mailbox searches work correctly
 const MAILBOX_PRIORITY = {
-  // Highest priority - user's primary mailboxes
   "INBOX": 1,
   "Sent": 2,
   "Sent Messages": 2,
@@ -260,15 +221,12 @@ const MAILBOX_PRIORITY = {
   "Drafts": 3,
   "Flagged": 4,
 
-  // Medium priority - organizational folders
   "Archive": 5,
   "Archives": 5,
 
-  // Low priority - catch-all folders
   "All Mail": 90,
   "[Gmail]": 90,
 
-  // Lowest priority - folders users rarely search intentionally
   "Junk": 95,
   "Spam": 95,
   "Junk E-mail": 95,
@@ -278,8 +236,6 @@ const MAILBOX_PRIORITY = {
   "Bin": 99
 };
 
-// Get priority for a mailbox (lower = higher priority)
-// Unknown/custom folders get priority 50 (between Archive and All Mail)
 function getMailboxPriority(filePath) {
   const mailbox = extractMailbox(filePath);
   return MAILBOX_PRIORITY[mailbox] ?? 50;
@@ -290,19 +246,14 @@ function parseEmlx(filePath) {
     const rawContent = fs.readFileSync(filePath, "utf-8");
     const isPartial = filePath.endsWith(".partial.emlx");
 
-    // Handle Apple Mail envelope format: first line is byte count, followed by newline
-    // Strip the preamble to get the actual RFC822 email content
     let content = rawContent;
     const lines = rawContent.split("\n");
     if (lines[0] && /^\d+\s*$/.test(lines[0])) {
-      // First line is a number (byte count) with optional whitespace, skip it
       content = lines.slice(1).join("\n");
     }
 
-    // Unfold RFC 822 wrapped headers so long From/Subject/To values are complete
     const unfolded = unfoldRfc822Headers(content);
 
-    // Extract headers
     const fromMatch = unfolded.match(/^From:\s*(.+)$/m);
     const subjectMatch = unfolded.match(/^Subject:\s*(.+)$/m);
     const dateMatch = unfolded.match(/^Date:\s*(.+)$/m);
@@ -311,17 +262,14 @@ function parseEmlx(filePath) {
     const messageIdMatch = unfolded.match(/^Message-ID:\s*(.+)$/im);
     const flaggedMatch = unfolded.match(/^X-Flagged:\s*(.+)$/im) || unfolded.match(/flags.*flagged/i);
 
-    // Check for attachments
     const hasAttachment = /Content-Disposition:\s*attachment/i.test(content) ||
                           /multipart\/mixed/i.test(content) ||
                           /filename=/i.test(content);
 
-    // Extract body
     const headerEnd = content.search(/\r?\n\r?\n/);
     let body = "";
     if (headerEnd > 0) {
       body = content.substring(headerEnd + 2, Math.min(headerEnd + 2000, content.length));
-      // Use safe HTML stripping to prevent ReDoS
       body = stripHtmlTags(body);
     }
 
@@ -331,16 +279,13 @@ function parseEmlx(filePath) {
     const subject = subjectMatch?.[1]?.trim() || "";
     const date = dateMatch?.[1]?.trim() || "";
 
-    // Extract normalized email addresses
     const fromEmail = extractEmail(fromRaw);
     const toEmails = extractEmails(toRaw);
     const ccEmails = extractEmails(ccRaw);
     const allRecipients = [...toEmails, ...ccEmails];
 
-    // Parse date to timestamp
     const dateTimestamp = parseDateTime(date);
 
-    // Determine mailbox and if sent
     const mailbox = extractMailbox(filePath);
     const isSent = mailbox.toLowerCase().includes("sent");
     const isFlagged = !!flaggedMatch;
@@ -348,8 +293,6 @@ function parseEmlx(filePath) {
     const searchText = `From: ${fromRaw}\nTo: ${toRaw}\nSubject: ${subject}\n${body}`.substring(0, 1000);
     const messageId = messageIdMatch?.[1]?.trim() || "";
 
-    // For partial emails, allow indexing even with minimal data
-    // Partial emails may lack complete headers but should still be indexed
     const hasMinimalContent = subject.length > 0 || fromRaw.length > 0 || searchText.length > 10;
 
     if (!hasMinimalContent && isPartial) {
@@ -382,18 +325,10 @@ function parseEmlx(filePath) {
   }
 }
 
-// Full scan - used for first run and rebuild_index
-// Includes both .emlx and .partial.emlx files (partial = not fully downloaded via IMAP)
 async function findAllEmlxFiles() {
-  // "*.emlx" also matches "*.partial.emlx"
-  // Let permission/IO errors propagate so indexEmails does not persist a
-  // timestamp for an empty scan and skip real mail forever.
-  // Async: the daemon keeps answering writer.sock while a slow scan runs.
   return safeFindAsync(MAIL_DIR, { name: "*.emlx", type: "f" });
 }
 
-// Message-ID of an .emlx file, read from its first bytes the same way
-// parseEmlx reads it ("" when the file has none or cannot be read).
 const EMLX_HEADER_READ_BYTES = 64 * 1024;
 function readEmlxMessageId(filePath) {
   let fd;
@@ -412,15 +347,13 @@ function readEmlxMessageId(filePath) {
     return "";
   } finally {
     if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch { /* already closed */ }
+      try { fs.closeSync(fd); } catch { }
     }
   }
 }
 
 const STALE_EMAIL_CHUNK = 500;
 
-// Gone means ENOENT/ENOTDIR only: a file that exists but cannot be read
-// right now (EACCES on one mailbox) is not stale and keeps its row.
 function emailFileGone(filePath) {
   try {
     fs.statSync(filePath);
@@ -430,27 +363,10 @@ function emailFileGone(filePath) {
   }
 }
 
-// SQL string literal for a LanceDB (DataFusion) filter: only a single quote
-// needs escaping; a backslash is literal there, so escapeSQL's doubling would
-// make a path containing one never match.
 function lanceStringLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-/**
- * Email rows whose file is gone: Mail rebuilt or renamed its mailbox folders
- * (a move to a new Mac), a .partial.emlx finished downloading, or a message
- * moved to another mailbox. Without this pass those rows keep dead paths
- * forever (mail_read fails on every hit) and the live copies are skipped as
- * Message-ID duplicates of the dead rows.
- *
- * A stale row whose Message-ID matches an unindexed live file is re-pathed to
- * it and keeps its embedding; the rest are removed. Quiet passes only stat the
- * cached paths (no table reads). Returns null when nothing changed, else the
- * counts plus the full-scan file list the pass should index from, so live
- * files that matched no stale row are picked up even when older than the
- * incremental lookback.
- */
 async function reconcileStaleEmailRows(indexedPaths) {
   let staleCount = 0;
   for (const p of indexedPaths) {
@@ -458,8 +374,6 @@ async function reconcileStaleEmailRows(indexedPaths) {
   }
   if (staleCount === 0 || !tables.emails) return null;
 
-  // Never treat an unreadable Mail folder (lost Full Disk Access, a scan
-  // error) as "every email is gone": that would empty the email index.
   let allFiles;
   try {
     fs.readdirSync(MAIL_DIR);
@@ -476,13 +390,10 @@ async function reconcileStaleEmailRows(indexedPaths) {
   console.error(`\n=== STALE EMAIL ROWS: ${staleCount} indexed paths no longer exist ===`);
   const started = Date.now();
 
-  // Message-IDs of the stale rows (one ID read, only on a pass with stale rows)
   const idRows = await tables.emails.query().select(["filePath", "messageId"]).toArray();
   const stale = idRows.filter(r => emailFileGone(r.filePath));
   const wantedIds = new Set(stale.map(r => r.messageId).filter(Boolean));
 
-  // Unindexed live files that carry one of those Message-IDs; keep the copy
-  // from the highest-priority mailbox, as a fresh index would.
   const liveById = new Map();
   for (const filePath of allFiles) {
     if (indexedPaths.has(filePath)) continue;
@@ -494,13 +405,13 @@ async function reconcileStaleEmailRows(indexedPaths) {
     }
   }
 
-  const repath = new Map(); // old path -> new path
+  const repath = new Map();
   const drop = [];
   for (const row of stale) {
     const target = row.messageId ? liveById.get(row.messageId) : undefined;
     if (target) {
       repath.set(row.filePath, target);
-      liveById.delete(row.messageId); // one row per live file
+      liveById.delete(row.messageId);
     } else {
       drop.push(row.filePath);
     }
@@ -515,7 +426,6 @@ async function reconcileStaleEmailRows(indexedPaths) {
     const rows = await tables.emails.query().where(inList(chunk)).toArray();
     const seen = new Set();
     const records = rows.filter(row => {
-      // A duplicated old path must not become a duplicated new path.
       if (seen.has(row.filePath)) return false;
       seen.add(row.filePath);
       return true;
@@ -530,8 +440,6 @@ async function reconcileStaleEmailRows(indexedPaths) {
         vector: Array.from(row.vector)
       };
     });
-    // Add before delete: a failed delete leaves a stale row that the next
-    // pass removes; a failed add loses nothing.
     if (records.length > 0) await tables.emails.add(records);
     await tables.emails.delete(inList(chunk));
     repathed += records.length;
@@ -548,21 +456,15 @@ async function reconcileStaleEmailRows(indexedPaths) {
   return { repathed, removed, allFiles };
 }
 
-// Fast incremental scan - uses find with -mtime filter (more reliable than mdfind/Spotlight)
 async function findNewEmlxFiles(sinceTimestamp) {
   if (!sinceTimestamp) {
-    // First run - fall back to full scan
     console.error("No previous index timestamp, doing full scan...");
     return findAllEmlxFiles();
   }
 
   try {
-    // Convert timestamp to days ago for -mtime filter
-    // -mtime -N means modified in the last N days
     const daysAgo = Math.ceil((Date.now() - sinceTimestamp) / (24 * 60 * 60 * 1000));
 
-    // Use find with -mtime instead of mdfind for reliability
-    // find is more reliable than Spotlight which can have stale/incomplete indexes
     const files = await safeFindAsync(MAIL_DIR, { name: "*.emlx", type: "f", mtime: `-${daysAgo}` });
     console.error(`find found ${files.length} new/modified emails in last ${daysAgo} days`);
     return files;
@@ -572,36 +474,23 @@ async function findNewEmlxFiles(sinceTimestamp) {
   }
 }
 
-// ============ MESSAGES INDEXING ============
 
-/**
- * Extract text from NSAttributedString BLOB (attributedBody field)
- * macOS stores message text in attributedBody as NSKeyedArchiver format
- * The text is embedded as UTF-8 after the NSString class marker
- */
-/**
- * Validate extracted text to ensure it's not garbage
- */
 function validateExtractedText(text) {
   if (!text || typeof text !== 'string') return false;
   text = text.trim();
   if (text.length < 1 || text.length > 10000) return false;
 
-  // Must be mostly printable characters
   const printableRatio = (text.match(/[\x20-\x7E\u00A0-\uFFFF]/g) || []).length / text.length;
   return printableRatio >= 0.8;
 }
 
-/**
- * Strategy 1: Current NSString+'+' pattern (backward compatibility)
- */
 function extractStrategy1_CurrentPattern(buf) {
   const nsStringMarker = Buffer.from('NSString');
   let markerIndex = buf.indexOf(nsStringMarker);
   if (markerIndex === -1) return null;
 
   const searchStart = markerIndex + nsStringMarker.length;
-  const plusIndex = buf.indexOf(0x2B, searchStart); // '+' character
+  const plusIndex = buf.indexOf(0x2B, searchStart);
   if (plusIndex === -1 || plusIndex >= buf.length - 2) return null;
 
   const lengthByte = buf[plusIndex + 1];
@@ -627,24 +516,16 @@ function extractStrategy1_CurrentPattern(buf) {
   return text.trim();
 }
 
-/**
- * Strategy 2: Direct UTF-8 scanning - find longest printable sequence
- */
 function extractStrategy2_DirectUTF8Scan(buf) {
   const fullText = buf.toString('utf-8');
-  // Find sequences of printable characters at least 20 chars long
   const regex = /[\x20-\x7E\u00A0-\uFFFF]{20,}/g;
   const matches = fullText.match(regex);
 
   if (!matches || matches.length === 0) return null;
 
-  // Return longest match
   return matches.reduce((a, b) => a.length > b.length ? a : b).trim();
 }
 
-/**
- * Strategy 3: NSKeyedArchiver $objects parser - handles modern macOS format
- */
 function extractStrategy3_NSKeyedArchiver(buf) {
   const objectsMarker = Buffer.from('$objects');
   const objectsIndex = buf.indexOf(objectsMarker);
@@ -659,8 +540,7 @@ function extractStrategy3_NSKeyedArchiver(buf) {
     const nsIdx = buf.indexOf(nsStringMarker, currentPos);
     if (nsIdx === -1) break;
 
-    // Try to extract text after this NSString marker
-    const textStart = nsIdx + nsStringMarker.length + 10; // Skip class definition
+    const textStart = nsIdx + nsStringMarker.length + 10;
     const potentialText = buf.slice(textStart, Math.min(textStart + 500, buf.length))
                              .toString('utf-8');
 
@@ -676,28 +556,22 @@ function extractStrategy3_NSKeyedArchiver(buf) {
   }
 
   if (extractedTexts.length === 0) return null;
-  // Return longest extracted text
   return extractedTexts.reduce((a, b) => a.length > b.length ? a : b);
 }
 
-/**
- * Strategy 4: Regex-based pattern matching for common message structures
- */
 function extractStrategy4_RegexBased(buf) {
   const text = buf.toString('utf-8', 0, Math.min(buf.length, 2000));
 
-  // Common patterns in messages
   const patterns = [
-    /(?:wrote|said):\s*\n?\s*(.{20,})/i,  // Reply pattern
-    /"(.{20,})"/,                          // Quoted text
-    /\n\s*([A-Z].{20,})\s*\n/,            // Paragraph pattern
+    /(?:wrote|said):\s*\n?\s*(.{20,})/i,
+    /"(.{20,})"/,
+    /\n\s*([A-Z].{20,})\s*\n/,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
       const extracted = match[1].trim();
-      // Clean up control characters
       const cleanEnd = extracted.search(/[\x00-\x08\x0B\x0C\x0E-\x1F]/);
       if (cleanEnd > 20) {
         return extracted.substring(0, cleanEnd).trim();
@@ -710,22 +584,17 @@ function extractStrategy4_RegexBased(buf) {
   return null;
 }
 
-/**
- * Multi-strategy attributedBody text extraction
- * Tries multiple approaches to extract text from binary NSAttributedString format
- */
 function extractTextFromAttributedBody(buffer) {
   if (!buffer || buffer.length === 0) return null;
 
   try {
     const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
 
-    // Try multiple strategies in order
     const strategies = [
-      extractStrategy1_CurrentPattern,    // Keep for backward compatibility
-      extractStrategy2_DirectUTF8Scan,    // Fast, works on most formats
-      extractStrategy3_NSKeyedArchiver,   // Modern macOS NSAttributedString
-      extractStrategy4_RegexBased         // Pattern-based extraction
+      extractStrategy1_CurrentPattern,
+      extractStrategy2_DirectUTF8Scan,
+      extractStrategy3_NSKeyedArchiver,
+      extractStrategy4_RegexBased
     ];
 
     for (const strategy of strategies) {
@@ -735,7 +604,6 @@ function extractTextFromAttributedBody(buffer) {
           return text;
         }
       } catch (e) {
-        // Try next strategy
         continue;
       }
     }
@@ -748,13 +616,8 @@ function extractTextFromAttributedBody(buffer) {
 
 async function getMessages(sinceTimestamp = null) {
   try {
-    // Enhanced query to get chat info, group chat detection, and attachments
-    // Include attributedBody for messages where text is NULL (newer macOS format)
-    // sinceTimestamp is Unix ms - convert to Mac Absolute Time nanoseconds
     let dateFilter = '';
 
-    // NOTE: Index ALL messages without any date filtering
-    // Only emails use the DAYS_BACK filter - messages and calendar are comprehensive
 
     if (sinceTimestamp) {
       const macAbsoluteNs = (sinceTimestamp / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000;
@@ -787,7 +650,6 @@ async function getMessages(sinceTimestamp = null) {
       throw new Error("Unexpected sqlite3 result for messages");
     }
 
-    // Post-process: extract text from attributedBody where text is NULL
     let extractedCount = 0;
     for (const msg of results) {
       if ((!msg.text || msg.text === '') && msg.attributedBodyHex) {
@@ -799,10 +661,8 @@ async function getMessages(sinceTimestamp = null) {
             extractedCount++;
           }
         } catch (e) {
-          // Skip this message if extraction fails
         }
       }
-      // Clean up - don't keep the hex blob in memory
       delete msg.attributedBodyHex;
     }
 
@@ -810,7 +670,6 @@ async function getMessages(sinceTimestamp = null) {
       console.error(`Extracted text from attributedBody for ${extractedCount} messages`);
     }
 
-    // Filter out messages that still have no text
     return results.filter(msg => msg.text && msg.text.trim() !== '');
   } catch (e) {
     console.error("Error reading messages:", e.message);
@@ -818,27 +677,22 @@ async function getMessages(sinceTimestamp = null) {
   }
 }
 
-// ============ CALENDAR INDEXING ============
 
-// Convert Mac Absolute Time to Unix timestamp (ms)
 function macAbsoluteToUnixMs(macTime) {
   if (!macTime) return 0;
   return (macTime + MAC_ABSOLUTE_EPOCH) * 1000;
 }
 
-// Convert Unix timestamp (ms) to Mac Absolute Time
 function unixMsToMacAbsolute(unixMs) {
   return (unixMs / 1000) - MAC_ABSOLUTE_EPOCH;
 }
 
-// Format date from Mac Absolute Time
 function formatMacAbsoluteDate(macTime) {
   if (!macTime) return "";
   const date = new Date(macAbsoluteToUnixMs(macTime));
   return date.toLocaleString();
 }
 
-// Map participant status codes to human-readable strings
 function getParticipantStatus(status) {
   const statusMap = {
     0: "unknown",
@@ -852,23 +706,14 @@ function getParticipantStatus(status) {
 }
 
 async function getCalendarEvents() {
-  // NOTE: We index ALL calendar events, not filtered by date
-  // Calendar events don't have a "file modification time" like emails do,
-  // so we can't use the mdfind + DAYS_BACK approach.
-  // Calendar indexing is always comprehensive - filtering by date would lose historical context.
-  // Must throw on source-read failure: a silent [] would look like "every event
-  // was deleted" and the stale-entry pass would wipe the calendar index.
   if (!fs.existsSync(CALENDAR_DB)) {
     throw new Error("Calendar database not found");
   }
 
   const now = Date.now();
-  const pastDate = unixMsToMacAbsolute(now - 10 * 365 * 24 * 60 * 60 * 1000); // 10 years back
-  const futureDate = unixMsToMacAbsolute(now + 10 * 365 * 24 * 60 * 60 * 1000); // 10 years ahead
+  const pastDate = unixMsToMacAbsolute(now - 10 * 365 * 24 * 60 * 60 * 1000);
+  const futureDate = unixMsToMacAbsolute(now + 10 * 365 * 24 * 60 * 60 * 1000);
 
-  // Query OccurrenceCache for recurring events and their calculated occurrences
-  // This includes both recurring and non-recurring events
-  // GROUP BY to avoid duplicate entries for recurring events
   const query = `
       SELECT
         ci.ROWID as id,
@@ -929,7 +774,7 @@ async function getCalendarEvents() {
       const attendees = attendeesMap.get(row.id) || [];
 
       events.push({
-        dbId: row.id,  // Stable database ID for deduplication
+        dbId: row.id,
         title: row.summary,
         start: formatMacAbsoluteDate(row.start_date),
         end: formatMacAbsoluteDate(row.end_date),
@@ -948,7 +793,6 @@ async function getCalendarEvents() {
   });
 }
 
-// ============ DATABASE FUNCTIONS ============
 
 export async function initDB() {
   const result = await lanceCache.initDB();
@@ -1011,7 +855,6 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
     errors: []
   };
 
-  // Clear requested sources
   for (const source of sources) {
     try {
       if (source === "emails") {
@@ -1029,21 +872,16 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
     }
   }
 
-  // Reset connection cache after dropping tables so initDB() re-opens
-  // (or recreates) them instead of holding stale/empty handles.
   resetLanceConnection();
 
-  // Re-index requested sources
   for (const source of sources) {
     try {
       if (source === "emails") {
         if (progressCallback) progressCallback("Indexing emails...");
-        // Force full scan for rebuild (forceFullScan = true)
         const indexResult = await indexEmails(progressCallback, true);
         results.indexed.emails = indexResult;
       } else if (source === "messages") {
         if (progressCallback) progressCallback("Indexing messages...");
-        // Force full scan for rebuild (forceFullScan = true)
         const indexResult = await indexMessages(true);
         results.indexed.messages = indexResult;
       } else if (source === "calendar") {
@@ -1051,9 +889,6 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
         const indexResult = await indexCalendar();
         results.indexed.calendar = indexResult;
       }
-      // A source whose read was skipped (lost Full Disk Access, no store)
-      // indexed nothing after its table was cleared: that is not a clean
-      // rebuild, so it must not count toward a full pass.
       const skipped = results.indexed[source]?.error;
       if (skipped) results.errors.push({ source, phase: "read", error: skipped });
     } catch (e) {
@@ -1061,8 +896,6 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
     }
   }
 
-  // A full clean rebuild is a finished pass over all three sources, like
-  // indexAll; a partial one leaves the other sources as old as they were.
   if (isFullIndexPass(sources, results.errors)) {
     try {
       recordIndexPassTime();
@@ -1074,21 +907,16 @@ export async function rebuildIndex(sources = ["emails", "messages", "calendar"],
   return results;
 }
 
-/** True when a pass covered emails, messages and calendar with no error. */
 export function isFullIndexPass(sources, errors = []) {
   const covered = new Set(Array.isArray(sources) ? sources : []);
   return INDEX_TABLE_NAMES.every((s) => covered.has(s)) && errors.length === 0;
 }
 
-// Readers of the shared index (the HTTP server, lost-lock stdio clients)
-// use this to say when the index has stopped refreshing.
 function recordIndexPassTime() {
   const { lastSkippedIndexPassTime, ...meta } = loadIndexMeta();
   saveIndexMeta({ ...meta, lastIndexPassTime: Date.now() });
 }
 
-// A regular pass that finished with every source read skipped. Never a
-// success time: it only lets readers say the index has never refreshed.
 function recordSkippedIndexPass() {
   try {
     saveIndexMeta({ ...loadIndexMeta(), lastSkippedIndexPassTime: Date.now() });
@@ -1105,19 +933,11 @@ async function getIndexedIds(tableName, idField) {
     const results = await tables[tableName].query().select([idField]).toArray();
     return new Set(results.map(r => r[idField]));
   } catch (e) {
-    // THROW instead of returning empty Set to prevent duplicate entries
     console.error(`Error getting indexed IDs from ${tableName}: ${e.message}`);
     throw new Error(`Failed to get indexed IDs from ${tableName}: ${e.message}`);
   }
 }
 
-/**
- * Get indexed IDs with retry logic to prevent race conditions
- * @param {string} tableName - Table name
- * @param {string} idField - ID field name
- * @param {number} maxRetries - Maximum retry attempts (default: 3)
- * @returns {Promise<Set>} Set of indexed IDs
- */
 async function getIndexedIdsWithRetry(tableName, idField, maxRetries = 3) {
   let lastError;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -1126,7 +946,7 @@ async function getIndexedIdsWithRetry(tableName, idField, maxRetries = 3) {
     } catch (e) {
       lastError = e;
       if (attempt < maxRetries) {
-        const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+        const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
         console.error(`Retry ${attempt}/${maxRetries} after ${backoff}ms...`);
         await new Promise(resolve => setTimeout(resolve, backoff));
       }
@@ -1135,18 +955,12 @@ async function getIndexedIdsWithRetry(tableName, idField, maxRetries = 3) {
   throw lastError;
 }
 
-/**
- * Indexed ID sets for several columns of one table, read in one query and
- * kept in memory between passes (re-read only when the table version moves).
- * Same retry policy as getIndexedIdsWithRetry.
- */
 async function getCachedIdSetsWithRetry(tableName, fields, maxRetries = 3) {
   let lastError;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await indexedIdCache.getIdSets(tableName, fields);
     } catch (e) {
-      // THROW (after retries) instead of returning empty Sets to prevent duplicate entries
       console.error(`Error getting indexed IDs from ${tableName}: ${e.message}`);
       lastError = new Error(`Failed to get indexed IDs from ${tableName}: ${e.message}`);
       indexedIdCache.invalidate(tableName);
@@ -1160,25 +974,19 @@ async function getCachedIdSetsWithRetry(tableName, fields, maxRetries = 3) {
   throw lastError;
 }
 
-// ============ INDEX ALL CONTENT ============
 
 export async function indexEmails(progressCallback = null, forceFullScan = false) {
   await initDB();
 
-  // Load last index timestamp for incremental scanning
   const meta = loadIndexMeta();
-  // Use a 1-day buffer to catch any edge cases (files modified during previous scan, etc.)
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-  // Determine the timestamp for mdfind filtering
   let lastEmailIndexTime;
   if (DAYS_BACK) {
-    // DAYS_BACK is set - use it for mdfind filter (e.g., for testing or rebuild with constraints)
     lastEmailIndexTime = Date.now() - (DAYS_BACK * 24 * 60 * 60 * 1000);
     console.error(`\n=== EMAIL INDEXING (DAYS_BACK=${DAYS_BACK}) ===`);
     console.error(`Will search for emails modified since: ${new Date(lastEmailIndexTime).toISOString()}`);
   } else if (forceFullScan) {
-    // Force full scan only when no DAYS_BACK constraint
     lastEmailIndexTime = null;
     console.error("\n=== EMAIL INDEXING (FULL SCAN) ===");
     console.error("Force full scan requested - finding all emails");
@@ -1191,11 +999,8 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
     console.error("\n=== EMAIL INDEXING (FIRST RUN - FULL SCAN) ===");
   }
 
-  // Save the current time BEFORE we start - any emails arriving during indexing
-  // will be picked up on the next incremental scan
   const indexStartTime = Date.now();
 
-  // Use fast incremental scan if we have a previous timestamp
   const startTime = Date.now();
   console.error(`Calling findNewEmlxFiles with timestamp: ${lastEmailIndexTime ? new Date(lastEmailIndexTime).toISOString() : 'null (full scan)'}`);
   let newFiles;
@@ -1207,11 +1012,8 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   }
   console.error(`Found ${newFiles.length} new/modified email files (${Date.now() - startTime}ms)`);
 
-  // One read of both ID columns, served from memory while the table is unchanged.
   let emailIdSets = await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS);
 
-  // Re-path or drop rows whose file is gone, then index from the full scan so
-  // relocated mail older than the lookback window is not missed.
   let staleResult = null;
   try {
     staleResult = await reconcileStaleEmailRows(emailIdSets.filePath);
@@ -1220,7 +1022,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
     console.error(`Stale email check failed; continuing with the normal pass: ${e.message}`);
   }
   if (staleResult) {
-    // A DAYS_BACK cap keeps its own window; otherwise use the full scan.
     if (!DAYS_BACK) newFiles = staleResult.allFiles;
     emailIdSets = await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS);
   }
@@ -1231,8 +1032,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   const indexedMessageIds = emailIdSets.messageId;
   console.error(`Already indexed: ${indexedPaths.size} emails`);
 
-  // Filter out already-indexed files and copies already known to duplicate an
-  // indexed Message-ID (forget copies that left the lookback window).
   duplicateEmailPaths.retainOnly(newFiles);
   let knownDuplicates = 0;
   let toIndex = newFiles.filter(f => {
@@ -1248,12 +1047,9 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   }
   console.error(`Need to index: ${toIndex.length} emails`);
 
-  // Sort by mailbox priority so higher-priority folders are indexed first
-  // This ensures INBOX copies are kept over Junk/Trash copies during deduplication
   toIndex.sort((a, b) => getMailboxPriority(a) - getMailboxPriority(b));
 
   if (toIndex.length === 0) {
-    // Save timestamp for next incremental scan
     saveIndexMeta({ ...meta, lastEmailIndexTime: indexStartTime });
     return { indexed: indexedPaths.size, added: 0, ...staleCounts };
   }
@@ -1262,7 +1058,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   let indexedCount = 0;
   let skippedCount = { parseNull: 0, shortSearchText: 0, duplicateMessageId: 0, alreadyIndexed: 0 };
 
-  // Progress tracking
   const totalBatches = Math.ceil(toIndex.length / BATCH_SIZE);
   const startProcessTime = Date.now();
   console.error(`\nProcessing ${toIndex.length} emails in ${totalBatches} batches (batch size: ${BATCH_SIZE})...`);
@@ -1270,11 +1065,8 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   for (let i = 0; i < toIndex.length; i += BATCH_SIZE) {
     const batch = toIndex.slice(i, i + BATCH_SIZE);
 
-    // Parse all emails in batch first
     const parsedEmails = [];
     const searchTexts = [];
-    // Message-IDs taken earlier in this batch (two copies of one new email can
-    // land in the same batch before either is in indexedMessageIds)
     const batchMessageIds = new Set();
 
     for (const filePath of batch) {
@@ -1291,16 +1083,11 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
         console.error(`[SKIPPED] Short searchText (${parsed.searchText.length} chars): ${fileName} - Subject: "${parsed.subject}"`);
         continue;
       }
-      // Skip duplicate messageIds - same email in multiple folders (IMAP behavior)
       if (parsed.messageId && (indexedMessageIds.has(parsed.messageId) || batchMessageIds.has(parsed.messageId))) {
         skippedCount.duplicateMessageId++;
-        // Remember the copy's path so later passes skip it before parsing.
         duplicateEmailPaths.add(filePath);
-        continue; // Skip this duplicate
+        continue;
       }
-      // NOTE: Don't filter by email header date - mdfind already filters by file modification time
-      // The DAYS_BACK filter is applied at the mdfind level (finding recently modified files),
-      // not at the email content level (email header dates can be old for recently modified messages)
       if (parsed.messageId) {
         batchMessageIds.add(parsed.messageId);
       }
@@ -1308,7 +1095,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
       searchTexts.push(parsed.searchText);
     }
 
-    // Generate all embeddings in a single batch call
     let vectors = [];
     if (searchTexts.length > 0) {
       try {
@@ -1319,7 +1105,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
       }
     }
 
-    // Build records with vectors
     const records = parsedEmails.map((item, idx) => ({
       filePath: item.filePath,
       from: item.parsed.from,
@@ -1336,10 +1121,9 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
       messageId: item.parsed.messageId,
       body: item.parsed.body,
       vector: vectors[idx]
-    })).filter(r => r.vector);  // Only records with vectors
+    })).filter(r => r.vector);
 
     if (records.length > 0) {
-      // Defensive duplicate check: remove any duplicates within the batch itself
       const uniqueRecords = [];
       const seenPaths = new Set();
       for (const record of records) {
@@ -1361,15 +1145,12 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
         if (!tables.emails) {
           tables.emails = await db.createTable("emails", uniqueRecords, { mode: "overwrite" });
           indexedCount += uniqueRecords.length;
-          // Track messageIds from the first batch so later batches can
-          // dedupe IMAP copies (INBOX vs Junk) of the same Message-ID.
           for (const record of uniqueRecords) {
             if (record.messageId) {
               indexedMessageIds.add(record.messageId);
             }
           }
         } else {
-          // Double-check: verify these IDs truly aren't in the index
           const currentIndexed = (await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS)).filePath;
           const trulyNew = uniqueRecords.filter(r => !currentIndexed.has(r.filePath));
 
@@ -1389,8 +1170,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
               console.error(`WARNING: Expected to add ${trulyNew.length} records but index grew by ${actualAdded}. Possible duplicate issue.`);
             }
 
-            // FIX: Update the messageId tracking Set with newly added records
-            // This ensures subsequent batches can detect messageIds from previous batches
             for (const record of trulyNew) {
               if (record.messageId) {
                 indexedMessageIds.add(record.messageId);
@@ -1404,7 +1183,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
 
     processed += batch.length;
 
-    // Calculate and display progress with time estimates
     const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
     const elapsedMs = Date.now() - startProcessTime;
     const avgTimePerBatch = elapsedMs / currentBatch;
@@ -1414,21 +1192,17 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
 
     console.error(`Batch ${currentBatch}/${totalBatches} complete | Processed: ${processed}/${toIndex.length} emails | Est. remaining: ${estimatedRemainingMin}m`);
 
-    // Report progress after each batch
     if (progressCallback) {
       progressCallback(`emails-batch-${processed}/${toIndex.length}`);
     }
 
-    // Throttle to prevent thermal crashes
     if (i + BATCH_SIZE < toIndex.length) {
       await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
     }
   }
 
-  // Save timestamp for next incremental scan
   saveIndexMeta({ ...meta, lastEmailIndexTime: indexStartTime });
 
-  // Log skip summary with timing
   const totalProcessingTime = Date.now() - startProcessTime;
   const totalSkipped = skippedCount.parseNull + skippedCount.shortSearchText +
     skippedCount.duplicateMessageId + skippedCount.alreadyIndexed;
@@ -1443,8 +1217,6 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
   console.error(`  Discrepancy: ${toIndex.length - indexedCount - totalSkipped}`);
   console.error(`  Total time: ${Math.round(totalProcessingTime / 1000)}s (${Math.round(totalProcessingTime / 60000)}m)\n`);
 
-  // Indexed count from the version-checked ID cache (re-reads only if the
-  // table moved by something other than this pass's own adds)
   const finalIndexedPaths = (await getCachedIdSetsWithRetry("emails", EMAIL_ID_FIELDS)).filePath;
   return { indexed: finalIndexedPaths.size, added: indexedCount, ...staleCounts };
 }
@@ -1452,17 +1224,13 @@ export async function indexEmails(progressCallback = null, forceFullScan = false
 export async function indexMessages(forceFullScan = false) {
   await initDB();
 
-  // Load last index timestamp for incremental scanning
   const meta = loadIndexMeta();
-  // Use a 1-hour buffer to catch any edge cases
   const ONE_HOUR_MS = 60 * 60 * 1000;
   const lastMessageIndexTime = forceFullScan ? null :
     (meta.lastMessageIndexTime ? meta.lastMessageIndexTime - ONE_HOUR_MS : null);
 
-  // Save the current time BEFORE we start
   const indexStartTime = Date.now();
 
-  // Use incremental scan if we have a previous timestamp
   let messages;
   try {
     messages = await getMessages(lastMessageIndexTime);
@@ -1479,7 +1247,6 @@ export async function indexMessages(forceFullScan = false) {
   console.error(`Need to index: ${toIndex.length} messages`);
 
   if (toIndex.length === 0) {
-    // Save timestamp for next incremental scan
     saveIndexMeta({ ...meta, lastMessageIndexTime: indexStartTime });
     return { indexed: indexed.size, added: 0 };
   }
@@ -1487,7 +1254,6 @@ export async function indexMessages(forceFullScan = false) {
   let processed = 0;
   let addedCount = 0;
 
-  // Progress tracking
   const totalBatches = Math.ceil(toIndex.length / BATCH_SIZE);
   const startProcessTime = Date.now();
   console.error(`\nProcessing ${toIndex.length} messages in ${totalBatches} batches (batch size: ${BATCH_SIZE})...`);
@@ -1495,7 +1261,6 @@ export async function indexMessages(forceFullScan = false) {
   for (let i = 0; i < toIndex.length; i += BATCH_SIZE) {
     const batch = toIndex.slice(i, i + BATCH_SIZE);
 
-    // Prepare all messages and search texts
     const preparedMsgs = [];
     const searchTexts = [];
 
@@ -1507,7 +1272,6 @@ export async function indexMessages(forceFullScan = false) {
       }
     }
 
-    // Generate all embeddings in a single batch call
     let vectors = [];
     if (searchTexts.length > 0) {
       try {
@@ -1518,9 +1282,7 @@ export async function indexMessages(forceFullScan = false) {
       }
     }
 
-    // Build records with vectors
     const records = preparedMsgs.map((msg, idx) => {
-      // Explicitly cast to boolean to avoid LanceDB schema inference issues
       const isGroupChat = Boolean((parseInt(msg.participantCount) || 0) > 2 || (msg.chatName && msg.chatName.length > 0));
       const hasAttachment = Boolean((parseInt(msg.attachmentCount) || 0) > 0);
       return {
@@ -1536,10 +1298,9 @@ export async function indexMessages(forceFullScan = false) {
         hasAttachment,
         vector: vectors[idx]
       };
-    }).filter(r => r.vector);  // Only records with vectors
+    }).filter(r => r.vector);
 
     if (records.length > 0) {
-      // Defensive duplicate check: remove any duplicates within the batch itself
       const uniqueRecords = [];
       const seenIds = new Set();
       for (const record of records) {
@@ -1562,7 +1323,6 @@ export async function indexMessages(forceFullScan = false) {
           tables.messages = await db.createTable("messages", uniqueRecords, { mode: "overwrite" });
           addedCount += uniqueRecords.length;
         } else {
-          // Double-check: verify these IDs truly aren't in the index
           const currentIndexed = (await getCachedIdSetsWithRetry("messages", ["id"])).id;
           const trulyNew = uniqueRecords.filter(r => !currentIndexed.has(r.id));
 
@@ -1588,7 +1348,6 @@ export async function indexMessages(forceFullScan = false) {
 
     processed += batch.length;
 
-    // Calculate and display progress with time estimates
     const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
     const elapsedMs = Date.now() - startProcessTime;
     const avgTimePerBatch = elapsedMs / currentBatch;
@@ -1598,13 +1357,11 @@ export async function indexMessages(forceFullScan = false) {
 
     console.error(`Batch ${currentBatch}/${totalBatches} complete | Processed: ${processed}/${toIndex.length} messages | Est. remaining: ${estimatedRemainingMin}m`);
 
-    // Throttle to prevent thermal crashes
     if (i + BATCH_SIZE < toIndex.length) {
       await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
     }
   }
 
-  // Save timestamp for next incremental scan
   saveIndexMeta({ ...meta, lastMessageIndexTime: indexStartTime });
 
   return { indexed: indexed.size, added: addedCount };
@@ -1617,27 +1374,20 @@ export async function indexCalendar() {
   try {
     events = await getCalendarEvents();
   } catch (e) {
-    // Do not treat a source-read failure as "zero events" — that would mark
-    // every indexed row stale and delete the calendar index.
     console.error(`Calendar source read failed; skipping index update to avoid data loss: ${e.message}`);
     return { indexed: 0, added: 0, removed: 0, error: e.message };
   }
   console.error(`Found ${events.length} calendar events`);
 
-  // Get already indexed event IDs for incremental indexing
   const indexed = await getIndexedIdsWithRetry("calendar", "id");
   console.error(`Already indexed: ${indexed.size} calendar events`);
 
-  // Build set of current event IDs for stale detection
-  // Use dbId only - must match the ID format used when storing events (line 1139)
   const currentIds = new Set(events.map(evt => `${evt.dbId}`));
 
-  // Find and remove stale entries (indexed but no longer in calendar)
   const staleIds = [...indexed].filter(id => !currentIds.has(id));
   if (staleIds.length > 0 && tables.calendar) {
     console.error(`Removing ${staleIds.length} stale calendar entries...`);
 
-    // Validate all IDs first
     const validIds = [];
     for (const staleId of staleIds) {
       const validatedId = validateLanceDBId(staleId);
@@ -1648,13 +1398,11 @@ export async function indexCalendar() {
       validIds.push(escapeSQL(validatedId));
     }
 
-    // Batch delete in chunks of 100 to avoid query size limits
     const BATCH_DELETE_SIZE = 100;
     for (let i = 0; i < validIds.length; i += BATCH_DELETE_SIZE) {
       const batch = validIds.slice(i, i + BATCH_DELETE_SIZE);
       if (batch.length > 0) {
         try {
-          // Use OR conditions for batch delete (LanceDB compatible)
           const conditions = batch.map(id => `id = '${id}'`).join(' OR ');
           await tables.calendar.delete(conditions);
         } catch (e) {
@@ -1664,13 +1412,11 @@ export async function indexCalendar() {
     }
   }
 
-  // Prepare only NEW events and search texts
   const validEvents = [];
   const searchTexts = [];
 
   for (const evt of events) {
-    const eventId = `${evt.dbId}`;  // Remove timestamp from ID to avoid duplicates
-    // Skip if already indexed
+    const eventId = `${evt.dbId}`;
     if (indexed.has(eventId)) continue;
 
     const searchText = `Event: ${evt.title}\nCalendar: ${evt.calendar}\nLocation: ${evt.location}\nNotes: ${evt.notes}`.substring(0, 500);
@@ -1687,7 +1433,6 @@ export async function indexCalendar() {
 
   console.error(`Indexing ${validEvents.length} new calendar events...`);
 
-  // Generate embeddings in batches
   const allVectors = [];
   for (let i = 0; i < searchTexts.length; i += BATCH_SIZE) {
     const batchTexts = searchTexts.slice(i, i + BATCH_SIZE);
@@ -1700,7 +1445,6 @@ export async function indexCalendar() {
     console.error(`Embedded ${Math.min(i + BATCH_SIZE, searchTexts.length)}/${validEvents.length} new calendar events...`);
   }
 
-  // Build records with vectors
   const records = validEvents.map((evt, idx) => ({
     id: evt.id,
     title: evt.title,
@@ -1714,10 +1458,9 @@ export async function indexCalendar() {
     attendees: evt.attendees || "[]",
     attendeeCount: evt.attendeeCount || 0,
     vector: allVectors[idx]
-  })).filter(r => r.vector); // Only include records with valid vectors
+  })).filter(r => r.vector);
 
   if (records.length > 0) {
-    // Defensive duplicate check: remove any duplicates within the batch itself
     const uniqueRecords = [];
     const seenIds = new Set();
     for (const record of records) {
@@ -1733,10 +1476,8 @@ export async function indexCalendar() {
 
     if (uniqueRecords.length > 0) {
       if (tables.calendar) {
-        // Add to existing table
         await tables.calendar.add(uniqueRecords);
       } else {
-        // Create new table
         tables.calendar = await db.createTable("calendar", uniqueRecords);
       }
       console.error(`Indexed ${uniqueRecords.length} new calendar events`);
@@ -1773,11 +1514,6 @@ export async function indexAll(progressCallback = null) {
   return { emails: emailResult, messages: messageResult, calendar: calendarResult };
 }
 
-/**
- * Daily LanceDB compaction + old-version cleanup, only after a pass that wrote
- * something. Every add() leaves a small data file and a new version; without
- * this the tables grow thousands of fragments that every full read opens.
- */
 async function maybeOptimizeIndex(results) {
   const wroteSomething =
     (results.emails?.added || 0) > 0 ||
@@ -1792,25 +1528,16 @@ async function maybeOptimizeIndex(results) {
   }
   console.error("Optimizing index tables (compaction + old version cleanup)...");
   const result = await optimizeIndexTables({ tables, tableNames: INDEX_TABLE_NAMES });
-  // Compaction makes new table versions; re-read IDs once next pass.
   indexedIdCache.invalidate();
   saveIndexMeta({ ...loadIndexMeta(), lastIndexOptimizeTime: Date.now() });
   return result;
 }
 
-/**
- * When the last full index pass (emails, messages, calendar) finished, from
- * index-meta.json; null when no pass has recorded one yet.
- */
 export function getLastIndexPassTime() {
   const t = loadIndexMeta().lastIndexPassTime;
   return Number.isFinite(t) && t > 0 ? t : null;
 }
 
-/**
- * When the last regular pass that could read no source at all finished, from
- * index-meta.json; null when none is recorded. Cleared by a finished pass.
- */
 export function getLastSkippedIndexPassTime() {
   const t = loadIndexMeta().lastSkippedIndexPassTime;
   return Number.isFinite(t) && t > 0 ? t : null;
@@ -1821,7 +1548,6 @@ export async function isIndexReady(type = "emails") {
   return tables[type] != null;
 }
 
-// ============ DIRECT QUERIES (for recent items) ============
 
 export async function getRecentEmails(limit = 10, daysBack = 7) {
   await initDB();
@@ -1830,18 +1556,15 @@ export async function getRecentEmails(limit = 10, daysBack = 7) {
   const cutoff = Date.now() - (daysBack * 24 * 60 * 60 * 1000);
 
   try {
-    // Fetch all and filter in JavaScript (LanceDB where clause with quoted columns is unreliable)
     const results = await tables.emails.query()
       .select(["filePath", "from", "fromEmail", "to", "subject", "date", "dateTimestamp", "hasAttachment", "mailbox", "isSent", "isFlagged", "messageId", "body"])
       .toArray();
 
-    // Filter by date, sort by timestamp descending, and limit
     return results
       .filter(r => r.dateTimestamp >= cutoff)
       .sort((a, b) => b.dateTimestamp - a.dateTimestamp)
       .slice(0, limit);
   } catch (e) {
-    // Fallback with minimal columns for older indexes
     console.error("Using fallback query:", e.message);
     try {
       const results = await tables.emails.query()
@@ -1863,18 +1586,14 @@ export async function getEmailsByDateRange(startTs, endTs) {
   if (!tables.emails) return [];
 
   try {
-    // LanceDB where clause with quoted column names doesn't work reliably
-    // So we fetch all and filter in JavaScript
     const results = await tables.emails.query()
       .select(["filePath", "from", "fromEmail", "to", "subject", "date", "dateTimestamp", "hasAttachment", "mailbox", "isSent", "isFlagged", "messageId", "body"])
       .toArray();
 
-    // Filter by date range and sort by timestamp descending
     return results
       .filter(r => r.dateTimestamp >= startTs && r.dateTimestamp < endTs)
       .sort((a, b) => b.dateTimestamp - a.dateTimestamp);
   } catch (e) {
-    // Fallback with minimal columns for older indexes
     console.error("Using fallback query for date range:", e.message);
     try {
       const results = await tables.emails.query()
@@ -1924,14 +1643,11 @@ export async function getConversation(contact, limit = 50) {
       .select(["id", "date", "dateTimestamp", "sender", "text", "chatId", "chatIdentifier"])
       .toArray();
 
-    // Sender or chat handle matches the contact (name resolved to its handles);
-    // from-me rows match through the 1:1 chat's handle
     const filtered = results.filter(r => matcher.matches(r));
 
-    // Sort chronologically (oldest first for conversation view)
     return filtered
       .sort((a, b) => toUnixMillis(a.dateTimestamp) - toUnixMillis(b.dateTimestamp))
-      .slice(-limit); // Take last N messages
+      .slice(-limit);
   } catch (e) {
     console.error("Error getting conversation:", e.message);
     return [];
@@ -1954,7 +1670,6 @@ export async function getCalendarByDate(startTimestamp, endTimestamp) {
 
     console.error(`[Calendar Query] Matched events: ${filtered.length}`);
     if (filtered.length === 0 && results.length > 0) {
-      // Show events near the boundary for debugging
       const nearby = results.filter(r =>
         r.startTimestamp >= startTimestamp - 86400000 &&
         r.startTimestamp <= endTimestamp + 86400000
@@ -1988,12 +1703,9 @@ export async function getAllCalendarEvents() {
   }
 }
 
-// ============ NEW TOOLS - PHASE 1 ============
 
-// Mailboxes to exclude by default
 const EXCLUDED_MAILBOXES = ['junk', 'trash', 'deleted messages', 'spam'];
 
-// mail_senders: List most frequent email senders
 export async function getFrequentSenders(limit = 30, daysBack = 0, includeJunk = false) {
   await initDB();
   if (!tables.emails) return [];
@@ -2004,7 +1716,6 @@ export async function getFrequentSenders(limit = 30, daysBack = 0, includeJunk =
       const cutoff = Date.now() - daysBack * 24 * 60 * 60 * 1000;
       emails = emails.filter(e => e.dateTimestamp >= cutoff);
     }
-    // Exclude junk/trash by default
     if (!includeJunk) {
       emails = emails.filter(e =>
         !EXCLUDED_MAILBOXES.some(mb =>
@@ -2027,10 +1738,8 @@ export async function getFrequentSenders(limit = 30, daysBack = 0, includeJunk =
   }
 }
 
-// messages_contacts: List all contacts you've messaged
 export function getMessageContacts(limit = 50) {
   try {
-    // Validate limit to prevent SQL issues
     const safeLimit = validateLimit(limit, 50, 500);
 
     const query = `
@@ -2052,9 +1761,6 @@ export function getMessageContacts(limit = 50) {
   }
 }
 
-// calendar_upcoming: Get next N upcoming events, starting with every event on the current local day.
-// OccurrenceCache.day is each occurrence's local midnight, so the lower bound is today's local midnight,
-// never now: comparing day to now dropped all of today (all-day and later-today events) after midnight.
 export function buildUpcomingEventsQuery(dayStartMac, fetchLimit) {
   const occStart = "COALESCE(oc.occurrence_end_date - (ci.end_date - ci.start_date), ci.start_date)";
   return `
@@ -2076,14 +1782,12 @@ export function buildUpcomingEventsQuery(dayStartMac, fetchLimit) {
     `;
 }
 
-// Start of the current local day, in Apple/Core Data seconds.
 function localTodayStartMac() {
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
   return Math.floor(midnight.getTime() / 1000) - MAC_ABSOLUTE_EPOCH;
 }
 
-// A copy with no OccurrenceCache rows at all is not a readable calendar: say so instead of an empty day.
 function assertOccurrenceCache(dbPath) {
   const rows = safeSqlite3Json(dbPath, "SELECT COUNT(*) AS n FROM (SELECT 1 FROM OccurrenceCache LIMIT 1)", { timeout: 10000 });
   if (!rows.length || !Number(rows[0].n)) {
@@ -2093,9 +1797,8 @@ function assertOccurrenceCache(dbPath) {
 
 export function getUpcomingEvents(limit = 10) {
   try {
-    // Validate limit to prevent SQL issues
     const safeLimit = validateLimit(limit, 10, 100);
-    const fetchLimit = safeLimit + 1; // Fetch one extra to detect if more exist
+    const fetchLimit = safeLimit + 1;
     const query = buildUpcomingEventsQuery(localTodayStartMac(), fetchLimit);
     const events = withCalendarCopy((dbPath) => {
       assertOccurrenceCache(dbPath);
@@ -2110,7 +1813,6 @@ export function getUpcomingEvents(limit = 10) {
   }
 }
 
-// Convert local-day unix ms bounds to Apple/Core Data seconds (unix - 978307200)
 export function localDayToMacBounds(startMs, endMs) {
   const startMac = Math.floor(Number(startMs) / 1000) - MAC_ABSOLUTE_EPOCH;
   const endMac = Math.floor(Number(endMs) / 1000) - MAC_ABSOLUTE_EPOCH;
@@ -2120,9 +1822,6 @@ export function localDayToMacBounds(startMs, endMs) {
   return { startMac, endMac };
 }
 
-// Date-bounded OccurrenceCache query: one row per occurrence, no GROUP BY ci.ROWID
-// includeUid adds the iCal UID that the calendar write tools address events by.
-// Older Calendar schemas may lack the column, so callers can retry without it.
 export function buildEventsOnDateQuery(startMac, endMac, { includeUid = true } = {}) {
   const startBound = Math.floor(Number(startMac));
   const endBound = Math.floor(Number(endMac));
@@ -2131,7 +1830,6 @@ export function buildEventsOnDateQuery(startMac, endMac, { includeUid = true } =
   }
   const timedStart = "COALESCE(oc.occurrence_end_date - (ci.end_date - ci.start_date), ci.start_date)";
   const occEnd = "COALESCE(oc.occurrence_end_date, ci.end_date)";
-  // First local day = occurrence-end local date minus (durationDays - 1). Day math, not seconds (DST-safe).
   const allDayStartDate = `date(${occEnd} + 978307200, 'unixepoch', 'localtime', '-' || (CAST(round((ci.end_date - ci.start_date) / 86400.0) AS INTEGER) - 1) || ' days')`;
   const allDayStartMac = `CAST(strftime('%s', ${allDayStartDate} || ' 00:00:00', 'utc') AS INTEGER) - 978307200`;
   return `
@@ -2164,8 +1862,6 @@ export function buildEventsOnDateQuery(startMac, endMac, { includeUid = true } =
     `;
 }
 
-// Copy Calendar.sqlitedb (+ wal/shm) to /tmp for one query, then delete the copies.
-// Calendar.app holds a lock on the live db; sqlite can read a snapshot copy.
 function copyCalendarDb() {
   const id = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const tmpDb = path.join("/tmp", `${CALENDAR_TMP_PREFIX}${id}.sqlitedb`);
@@ -2175,7 +1871,6 @@ function copyCalendarDb() {
       try {
         fs.unlinkSync(file);
       } catch {
-        // already gone or never created
       }
     }
   };
@@ -2197,8 +1892,6 @@ function copyCalendarDb() {
   return { tmpDb, cleanup };
 }
 
-// Index-cycle variant: the sqlite3 reads inside fn are awaited, so the
-// daemon's event loop (and writer.sock) stays free while they run.
 async function withCalendarCopyAsync(fn) {
   const { tmpDb, cleanup } = copyCalendarDb();
   try {
@@ -2217,7 +1910,6 @@ function withCalendarCopy(fn) {
   }
 }
 
-// calendar_date: live OccurrenceCache for every occurrence on a local day
 export function getEventsOnDate(startMs, endMs) {
   try {
     if (!fs.existsSync(CALENDAR_DB)) {
@@ -2226,8 +1918,6 @@ export function getEventsOnDate(startMs, endMs) {
     const { startMac, endMac } = localDayToMacBounds(startMs, endMs);
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
-      // Drop the UID column after a failed first attempt: a schema without
-      // unique_identifier must still return events for calendar_date.
       const query = buildEventsOnDateQuery(startMac, endMac, { includeUid: attempt === 0 });
       try {
         const events = withCalendarCopy((dbPath) => {
@@ -2247,21 +1937,17 @@ export function getEventsOnDate(startMs, endMs) {
   }
 }
 
-// ============ NEW TOOLS - PHASE 2 ============
 
-// mail_unread_count: Get count of unread emails via AppleScript
 export function getUnreadCount(mailbox = null) {
   try {
     let script;
 
     if (mailbox) {
-      // Validate mailbox name to prevent AppleScript injection
       const validatedMailbox = validateMailboxName(mailbox);
       if (!validatedMailbox) {
         return { unreadCount: 0, mailbox, error: "Invalid mailbox name. Only alphanumeric characters, spaces, hyphens, underscores, and periods are allowed." };
       }
 
-      // Escape for AppleScript double-quoted string (belt and suspenders)
       const escapedMailbox = escapeAppleScript(validatedMailbox);
 
       script = `tell application "Mail"
@@ -2288,18 +1974,15 @@ export function getUnreadCount(mailbox = null) {
   }
 }
 
-// calendar_week: Get events for current or next week
 export function getWeekEvents(weekOffset = 0) {
   try {
     const now = new Date();
-    // Get Monday of the current week
     const monday = new Date(now);
     const day = now.getDay();
-    const diff = day === 0 ? -6 : 1 - day; // If Sunday, go back 6 days; otherwise go to Monday
+    const diff = day === 0 ? -6 : 1 - day;
     monday.setDate(now.getDate() + diff + (weekOffset * 7));
     monday.setHours(0, 0, 0, 0);
 
-    // Get Sunday end of week
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
     sunday.setHours(23, 59, 59, 999);
@@ -2307,7 +1990,6 @@ export function getWeekEvents(weekOffset = 0) {
     const startMac = Math.floor(monday.getTime() / 1000) - 978307200;
     const endMac = Math.floor(sunday.getTime() / 1000) - 978307200;
 
-    // Query OccurrenceCache to include recurring event occurrences
     const query = `
       SELECT
         ci.summary as title,
@@ -2342,16 +2024,12 @@ export function getWeekEvents(weekOffset = 0) {
   }
 }
 
-// ============ NEW TOOLS - PHASE 3 ============
 
-// mail_thread: Get email thread by searching for related emails
-// Uses subject-based matching since Message-ID isn't indexed
 export async function getEmailThread(filePath, limit = 20) {
   await initDB();
   if (!tables.emails) return { error: indexUnavailableMessage("emails"), emails: [] };
 
   try {
-    // Validate file path to prevent path traversal attacks
     let validatedPath;
     try {
       validatedPath = validateEmailPath(filePath, MAIL_DIR);
@@ -2359,12 +2037,10 @@ export async function getEmailThread(filePath, limit = 20) {
       return { error: `Invalid file path: ${e.message}`, emails: [] };
     }
 
-    // Verify file exists
     if (!fs.existsSync(validatedPath)) {
       return { error: "Email file not found", emails: [] };
     }
 
-    // Read the email to get subject
     const content = unfoldRfc822Headers(fs.readFileSync(validatedPath, "utf-8"));
     const subjectMatch = content.match(/^Subject:\s*(.+)$/m);
     if (!subjectMatch) {
@@ -2377,12 +2053,10 @@ export async function getEmailThread(filePath, limit = 20) {
       return { error: "Subject too short to find thread", emails: [] };
     }
 
-    // Search for emails with similar subjects
     const allEmails = await tables.emails.query()
       .select(["filePath", "from", "to", "subject", "date", "dateTimestamp"])
       .toArray();
 
-    // Filter to emails with matching base subject
     const threadEmails = allEmails
       .filter(e => {
         const eBaseSubject = stripSubjectPrefixes(e.subject || "");
@@ -2402,9 +2076,6 @@ export async function getEmailThread(filePath, limit = 20) {
   }
 }
 
-// calendar_recurring: recurring events (a Recurrence row) with their next occurrence, from today on.
-// Bounded by today's local midnight, never now: OccurrenceCache.day is each occurrence's local midnight,
-// so comparing day to now dropped today's occurrence after midnight (the calendar_upcoming bug fixed in 3.3.5).
 export function buildRecurringEventsQuery(dayStartMac, fetchLimit) {
   return `
       SELECT DISTINCT
@@ -2427,9 +2098,8 @@ export function buildRecurringEventsQuery(dayStartMac, fetchLimit) {
 
 export function getRecurringEvents(limit = 20) {
   try {
-    // Validate limit to prevent SQL issues
     const safeLimit = validateLimit(limit, 20, 100);
-    const fetchLimit = safeLimit + 1; // Fetch one extra to detect if more exist
+    const fetchLimit = safeLimit + 1;
     const query = buildRecurringEventsQuery(localTodayStartMac(), fetchLimit);
     const events = withCalendarCopy((dbPath) => {
       return safeSqlite3Json(dbPath, query, { timeout: 30000 });
