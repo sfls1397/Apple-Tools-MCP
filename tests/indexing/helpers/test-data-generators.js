@@ -1,19 +1,12 @@
-/**
- * Test data generators for indexing tests
- */
 
-// Mac Absolute Time epoch: seconds from Unix epoch (1970) to Mac epoch (2001)
 const MAC_ABSOLUTE_EPOCH = 978307200
 
-/**
- * Generate test emails with realistic .emlx content
- */
 export function generateTestEmails(count, options = {}) {
   const {
     bodySize = 100,
-    attachmentRate = 0.2,  // 20% have attachments
+    attachmentRate = 0.2,
     mailbox = 'INBOX',
-    daysBack = 30  // Spread emails over this many days
+    daysBack = 30
   } = options
 
   const emails = []
@@ -42,9 +35,6 @@ export function generateTestEmails(count, options = {}) {
   return emails
 }
 
-/**
- * Generate realistic .emlx email content
- */
 export function generateEmailContent(options) {
   const {
     from,
@@ -91,13 +81,10 @@ Content-Disposition: attachment; filename="document.pdf"
   return content
 }
 
-/**
- * Generate test messages (SQLite-style records)
- */
 export function generateTestMessages(count, options = {}) {
   const {
-    groupChatRate = 0.3,  // 30% are group chats
-    attachmentRate = 0.1,  // 10% have attachments
+    groupChatRate = 0.3,
+    attachmentRate = 0.1,
     daysBack = 7
   } = options
 
@@ -107,7 +94,6 @@ export function generateTestMessages(count, options = {}) {
     const isGroup = Math.random() < groupChatRate
     const hasAttachment = Math.random() < attachmentRate
     const timestamp = Date.now() - (i * Math.floor(daysBack * 24 * 60 * 60 * 1000 / count))
-    // Convert to Mac Absolute Time (seconds since 2001-01-01)
     const macTime = Math.floor(timestamp / 1000) - MAC_ABSOLUTE_EPOCH
 
     messages.push({
@@ -122,20 +108,17 @@ export function generateTestMessages(count, options = {}) {
       chatName: isGroup ? `Group Chat ${Math.floor(i / 5)}` : '',
       participantCount: isGroup ? 3 + Math.floor(Math.random() * 5) : 2,
       attachmentCount: hasAttachment ? 1 : 0,
-      attributedBodyHex: null  // Only set for messages without text
+      attributedBodyHex: null
     })
   }
 
   return messages
 }
 
-/**
- * Generate test calendar events
- */
 export function generateCalendarEvents(count, options = {}) {
   const {
-    allDayRate = 0.2,  // 20% are all-day events
-    recurringRate = 0.3,  // 30% are recurring
+    allDayRate = 0.2,
+    recurringRate = 0.3,
     daysAhead = 30,
     daysBack = 7
   } = options
@@ -149,15 +132,13 @@ export function generateCalendarEvents(count, options = {}) {
   for (let i = 0; i < count; i++) {
     const isAllDay = Math.random() < allDayRate
     const isRecurring = Math.random() < recurringRate
-    // Spread events from daysBack in past to daysAhead in future
     const daysOffset = -daysBack + Math.floor(Math.random() * (daysAhead + daysBack))
     const startTime = now + (daysOffset * 24 * 60 * 60 * 1000)
 
-    // Convert to Mac Absolute Time
     const startMac = Math.floor(startTime / 1000) - MAC_ABSOLUTE_EPOCH
     const endMac = isAllDay
-      ? startMac + (24 * 60 * 60)  // All-day = 24 hours
-      : startMac + (60 * 60)  // Regular = 1 hour
+      ? startMac + (24 * 60 * 60)
+      : startMac + (60 * 60)
 
     const title = `${eventTypes[i % eventTypes.length]} ${i + 1}`
 
@@ -186,9 +167,6 @@ export function generateCalendarEvents(count, options = {}) {
   return events
 }
 
-/**
- * Generate random search texts for embedding tests
- */
 export function generateSearchTexts(count, options = {}) {
   const {
     minLength = 20,
@@ -216,9 +194,6 @@ export function generateSearchTexts(count, options = {}) {
   return texts
 }
 
-/**
- * Generate similar text pairs for embedding similarity tests
- */
 export function generateSimilarTextPairs(count) {
   const pairs = []
   const templates = [
@@ -234,16 +209,13 @@ export function generateSimilarTextPairs(count) {
     pairs.push({
       text1: template[0],
       text2: template[1],
-      expectedSimilarity: 0.7  // Threshold for "similar"
+      expectedSimilarity: 0.7
     })
   }
 
   return pairs
 }
 
-/**
- * Generate dissimilar text pairs for embedding tests
- */
 export function generateDissimilarTextPairs(count) {
   const pairs = []
   const templates = [
@@ -259,14 +231,13 @@ export function generateDissimilarTextPairs(count) {
     pairs.push({
       text1: template[0],
       text2: template[1],
-      expectedSimilarity: 0.3  // Threshold for "dissimilar"
+      expectedSimilarity: 0.3
     })
   }
 
   return pairs
 }
 
-// Helper: Generate random words
 const wordList = [
   'meeting', 'project', 'budget', 'review', 'team', 'schedule',
   'email', 'response', 'follow', 'update', 'report', 'analysis',
@@ -284,9 +255,6 @@ function randomWords(count) {
   return words.join(' ')
 }
 
-/**
- * Generate file paths for mdfind results
- */
 export function generateEmailFilePaths(count, mailbox = 'INBOX') {
   const paths = []
   for (let i = 0; i < count; i++) {

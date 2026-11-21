@@ -1,9 +1,3 @@
-/**
- * Integration tests for continuous background indexing
- * Uses fake timers to test interval-based behavior
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
@@ -11,7 +5,7 @@ describe('Continuous Background Indexing', () => {
   let indexTimer = null
   let runCount = 0
   let indexingInProgress = false
-  const DEFAULT_INDEX_INTERVAL = 5 * 60 * 1000 // 5 minutes
+  const DEFAULT_INDEX_INTERVAL = 5 * 60 * 1000
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -30,13 +24,13 @@ describe('Continuous Background Indexing', () => {
 
   const runIndexCycle = () => {
     if (indexingInProgress) {
-      return // Skip if already running
+      return
     }
     runCount++
   }
 
   const startBackgroundIndexing = (interval = DEFAULT_INDEX_INTERVAL) => {
-    runIndexCycle() // Run immediately
+    runIndexCycle()
     indexTimer = setInterval(runIndexCycle, interval)
   }
 
@@ -51,32 +45,28 @@ describe('Continuous Background Indexing', () => {
     it('should schedule indexing at INDEX_INTERVAL (5 min default)', () => {
       startBackgroundIndexing()
 
-      expect(runCount).toBe(1) // Initial run
+      expect(runCount).toBe(1)
 
       vi.advanceTimersByTime(DEFAULT_INDEX_INTERVAL)
 
-      expect(runCount).toBe(2) // After 5 min
+      expect(runCount).toBe(2)
 
       vi.advanceTimersByTime(DEFAULT_INDEX_INTERVAL)
 
-      expect(runCount).toBe(3) // After 10 min
+      expect(runCount).toBe(3)
     })
 
     it('should run initial + interval cycles correctly', () => {
       startBackgroundIndexing()
 
-      // Initial
       expect(runCount).toBe(1)
 
-      // After 5 minutes
       vi.advanceTimersByTime(5 * 60 * 1000)
       expect(runCount).toBe(2)
 
-      // After 10 minutes
       vi.advanceTimersByTime(5 * 60 * 1000)
       expect(runCount).toBe(3)
 
-      // After 15 minutes
       vi.advanceTimersByTime(5 * 60 * 1000)
       expect(runCount).toBe(4)
     })
@@ -88,7 +78,7 @@ describe('Continuous Background Indexing', () => {
 
       runIndexCycle()
 
-      expect(runCount).toBe(0) // Skipped
+      expect(runCount).toBe(0)
     })
 
     it('should resume when previous completes', () => {
@@ -106,33 +96,28 @@ describe('Continuous Background Indexing', () => {
 
       const runCycleWithProgress = () => {
         if (indexingInProgress) {
-          return // Skip
+          return
         }
         actualRuns++
         indexingInProgress = true
 
-        // Simulate slow indexing (longer than interval)
         setTimeout(() => {
           indexingInProgress = false
-        }, 8 * 60 * 1000) // 8 minutes
+        }, 8 * 60 * 1000)
       }
 
-      runCycleWithProgress() // Start first run
+      runCycleWithProgress()
       expect(actualRuns).toBe(1)
 
       const timer = setInterval(runCycleWithProgress, DEFAULT_INDEX_INTERVAL)
 
-      // After 5 min - should skip (still in progress)
       vi.advanceTimersByTime(5 * 60 * 1000)
-      expect(actualRuns).toBe(1) // Still 1
+      expect(actualRuns).toBe(1)
 
-      // After another 3 min (8 total) - first run completes
       vi.advanceTimersByTime(3 * 60 * 1000)
-      // indexingInProgress is now false
 
-      // After another 2 min (10 total) - next interval fires
       vi.advanceTimersByTime(2 * 60 * 1000)
-      expect(actualRuns).toBe(2) // Now 2
+      expect(actualRuns).toBe(2)
 
       clearInterval(timer)
     })
@@ -140,7 +125,7 @@ describe('Continuous Background Indexing', () => {
 
   describe('custom INDEX_INTERVAL_MS', () => {
     it('should respect custom 1-minute interval', () => {
-      const customInterval = 60 * 1000 // 1 minute
+      const customInterval = 60 * 1000
 
       startBackgroundIndexing(customInterval)
 
@@ -154,17 +139,17 @@ describe('Continuous Background Indexing', () => {
     })
 
     it('should respect custom 10-minute interval', () => {
-      const customInterval = 10 * 60 * 1000 // 10 minutes
+      const customInterval = 10 * 60 * 1000
 
       startBackgroundIndexing(customInterval)
 
       expect(runCount).toBe(1)
 
-      vi.advanceTimersByTime(5 * 60 * 1000) // 5 min
-      expect(runCount).toBe(1) // No additional run yet
+      vi.advanceTimersByTime(5 * 60 * 1000)
+      expect(runCount).toBe(1)
 
-      vi.advanceTimersByTime(5 * 60 * 1000) // 10 min total
-      expect(runCount).toBe(2) // Now runs
+      vi.advanceTimersByTime(5 * 60 * 1000)
+      expect(runCount).toBe(2)
     })
   })
 
@@ -180,7 +165,7 @@ describe('Continuous Background Indexing', () => {
       stopBackgroundIndexing()
 
       vi.advanceTimersByTime(DEFAULT_INDEX_INTERVAL * 5)
-      expect(runCount).toBe(2) // No more runs
+      expect(runCount).toBe(2)
     })
 
     it('should set indexTimer to null after stop', () => {
@@ -196,7 +181,6 @@ describe('Continuous Background Indexing', () => {
     it('should handle stop when never started', () => {
       expect(indexTimer).toBeNull()
 
-      // Should not throw
       expect(() => stopBackgroundIndexing()).not.toThrow()
 
       expect(indexTimer).toBeNull()
@@ -205,23 +189,21 @@ describe('Continuous Background Indexing', () => {
 
   describe('multiple start/stop cycles', () => {
     it('should work correctly through multiple cycles', () => {
-      // First cycle
       startBackgroundIndexing()
       vi.advanceTimersByTime(DEFAULT_INDEX_INTERVAL)
       expect(runCount).toBe(2)
       stopBackgroundIndexing()
 
-      // Second cycle
       startBackgroundIndexing()
       vi.advanceTimersByTime(DEFAULT_INDEX_INTERVAL)
-      expect(runCount).toBe(4) // 2 from first + 2 from second
+      expect(runCount).toBe(4)
       stopBackgroundIndexing()
     })
   })
 
   describe('environment variable override', () => {
     it('should parse INDEX_INTERVAL_MS from environment', () => {
-      const envValue = '120000' // 2 minutes
+      const envValue = '120000'
       const interval = parseInt(envValue || String(DEFAULT_INDEX_INTERVAL))
 
       expect(interval).toBe(120000)

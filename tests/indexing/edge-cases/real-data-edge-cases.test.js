@@ -1,12 +1,3 @@
-/**
- * Real Data Edge Case Tests
- *
- * Tests edge cases using actual data from the system:
- * - Unicode/emoji handling
- * - Special characters
- * - Large content
- * - Empty/null fields
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
@@ -35,13 +26,11 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
 
     describe('Unicode Handling', () => {
       it('should handle emoji in search queries', async () => {
-        // Search with emoji - should not throw
         const results = await searchProductionIndex('🎉 celebration party', 'emails', 5)
         expect(Array.isArray(results)).toBe(true)
       }, 30000)
 
       it('should handle CJK characters in search', async () => {
-        // Search with Chinese characters
         const results = await searchProductionIndex('会议 meeting 会议', 'emails', 5)
         expect(Array.isArray(results)).toBe(true)
       }, 30000)
@@ -85,7 +74,6 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
       }, 60000)
 
       it('should handle SQL-like characters safely', async () => {
-        // These should not cause SQL injection or errors
         const queries = [
           "O'Brien meeting",
           'SELECT * FROM users',
@@ -102,13 +90,10 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
 
     describe('Empty and Edge Cases', () => {
       it('should handle empty string search', async () => {
-        // Empty search should return results (all docs)
-        // or handle gracefully
         try {
           const results = await searchProductionIndex('', 'emails', 5)
           expect(Array.isArray(results)).toBe(true)
         } catch (e) {
-          // Empty search might throw - that's acceptable
           expect(e.message).toBeDefined()
         }
       }, 30000)
@@ -247,7 +232,6 @@ describe('Data Sampling', () => {
   it.skipIf(!sources.mail)('should sample real emails', async () => {
     const emails = await sampleEmails(10)
     expect(Array.isArray(emails)).toBe(true)
-    // May have fewer if not enough emails exist
     expect(emails.length).toBeLessThanOrEqual(10)
 
     for (const path of emails) {

@@ -1,11 +1,4 @@
-/**
- * Performance measurement utilities for indexing tests
- */
 
-/**
- * Measure execution time of an async function
- * @returns {{ result: any, duration: number }}
- */
 export async function measureTime(fn) {
   const start = performance.now()
   const result = await fn()
@@ -13,10 +6,6 @@ export async function measureTime(fn) {
   return { result, duration }
 }
 
-/**
- * Measure execution time of a sync function
- * @returns {{ result: any, duration: number }}
- */
 export function measureTimeSync(fn) {
   const start = performance.now()
   const result = fn()
@@ -24,9 +13,6 @@ export function measureTimeSync(fn) {
   return { result, duration }
 }
 
-/**
- * Get current memory usage in MB
- */
 export function measureMemory() {
   const usage = process.memoryUsage()
   return {
@@ -37,9 +23,6 @@ export function measureMemory() {
   }
 }
 
-/**
- * Calculate cosine similarity between two vectors
- */
 export function cosineSimilarity(a, b) {
   if (a.length !== b.length) {
     throw new Error('Vectors must have the same length')
@@ -61,17 +44,11 @@ export function cosineSimilarity(a, b) {
   return dotProduct / magnitude
 }
 
-/**
- * Calculate throughput (items per second)
- */
 export function calculateThroughput(itemCount, durationMs) {
   if (durationMs === 0) return Infinity
   return itemCount / (durationMs / 1000)
 }
 
-/**
- * Performance tracker for collecting samples over time
- */
 export class PerformanceTracker {
   constructor(name = 'Performance') {
     this.name = name
@@ -156,9 +133,6 @@ export class PerformanceTracker {
   }
 }
 
-/**
- * Throughput tracker for measuring items per second
- */
 export class ThroughputTracker {
   constructor() {
     this.batches = []
@@ -223,16 +197,10 @@ export class ThroughputTracker {
   }
 }
 
-/**
- * Wait for a specified duration (useful for testing throttling)
- */
 export function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/**
- * Run GC if available (requires --expose-gc flag)
- */
 export function forceGC() {
   if (global.gc) {
     global.gc()
@@ -241,16 +209,11 @@ export function forceGC() {
   return false
 }
 
-/**
- * Benchmark a function multiple times and return statistics
- */
 export async function benchmark(fn, iterations = 10, warmupIterations = 2) {
-  // Warmup
   for (let i = 0; i < warmupIterations; i++) {
     await fn()
   }
 
-  // Actual benchmark
   const durations = []
   for (let i = 0; i < iterations; i++) {
     const { duration } = await measureTime(fn)
@@ -276,9 +239,6 @@ function calculateStdDev(values) {
   return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length)
 }
 
-/**
- * Assert that a duration is within expected bounds
- */
 export function assertDuration(actualMs, maxMs, message = '') {
   if (actualMs > maxMs) {
     throw new Error(
@@ -287,9 +247,6 @@ export function assertDuration(actualMs, maxMs, message = '') {
   }
 }
 
-/**
- * Assert that throughput meets minimum requirement
- */
 export function assertThroughput(actualItemsPerSec, minItemsPerSec, message = '') {
   if (actualItemsPerSec < minItemsPerSec) {
     throw new Error(
@@ -298,9 +255,6 @@ export function assertThroughput(actualItemsPerSec, minItemsPerSec, message = ''
   }
 }
 
-/**
- * Assert that memory usage is within bounds
- */
 export function assertMemory(actualMB, maxMB, message = '') {
   if (actualMB > maxMB) {
     throw new Error(

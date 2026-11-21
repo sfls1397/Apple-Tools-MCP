@@ -1,11 +1,6 @@
-/**
- * Edge case tests for incremental indexing
- * Tests timestamp boundaries, batch sizes, and ID edge cases
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Mac Absolute Time epoch: Jan 1, 2001 00:00:00 UTC
 const MAC_ABSOLUTE_EPOCH = 978307200
 const ONE_HOUR_MS = 60 * 60 * 1000
 const BATCH_SIZE = 32
@@ -13,63 +8,51 @@ const BATCH_DELETE_SIZE = 100
 
 describe('Incremental Indexing Edge Cases', () => {
   describe('timestamp edge cases', () => {
-    // Convert Unix ms to Mac Absolute nanoseconds (like in indexer.js)
     const unixMsToMacAbsoluteNs = (unixMs) => {
       return (unixMs / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000
     }
 
-    // Convert Mac Absolute nanoseconds to Unix ms
     const macAbsoluteNsToUnixMs = (macNs) => {
       return (macNs / 1000000000 + MAC_ABSOLUTE_EPOCH) * 1000
     }
 
     it('should handle Mac Absolute Time at epoch (Jan 1, 2001 00:00:00)', () => {
-      // At Mac epoch, Mac Absolute Time is 0
       const macEpochUnixMs = MAC_ABSOLUTE_EPOCH * 1000
 
       const macAbsoluteNs = unixMsToMacAbsoluteNs(macEpochUnixMs)
       expect(macAbsoluteNs).toBe(0)
 
-      // Round trip
       const backToUnixMs = macAbsoluteNsToUnixMs(macAbsoluteNs)
       expect(backToUnixMs).toBe(macEpochUnixMs)
     })
 
     it('should handle timestamps before Mac epoch (pre-2001)', () => {
-      // Year 2000 - before Mac epoch
       const year2000 = new Date('2000-06-15T12:00:00Z').getTime()
 
       const macAbsoluteNs = unixMsToMacAbsoluteNs(year2000)
       expect(macAbsoluteNs).toBeLessThan(0)
 
-      // Verify this creates a valid SQL filter (negative number)
       const sqlFilter = `AND m.date >= ${macAbsoluteNs}`
       expect(sqlFilter).toContain('-')
     })
 
     it('should handle future timestamps (clock skew)', () => {
-      // 1 year in the future
       const futureTimestamp = Date.now() + 365 * 24 * 60 * 60 * 1000
 
       const macAbsoluteNs = unixMsToMacAbsoluteNs(futureTimestamp)
       expect(macAbsoluteNs).toBeGreaterThan(0)
 
-      // Should still produce valid SQL
       const sqlFilter = `AND m.date >= ${macAbsoluteNs}`
       expect(sqlFilter).not.toContain('NaN')
       expect(sqlFilter).not.toContain('Infinity')
     })
 
     it('should handle message timestamp exactly at buffer boundary', () => {
-      // Scenario: lastIndexTime = T, buffer = 1 hour
-      // Message timestamp = T - 1 hour exactly
       const lastIndexTime = Date.now()
       const effectiveTimestamp = lastIndexTime - ONE_HOUR_MS
 
-      // Message at exact boundary
       const messageTimestamp = effectiveTimestamp
 
-      // Should be included (>= comparison)
       const isIncluded = messageTimestamp >= effectiveTimestamp
       expect(isIncluded).toBe(true)
     })
@@ -78,10 +61,8 @@ describe('Incremental Indexing Edge Cases', () => {
       const lastIndexTime = Date.now()
       const effectiveTimestamp = lastIndexTime - ONE_HOUR_MS
 
-      // Message 1ms before boundary
       const messageTimestamp = effectiveTimestamp - 1
 
-      // Should NOT be included
       const isIncluded = messageTimestamp >= effectiveTimestamp
       expect(isIncluded).toBe(false)
     })
@@ -90,10 +71,8 @@ describe('Incremental Indexing Edge Cases', () => {
       const unixEpoch = 0
 
       const macAbsoluteNs = unixMsToMacAbsoluteNs(unixEpoch)
-      // Should be negative (1970 is before 2001)
       expect(macAbsoluteNs).toBeLessThan(0)
 
-      // Should be approximately -31 years in nanoseconds
       const expectedNs = -MAC_ABSOLUTE_EPOCH * 1000000000
       expect(macAbsoluteNs).toBe(expectedNs)
     })
@@ -104,9 +83,8 @@ describe('Incremental Indexing Edge Cases', () => {
       const macAbsoluteNs = unixMsToMacAbsoluteNs(year3000)
       expect(Number.isFinite(macAbsoluteNs)).toBe(true)
 
-      // Verify no precision loss
       const roundTrip = macAbsoluteNsToUnixMs(macAbsoluteNs)
-      expect(Math.abs(roundTrip - year3000)).toBeLessThan(1) // Within 1ms
+      expect(Math.abs(roundTrip - year3000)).toBeLessThan(1)
     })
   })
 
@@ -185,35 +163,29 @@ describe('Incremental Indexing Edge Cases', () => {
   })
 
   describe('ID edge cases', () => {
-    // Validate ID for LanceDB (like validateLanceDBId in indexer.js)
     const validateLanceDBId = (id) => {
       if (typeof id !== 'string') return null
       if (id.length === 0 || id.length > 1000) return null
 
-      // Only allow safe characters
       const safePattern = /^[a-zA-Z0-9._@<>:\-\/\s]+$/
       if (!safePattern.test(id)) return null
 
       return id
     }
 
-    // Escape SQL string (like escapeSQL in indexer.js)
     const escapeSQL = (str) => {
       if (typeof str !== 'string') return ''
       return str.replace(/'/g, "''")
     }
 
     it('should handle calendar ID with hyphen in dbId', () => {
-      // Calendar ID format: "${dbId}-${startTimestamp}"
       const dbId = 'abc-123-def'
       const startTimestamp = 1234567890
       const calendarId = `${dbId}-${startTimestamp}`
 
-      // Should be valid
       const validated = validateLanceDBId(calendarId)
       expect(validated).toBe(calendarId)
 
-      // Should parse correctly
       const lastHyphen = calendarId.lastIndexOf('-')
       const extractedDbId = calendarId.substring(0, lastHyphen)
       const extractedTimestamp = calendarId.substring(lastHyphen + 1)
@@ -223,7 +195,6 @@ describe('Incremental Indexing Edge Cases', () => {
     })
 
     it('should handle very large message ROWID', () => {
-      // SQLite max integer is 9223372036854775807
       const largeRowId = '9223372036854775807'
 
       const validated = validateLanceDBId(largeRowId)
@@ -231,13 +202,11 @@ describe('Incremental Indexing Edge Cases', () => {
     })
 
     it('should handle calendar event with negative startTimestamp', () => {
-      // Events before 1970
       const dbId = '12345'
-      const negativeTimestamp = -86400000 // 1 day before Unix epoch
+      const negativeTimestamp = -86400000
 
       const calendarId = `${dbId}-${negativeTimestamp}`
 
-      // Should be valid (hyphen is allowed)
       const validated = validateLanceDBId(calendarId)
       expect(validated).toBe(calendarId)
     })
@@ -251,7 +220,6 @@ describe('Incremental Indexing Edge Cases', () => {
 
       for (const id of maliciousIds) {
         const validated = validateLanceDBId(id)
-        // Should be rejected due to semicolon, quotes, etc.
         expect(validated).toBeNull()
       }
     })
@@ -262,7 +230,6 @@ describe('Incremental Indexing Edge Cases', () => {
 
       expect(escaped).toBe("O''Brien")
 
-      // Build delete condition
       const condition = `id = '${escaped}'`
       expect(condition).toBe("id = 'O''Brien'")
     })
@@ -282,7 +249,6 @@ describe('Incremental Indexing Edge Cases', () => {
     })
 
     it('should handle ID with email address format', () => {
-      // Message IDs often contain email addresses
       const messageId = '<abc123.456@mail.gmail.com>'
 
       const validated = validateLanceDBId(messageId)
@@ -291,7 +257,6 @@ describe('Incremental Indexing Edge Cases', () => {
   })
 
   describe('data size edge cases', () => {
-    // Truncate text like in indexer.js
     const truncateText = (text, maxLength) => {
       if (!text || typeof text !== 'string') return ''
       return text.substring(0, maxLength)
@@ -314,14 +279,13 @@ describe('Incremental Indexing Edge Cases', () => {
 
     it('should handle empty message text with valid attributedBody', () => {
       const processMessage = (msg) => {
-        // If text is empty but attributedBody exists, we'd extract from attributedBody
         const text = msg.text || msg.extractedFromAttributedBody || ''
         return { id: msg.id, text, hasText: text.length > 0 }
       }
 
       const message = {
         id: 1,
-        text: '', // Empty
+        text: '',
         extractedFromAttributedBody: 'Hello from attributedBody!'
       }
 
@@ -378,7 +342,6 @@ describe('Incremental Indexing Edge Cases', () => {
         { id: '2', text: 'second' }
       ]
 
-      // Deduplicate by keeping first occurrence
       const seen = new Set()
       const unique = items.filter(item => {
         if (seen.has(item.id)) return false
@@ -393,30 +356,26 @@ describe('Incremental Indexing Edge Cases', () => {
     it('should handle ID type coercion (number vs string)', () => {
       const indexedIds = new Set(['1', '2', '3'])
 
-      // SQLite might return number, but we store as string
       const numericId = 1
       const stringId = '1'
 
-      expect(indexedIds.has(numericId)).toBe(false) // Different type
+      expect(indexedIds.has(numericId)).toBe(false)
       expect(indexedIds.has(String(numericId))).toBe(true)
       expect(indexedIds.has(stringId)).toBe(true)
     })
 
     it('should handle very large Set of indexed IDs', () => {
-      // Test performance with 100k IDs (typical large mailbox)
       const largeSet = new Set()
       for (let i = 0; i < 100000; i++) {
         largeSet.add(`id-${i}`)
       }
 
-      // Lookup should still be O(1)
       const start = performance.now()
       for (let i = 0; i < 1000; i++) {
         largeSet.has(`id-${Math.floor(Math.random() * 100000)}`)
       }
       const duration = performance.now() - start
 
-      // 1000 lookups should be very fast (< 10ms)
       expect(duration).toBeLessThan(10)
     })
   })
@@ -441,14 +400,12 @@ describe('Incremental Indexing Edge Cases', () => {
         }
       }
 
-      // Fire multiple requests rapidly
       const results = await Promise.all([
         startIndexing(1),
         startIndexing(2),
         startIndexing(3)
       ])
 
-      // Only one should succeed, others skipped
       const successful = results.filter(r => r.success)
       const skipped = results.filter(r => r.skipped)
 

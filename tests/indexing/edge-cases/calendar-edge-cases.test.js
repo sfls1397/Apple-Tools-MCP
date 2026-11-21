@@ -1,23 +1,15 @@
-/**
- * Edge case tests for calendar indexing
- * Tests recurring events, all-day events, and date range filtering
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Mac Absolute Time epoch: Jan 1, 2001 00:00:00 UTC (in seconds)
 const MAC_ABSOLUTE_EPOCH = 978307200
 
 describe('Calendar Edge Cases', () => {
   describe('recurring events via OccurrenceCache', () => {
     it('should identify recurring events by recurrence join', () => {
-      // Simulated SQL result with recurrence data
       const event = {
         ROWID: 123,
         summary: 'Weekly Meeting',
-        recurrence_id: 456 // Non-null means recurring
+        recurrence_id: 456
       }
 
       const isRecurring = event.recurrence_id !== null
@@ -38,16 +30,14 @@ describe('Calendar Edge Cases', () => {
     })
 
     it('should use OccurrenceCache for calculated dates', () => {
-      // OccurrenceCache contains actual occurrence dates for recurring events
       const occurrences = [
-        { occurrence_date: 725760000, owner_id: 123 }, // Jan 1, 2024
-        { occurrence_date: 726364800, owner_id: 123 }, // Jan 8, 2024
-        { occurrence_date: 726969600, owner_id: 123 }  // Jan 15, 2024
+        { occurrence_date: 725760000, owner_id: 123 },
+        { occurrence_date: 726364800, owner_id: 123 },
+        { occurrence_date: 726969600, owner_id: 123 }
       ]
 
       expect(occurrences.length).toBe(3)
 
-      // Each occurrence should have same owner_id (parent event)
       const uniqueOwners = new Set(occurrences.map(o => o.owner_id))
       expect(uniqueOwners.size).toBe(1)
     })
@@ -56,7 +46,7 @@ describe('Calendar Edge Cases', () => {
       const event = {
         ROWID: 123,
         summary: 'Weekly Meeting',
-        occurrence_count: 52 // Weekly for 1 year
+        occurrence_count: 52
       }
 
       expect(event.occurrence_count).toBe(52)
@@ -99,8 +89,8 @@ describe('Calendar Edge Cases', () => {
 
     it('should have 24-hour duration for all-day events', () => {
       const event = {
-        start_date: 725760000, // Jan 1, 2024 00:00:00
-        end_date: 725846400,   // Jan 2, 2024 00:00:00
+        start_date: 725760000,
+        end_date: 725846400,
         all_day: 1
       }
 
@@ -115,8 +105,8 @@ describe('Calendar Edge Cases', () => {
     it('should handle events spanning multiple days', () => {
       const event = {
         summary: 'Conference',
-        start_date: 725760000,  // Jan 1, 2024
-        end_date: 726019200,    // Jan 4, 2024
+        start_date: 725760000,
+        end_date: 726019200,
         all_day: 1
       }
 
@@ -128,8 +118,8 @@ describe('Calendar Edge Cases', () => {
     it('should handle overnight non-all-day events', () => {
       const event = {
         summary: 'Night Shift',
-        start_date: 725796000,  // Jan 1, 2024 10:00
-        end_date: 725824800,    // Jan 2, 2024 02:00
+        start_date: 725796000,
+        end_date: 725824800,
         all_day: 0
       }
 
@@ -263,30 +253,26 @@ describe('Calendar Edge Cases', () => {
 
   describe('time zone handling', () => {
     it('should handle UTC times', () => {
-      // Mac Absolute Time is always UTC
-      const macTime = 725760000 // Jan 1, 2024 00:00:00 UTC
+      const macTime = 725760000
       const unixTime = macTime + MAC_ABSOLUTE_EPOCH
 
       const date = new Date(unixTime * 1000)
 
       expect(date.getUTCFullYear()).toBe(2024)
-      expect(date.getUTCMonth()).toBe(0) // January
+      expect(date.getUTCMonth()).toBe(0)
       expect(date.getUTCDate()).toBe(1)
     })
 
     it('should handle timezone offset events', () => {
-      // Event in PST (UTC-8)
       const event = {
-        start_date: 725760000, // UTC
+        start_date: 725760000,
         timezone: 'America/Los_Angeles'
       }
 
-      // Conversion would be done during display, not storage
       expect(event.timezone).toBe('America/Los_Angeles')
     })
 
     it('should handle floating timezones', () => {
-      // Floating = same local time regardless of timezone
       const event = {
         start_date: 725760000,
         timezone: 'floating'
@@ -410,7 +396,7 @@ describe('Calendar Edge Cases', () => {
   describe('stale event detection', () => {
     it('should identify events not in source', () => {
       const indexedIds = ['event-1', 'event-2', 'event-3']
-      const sourceIds = ['event-1', 'event-3'] // event-2 deleted
+      const sourceIds = ['event-1', 'event-3']
 
       const staleIds = indexedIds.filter(id => !sourceIds.includes(id))
 
