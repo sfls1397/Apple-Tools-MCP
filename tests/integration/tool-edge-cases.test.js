@@ -1,11 +1,3 @@
-/**
- * Tool Edge Cases Tests - Test unusual parameter combinations
- *
- * Tests for:
- * - Conflicting filter combinations
- * - Boundary values for all parameters
- * - Edge cases specific to each tool
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
@@ -20,7 +12,6 @@ import {
   resolveByName
 } from '../../contacts.js'
 
-// Real paths
 const DATA_DIR = path.join(process.env.HOME, '.apple-tools-mcp')
 const DB_PATH = path.join(DATA_DIR, 'vector-index')
 const MESSAGES_DB = path.join(process.env.HOME, 'Library', 'Messages', 'chat.db')
@@ -54,9 +45,6 @@ async function searchTable(tableName, query, limit = 10) {
   }
 }
 
-// ============================================================================
-// EMAIL SEARCH EDGE CASES
-// ============================================================================
 
 describe.skipIf(!indexExists)('Email Search Edge Cases', () => {
   beforeAll(async () => {
@@ -72,14 +60,12 @@ describe.skipIf(!indexExists)('Email Search Edge Cases', () => {
     })
 
     it('should handle limit = 0 (should use default)', async () => {
-      // limit 0 is invalid, should use default or return empty
       const results = await searchTable('emails', 'meeting', 0)
       expect(Array.isArray(results)).toBe(true)
     })
 
     it('should handle very large limit', async () => {
       const results = await searchTable('emails', 'the', 10000)
-      // Should cap at reasonable maximum or return available (limited by 30-day window)
       expect(Array.isArray(results)).toBe(true)
       expect(results.length).toBeLessThanOrEqual(10000)
     })
@@ -104,7 +90,6 @@ describe.skipIf(!indexExists)('Email Search Edge Cases', () => {
     it('should handle query with mixed case', async () => {
       const results1 = await searchTable('emails', 'MEETING', 10)
       const results2 = await searchTable('emails', 'meeting', 10)
-      // Both should work, may return similar results
       expect(Array.isArray(results1)).toBe(true)
       expect(Array.isArray(results2)).toBe(true)
     })
@@ -117,22 +102,17 @@ describe.skipIf(!indexExists)('Email Search Edge Cases', () => {
 
   describe('Filter Combination Edge Cases', () => {
     it('should handle searching in non-existent mailbox', async () => {
-      // Simulated by query - actual mailbox filtering would happen post-search
       const results = await searchTable('emails', 'NonExistentMailbox99999', 10)
       expect(Array.isArray(results)).toBe(true)
     })
 
     it('should return results when filtering by date range', async () => {
-      // Query implying date
       const results = await searchTable('emails', 'yesterday morning', 10)
       expect(Array.isArray(results)).toBe(true)
     })
   })
 })
 
-// ============================================================================
-// MESSAGE SEARCH EDGE CASES
-// ============================================================================
 
 describe.skipIf(!indexExists)('Message Search Edge Cases', () => {
   beforeAll(async () => {
@@ -167,7 +147,6 @@ describe.skipIf(!indexExists)('Message Search Edge Cases', () => {
 
     it('should distinguish individual vs group messages', async () => {
       const results = await searchTable('messages', 'hi', 20)
-      // Check if results have isGroup field
       const withGroupFlag = results.filter(r => typeof r.isGroup !== 'undefined')
       console.log(`  → ${withGroupFlag.length}/${results.length} messages have isGroup flag`)
       expect(Array.isArray(results)).toBe(true)
@@ -187,9 +166,6 @@ describe.skipIf(!indexExists)('Message Search Edge Cases', () => {
   })
 })
 
-// ============================================================================
-// CALENDAR SEARCH EDGE CASES
-// ============================================================================
 
 describe.skipIf(!indexExists)('Calendar Search Edge Cases', () => {
   beforeAll(async () => {
@@ -240,9 +216,6 @@ describe.skipIf(!indexExists)('Calendar Search Edge Cases', () => {
   })
 })
 
-// ============================================================================
-// CONTACT LOOKUP EDGE CASES
-// ============================================================================
 
 describe('Contact Lookup Edge Cases', () => {
   beforeAll(() => {
@@ -252,7 +225,6 @@ describe('Contact Lookup Edge Cases', () => {
   describe('Phone Number Format Edge Cases', () => {
     it('should handle phone with country code', () => {
       const result = lookupContact('+1-555-123-4567')
-      // May or may not find - just shouldn't crash
       expect(result === null || typeof result === 'object').toBe(true)
     })
 
@@ -333,9 +305,6 @@ describe('Contact Lookup Edge Cases', () => {
   })
 })
 
-// ============================================================================
-// SEARCH CONTACTS EDGE CASES
-// ============================================================================
 
 describe('Search Contacts Edge Cases', () => {
   beforeAll(() => {
@@ -345,7 +314,6 @@ describe('Search Contacts Edge Cases', () => {
   describe('Query Edge Cases', () => {
     it('should handle empty search', () => {
       const results = searchContacts('', 10)
-      // Empty search might return all or none
       expect(Array.isArray(results)).toBe(true)
     })
 
@@ -388,9 +356,6 @@ describe('Search Contacts Edge Cases', () => {
   })
 })
 
-// ============================================================================
-// CROSS-TOOL EDGE CASES
-// ============================================================================
 
 describe.skipIf(!indexExists)('Cross-Tool Edge Cases', () => {
   beforeAll(async () => {
@@ -441,9 +406,6 @@ describe.skipIf(!indexExists)('Cross-Tool Edge Cases', () => {
   })
 })
 
-// ============================================================================
-// RAW DATABASE EDGE CASES
-// ============================================================================
 
 describe.skipIf(!messagesExists)('Raw Messages Database Edge Cases', () => {
   it('should handle SQL query with special characters', () => {
@@ -480,7 +442,6 @@ describe.skipIf(!messagesExists)('Raw Messages Database Edge Cases', () => {
 
 describe.skipIf(!calendarExists)('Raw Calendar Database Edge Cases', () => {
   it('should handle basic calendar query', () => {
-    // Use summary instead of title (actual column name)
     const query = `
       SELECT summary FROM CalendarItem
       LIMIT 5
@@ -491,7 +452,6 @@ describe.skipIf(!calendarExists)('Raw Calendar Database Edge Cases', () => {
   })
 
   it('should handle recurring event query', () => {
-    // Check for any events with recurrence info
     const query = `
       SELECT summary FROM CalendarItem
       WHERE has_recurrences = 1

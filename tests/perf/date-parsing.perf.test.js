@@ -1,7 +1,3 @@
-/**
- * Date parsing performance tests
- * Tests: chrono-node parsing, date range extraction, timezone handling
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -10,10 +6,8 @@ import {
   LatencyHistogram
 } from './helpers/benchmark.js'
 
-// Mock chrono-node for performance testing
 const mockChrono = {
   parseDate: (text) => {
-    // Simulate chrono-node parsing with realistic timing
     const patterns = [
       /today/i,
       /tomorrow/i,
@@ -247,7 +241,6 @@ describe('Date Parsing Performance', () => {
         'in 3 days'
       ]
 
-      // Repeat to get 100
       const batch = Array(10).fill(dates).flat()
 
       const result = await benchmark(
@@ -309,9 +302,9 @@ describe('Date Parsing Performance', () => {
 
     it('should handle ambiguous dates', async () => {
       const ambiguous = [
-        '1/2/2024', // Could be Jan 2 or Feb 1
-        '03-04-2024', // March 4 or April 3
-        'next week Monday' // Which Monday?
+        '1/2/2024',
+        '03-04-2024',
+        'next week Monday'
       ]
 
       for (const date of ambiguous) {
@@ -361,12 +354,11 @@ describe('Date Parsing Performance', () => {
   })
 
   describe('Mac Absolute Time Conversion', () => {
-    // Mac Absolute Time epoch: January 1, 2001
     const MAC_EPOCH = 978307200
 
     it('should convert Mac absolute time quickly', async () => {
       const macTimes = Array(100).fill(null).map(() =>
-        Math.floor(Math.random() * 1000000000) // Random Mac timestamps
+        Math.floor(Math.random() * 1000000000)
       )
 
       const result = await benchmark(
@@ -387,10 +379,10 @@ describe('Date Parsing Performance', () => {
 
     it('should handle edge case Mac timestamps', async () => {
       const edgeCases = [
-        0, // Mac epoch start
-        -1, // Before Mac epoch
-        2147483647, // Max 32-bit
-        Date.now() / 1000 - MAC_EPOCH // Current time in Mac format
+        0,
+        -1,
+        2147483647,
+        Date.now() / 1000 - MAC_EPOCH
       ]
 
       for (const macTime of edgeCases) {
@@ -440,8 +432,6 @@ describe('Date Parsing Performance', () => {
         )
         expect(result.mean).toBeLessThan(2)
       }
-      // Five 500-iteration runs include 25s of deliberate cooldowns before
-      // scheduler overhead. Keep the measured 2ms latency assertion above.
     }, 60000)
   })
 

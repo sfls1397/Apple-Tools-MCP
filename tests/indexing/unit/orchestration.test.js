@@ -1,16 +1,7 @@
-/**
- * Unit tests for index.js orchestration functions
- * Tests: checkIfFirstRun, runIndexCycle, startBackgroundIndexing, stopBackgroundIndexing
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { isSearchBlockedByIndexing, cycleEndFlags } from '../../../lib/indexGate.js'
 
-/**
- * Simple lock file simulation for testing lock logic
- */
 function createLockFileMock() {
   let holder = null
 
@@ -39,12 +30,10 @@ function createLockFileMock() {
 describe('checkIfFirstRun', () => {
   describe('no tables exist', () => {
     it('should return true when no index tables exist', () => {
-      // Mock isIndexReady to return false for all tables
       const emailsReady = false
       const messagesReady = false
       const calendarReady = false
 
-      // If none are ready, it's first run
       const isFirstRun = !(emailsReady || messagesReady || calendarReady)
 
       expect(isFirstRun).toBe(true)
@@ -115,9 +104,7 @@ describe('runIndexCycle', () => {
       let indexingInProgress = true
       let indexAllCalled = false
 
-      // Simulate runIndexCycle behavior
       if (indexingInProgress) {
-        // Skip - "Indexing already in progress, skipping cycle"
       } else {
         indexAllCalled = true
       }
@@ -139,7 +126,6 @@ describe('runIndexCycle', () => {
     it('should set indexingInProgress to true before indexing', () => {
       let indexingInProgress = false
 
-      // Simulate runIndexCycle behavior
       indexingInProgress = true
 
       expect(indexingInProgress).toBe(true)
@@ -148,8 +134,7 @@ describe('runIndexCycle', () => {
     it('should set indexingInProgress to false after completion', async () => {
       let indexingInProgress = true
 
-      // Simulate completion
-      await Promise.resolve() // Simulate async indexAll
+      await Promise.resolve()
       indexingInProgress = false
 
       expect(indexingInProgress).toBe(false)
@@ -165,8 +150,7 @@ describe('runIndexCycle', () => {
     })
 
     it('should skip if lock acquisition fails', () => {
-      // Another process holds the lock
-      lockMock.acquire(12345) // Different PID
+      lockMock.acquire(12345)
 
       const acquired = lockMock.acquire(process.pid)
 
@@ -199,7 +183,6 @@ describe('runIndexCycle', () => {
       let lastIndexTime = 0
       const beforeTime = Date.now()
 
-      // Simulate successful indexing
       await Promise.resolve()
       lastIndexTime = Date.now()
 
@@ -209,7 +192,6 @@ describe('runIndexCycle', () => {
     it('should set isFirstEverRun to false after success', async () => {
       let isFirstEverRun = true
 
-      // Simulate successful indexing
       await Promise.resolve()
       isFirstEverRun = false
 
@@ -219,7 +201,6 @@ describe('runIndexCycle', () => {
     it('should set sessionIndexComplete to true after success', async () => {
       let sessionIndexComplete = false
 
-      // Simulate successful indexing
       await Promise.resolve()
       sessionIndexComplete = true
 
@@ -262,8 +243,7 @@ describe('startBackgroundIndexing', () => {
 
       const runIndexCycle = () => { runCount++ }
 
-      // Simulate startBackgroundIndexing behavior
-      runIndexCycle() // Run immediately
+      runIndexCycle()
 
       expect(runCount).toBe(1)
     })
@@ -271,22 +251,21 @@ describe('startBackgroundIndexing', () => {
 
   describe('interval scheduling', () => {
     it('should set interval for INDEX_INTERVAL', () => {
-      const INDEX_INTERVAL = 5 * 60 * 1000 // 5 minutes
+      const INDEX_INTERVAL = 5 * 60 * 1000
       let runCount = 0
 
       const runIndexCycle = () => { runCount++ }
 
-      runIndexCycle() // Immediate
+      runIndexCycle()
       setInterval(runIndexCycle, INDEX_INTERVAL)
 
-      // Advance time by INDEX_INTERVAL
       vi.advanceTimersByTime(INDEX_INTERVAL)
 
       expect(runCount).toBe(2)
     })
 
     it('should respect custom INDEX_INTERVAL_MS', () => {
-      const customInterval = 60 * 1000 // 1 minute
+      const customInterval = 60 * 1000
       let runCount = 0
 
       const runIndexCycle = () => { runCount++ }
@@ -294,12 +273,10 @@ describe('startBackgroundIndexing', () => {
       runIndexCycle()
       setInterval(runIndexCycle, customInterval)
 
-      // Advance by custom interval
       vi.advanceTimersByTime(customInterval)
 
       expect(runCount).toBe(2)
 
-      // Advance again
       vi.advanceTimersByTime(customInterval)
 
       expect(runCount).toBe(3)
@@ -314,10 +291,9 @@ describe('startBackgroundIndexing', () => {
       runIndexCycle()
       setInterval(runIndexCycle, INDEX_INTERVAL)
 
-      // Advance time by 3 intervals
       vi.advanceTimersByTime(INDEX_INTERVAL * 3)
 
-      expect(runCount).toBe(4) // Initial + 3 intervals
+      expect(runCount).toBe(4)
     })
   })
 })
@@ -341,13 +317,10 @@ describe('stopBackgroundIndexing', () => {
       runIndexCycle()
       const timer = setInterval(runIndexCycle, INDEX_INTERVAL)
 
-      // Stop the timer
       clearInterval(timer)
 
-      // Advance time
       vi.advanceTimersByTime(INDEX_INTERVAL * 2)
 
-      // Should only have the initial run
       expect(runCount).toBe(1)
     })
 
@@ -363,7 +336,6 @@ describe('stopBackgroundIndexing', () => {
 
       indexTimer = setInterval(() => {}, 1000)
 
-      // Call stop multiple times
       stopBackgroundIndexing()
       stopBackgroundIndexing()
       stopBackgroundIndexing()
@@ -381,7 +353,6 @@ describe('stopBackgroundIndexing', () => {
         }
       }
 
-      // Should not throw
       expect(() => stopBackgroundIndexing()).not.toThrow()
     })
   })
@@ -415,7 +386,6 @@ describe('initializeIndexing', () => {
   it('should not acquire if another instance holds lock', () => {
     const lockMock = createLockFileMock()
 
-    // Another instance holds the lock
     lockMock.acquire(99999)
 
     const acquired = lockMock.acquire(process.pid)

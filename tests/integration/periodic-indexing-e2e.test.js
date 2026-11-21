@@ -1,28 +1,10 @@
-/**
- * End-to-end test for periodic indexing, isolated from the live index and from Mail.app.
- *
- * A new email lands in a fake Mail folder after a first pass; the next periodic email pass
- * (indexEmails(), what each indexer cycle runs first) must index it, and mail_search's
- * searchEmails() must find it by its unique marker and by meaning. It uses the real
- * embedding model and real LanceDB.
- *
- * Isolation (safe to run on the Mini next to the live indexer daemon):
- * - HOME, APPLE_TOOLS_INDEX_DIR and APPLE_TOOLS_META_FILE point into a temp dir, like
- *   tests/unit/indexer-email-pass.test.js, so the live ~/.apple-tools-mcp index and
- *   ~/Library/Mail are never read or written.
- * - No Mail.app, no AppleScript and no email is sent: the "new email" is a synthetic
- *   .emlx written into the fake Mail folder.
- *
- * Opt in with RUN_E2E_TESTS=1 (the first run downloads the embedding model):
- *   RUN_E2E_TESTS=1 npx vitest run tests/integration/periodic-indexing-e2e.test.js
- */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-const TEST_TIMEOUT = 5 * 60 * 1000 // first run may download the embedding model
+const TEST_TIMEOUT = 5 * 60 * 1000
 const UNIQUE_MARKER = `periodic-test-${Date.now()}-${Math.random().toString(36).substring(7)}`
 const ENV_KEYS = ['HOME', 'APPLE_TOOLS_INDEX_DIR', 'APPLE_TOOLS_META_FILE']
 
@@ -63,7 +45,6 @@ describe.skipIf(!process.env.RUN_E2E_TESTS)('Periodic Indexing E2E (temp HOME an
     vi.resetModules()
     indexer = await import('../../indexer.js')
     search = await import('../../search.js')
-    // Guard: never the live index
     expect(indexer.INDEX_DIR).toBe(path.join(tmp, 'index'))
 
     const first = await indexer.indexEmails()

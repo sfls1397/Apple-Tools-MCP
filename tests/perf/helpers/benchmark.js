@@ -1,10 +1,4 @@
-/**
- * Comprehensive benchmarking utilities for performance tests
- */
 
-/**
- * Measure execution time of an async function with high precision
- */
 export async function measureTime(fn) {
   const start = performance.now()
   const result = await fn()
@@ -12,9 +6,6 @@ export async function measureTime(fn) {
   return { result, duration }
 }
 
-/**
- * Measure execution time of a sync function
- */
 export function measureTimeSync(fn) {
   const start = performance.now()
   const result = fn()
@@ -22,9 +13,6 @@ export function measureTimeSync(fn) {
   return { result, duration }
 }
 
-/**
- * Get current memory usage in MB
- */
 export function getMemoryUsage() {
   const usage = process.memoryUsage()
   return {
@@ -36,17 +24,11 @@ export function getMemoryUsage() {
   }
 }
 
-/**
- * Calculate throughput (items per second)
- */
 export function calculateThroughput(itemCount, durationMs) {
   if (durationMs === 0) return Infinity
   return itemCount / (durationMs / 1000)
 }
 
-/**
- * Calculate latency percentiles
- */
 export function calculatePercentiles(durations) {
   const sorted = [...durations].sort((a, b) => a - b)
   const len = sorted.length
@@ -70,9 +52,6 @@ function calculateStdDev(values) {
   return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length)
 }
 
-/**
- * Run a benchmark with warmup, iterations, and stats collection
- */
 export async function benchmark(fn, options = {}) {
   const {
     name = 'Benchmark',
@@ -82,13 +61,11 @@ export async function benchmark(fn, options = {}) {
     cooldownMs = 10
   } = options
 
-  // Warmup phase
   for (let i = 0; i < warmup; i++) {
     await fn()
     if (collectMemory && global.gc) global.gc()
   }
 
-  // Benchmark phase
   const durations = []
   const memorySnapshots = []
 
@@ -100,7 +77,6 @@ export async function benchmark(fn, options = {}) {
     const { duration } = await measureTime(fn)
     durations.push(duration)
 
-    // Brief cooldown between iterations
     await new Promise(r => setTimeout(r, cooldownMs))
   }
 
@@ -127,9 +103,6 @@ export async function benchmark(fn, options = {}) {
   }
 }
 
-/**
- * Run multiple benchmarks and compare results
- */
 export async function compareBenchmarks(benchmarks, options = {}) {
   const results = []
 
@@ -138,7 +111,6 @@ export async function compareBenchmarks(benchmarks, options = {}) {
     results.push(result)
   }
 
-  // Find baseline (first one)
   const baseline = results[0]
 
   return results.map(r => ({
@@ -148,9 +120,6 @@ export async function compareBenchmarks(benchmarks, options = {}) {
   }))
 }
 
-/**
- * Performance reporter for console output
- */
 export class PerformanceReporter {
   constructor(name) {
     this.name = name
@@ -210,9 +179,6 @@ export class PerformanceReporter {
   }
 }
 
-/**
- * Latency histogram for detailed distribution analysis
- */
 export class LatencyHistogram {
   constructor(bucketWidth = 1) {
     this.bucketWidth = bucketWidth
@@ -259,16 +225,10 @@ export class LatencyHistogram {
   }
 }
 
-/**
- * Wait for a specified duration
- */
 export function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/**
- * Force garbage collection if available
- */
 export function forceGC() {
   if (global.gc) {
     global.gc()
@@ -277,9 +237,6 @@ export function forceGC() {
   return false
 }
 
-/**
- * Run performance test with assertions
- */
 export async function assertPerformance(fn, expectations, options = {}) {
   const result = await benchmark(fn, options)
 

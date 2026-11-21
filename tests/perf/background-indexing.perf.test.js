@@ -1,7 +1,3 @@
-/**
- * Background indexing performance tests
- * Tests: system impact, resource usage, concurrent operations
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -37,7 +33,6 @@ describe('Background Indexing Performance', () => {
       const emails = generateEmails(500)
       const cpuSamples = []
 
-      // Simulate CPU usage tracking
       const startUsage = process.cpuUsage()
 
       for (let i = 0; i < emails.length; i += 32) {
@@ -47,7 +42,7 @@ describe('Background Indexing Performance', () => {
         if (i % 100 === 0) {
           const usage = process.cpuUsage(startUsage)
           cpuSamples.push({
-            user: usage.user / 1000, // Convert to ms
+            user: usage.user / 1000,
             system: usage.system / 1000
           })
         }
@@ -58,7 +53,6 @@ describe('Background Indexing Performance', () => {
         console.log(`  Sample ${i + 1}: User ${sample.user.toFixed(1)}ms, System ${sample.system.toFixed(1)}ms`)
       })
 
-      // Just verify we can measure
       expect(cpuSamples.length).toBeGreaterThan(0)
     })
 
@@ -99,17 +93,14 @@ describe('Background Indexing Performance', () => {
         })
       }
 
-      // Start measuring
       const interval = setInterval(measureBlocking, 10)
 
-      // Perform indexing
       for (let i = 0; i < emails.length; i += 32) {
         await mocks.embedder.embedder(emails.slice(i, i + 32).map(e => e.subject))
       }
 
       clearInterval(interval)
 
-      // Wait for final samples
       await wait(50)
 
       if (blockingSamples.length > 0) {
@@ -121,7 +112,6 @@ describe('Background Indexing Performance', () => {
         console.log(`  Average delay: ${avgBlocking.toFixed(2)}ms`)
         console.log(`  Max delay: ${maxBlocking.toFixed(2)}ms`)
 
-        // Event loop should not be blocked for long periods
         expect(maxBlocking).toBeLessThan(100)
       }
 
@@ -135,15 +125,13 @@ describe('Background Indexing Performance', () => {
       const queries = generateSearchQueries(20)
       const searchLatencies = []
 
-      // Start indexing in background
       const indexingPromise = (async () => {
         for (let i = 0; i < emails.length; i += 32) {
           await mocks.embedder.embedder(emails.slice(i, i + 32).map(e => e.subject))
-          await wait(10) // Simulate real-world timing
+          await wait(10)
         }
       })()
 
-      // Perform searches concurrently
       for (const query of queries) {
         const start = performance.now()
         await mocks.embedder.embedder([query])
@@ -167,7 +155,6 @@ describe('Background Indexing Performance', () => {
       const emails = generateEmails(100)
       const toolLatencies = []
 
-      // Start indexing
       const indexingPromise = (async () => {
         for (let i = 0; i < emails.length; i += 32) {
           await mocks.embedder.embedder(emails.slice(i, i + 32).map(e => e.subject))
@@ -175,7 +162,6 @@ describe('Background Indexing Performance', () => {
         }
       })()
 
-      // Simulate tool calls
       for (let i = 0; i < 10; i++) {
         const start = performance.now()
         await mocks.embedder.embedder([`tool call ${i}`])
@@ -198,10 +184,8 @@ describe('Background Indexing Performance', () => {
       let indexingPaused = false
       let pauseCount = 0
 
-      // Indexing with pause capability
       const indexWithPriority = async () => {
         for (let i = 0; i < emails.length; i += 32) {
-          // Check if we should pause for user request
           if (indexingPaused) {
             pauseCount++
             await wait(10)
@@ -213,7 +197,6 @@ describe('Background Indexing Performance', () => {
 
       const indexingPromise = indexWithPriority()
 
-      // Simulate user requests that should take priority
       for (let i = 0; i < 5; i++) {
         indexingPaused = true
         await mocks.embedder.embedder([`priority request ${i}`])
@@ -224,17 +207,14 @@ describe('Background Indexing Performance', () => {
 
       console.log(`\nPriority pauses: ${pauseCount}`)
 
-      // Should have paused for priority requests
       expect(pauseCount).toBeGreaterThan(0)
     })
   })
 
   describe('Incremental Indexing', () => {
     it('should process incremental updates quickly', async () => {
-      // Initial index (already done)
       const existingIds = new Set(Array(900).fill(null).map((_, i) => i))
 
-      // New items
       const allEmails = generateEmails(1000)
       const newEmails = allEmails.filter((_, i) => !existingIds.has(i))
 
@@ -258,16 +238,14 @@ describe('Background Indexing Performance', () => {
       const emails = generateEmails(1000)
       const lastModified = new Map()
 
-      // Populate initial state
       emails.forEach((email, i) => {
         lastModified.set(email.id, Date.now() - (i * 1000))
       })
 
-      // Simulate checking for changes
       const checkStart = performance.now()
       const changed = []
 
-      const cutoff = Date.now() - 60000 // Last minute
+      const cutoff = Date.now() - 60000
       for (const [id, modified] of lastModified) {
         if (modified > cutoff) {
           changed.push(id)
@@ -309,7 +287,6 @@ describe('Background Indexing Performance', () => {
         console.log(`  Batch ${r.batchSize}: ${r.duration.toFixed(1)}ms (${r.throughput.toFixed(0)} items/sec)`)
       })
 
-      // Find optimal
       const optimal = results.reduce((best, curr) =>
         curr.throughput > best.throughput ? curr : best
       )
@@ -353,7 +330,6 @@ describe('Background Indexing Performance', () => {
       const delayHistory = []
 
       const simulateLoadCheck = () => {
-        // Simulate varying load
         return Math.random() > 0.7 ? 'high' : 'low'
       }
 
@@ -407,8 +383,7 @@ describe('Background Indexing Performance', () => {
       console.log(`  Updates: ${progressUpdates.length}`)
       console.log(`  Duration: ${duration.toFixed(1)}ms`)
 
-      // Calculate overhead
-      const updateOverhead = progressUpdates.length * 0.01 // Assume 0.01ms per update
+      const updateOverhead = progressUpdates.length * 0.01
       console.log(`  Update overhead: ~${updateOverhead.toFixed(2)}ms`)
 
       expect(progressUpdates.length).toBe(Math.ceil(emails.length / 32))
@@ -421,7 +396,6 @@ describe('Background Indexing Performance', () => {
       const processedIds = new Set()
       let interrupted = false
 
-      // First pass - simulate interruption
       for (let i = 0; i < emails.length; i += 32) {
         if (i >= 64) {
           interrupted = true
@@ -433,7 +407,6 @@ describe('Background Indexing Performance', () => {
 
       console.log(`\nInterrupted after ${processedIds.size} items`)
 
-      // Resume
       const resumeStart = performance.now()
 
       for (let i = 0; i < emails.length; i += 32) {
@@ -468,7 +441,6 @@ describe('Background Indexing Performance', () => {
       const start = performance.now()
 
       await Promise.all([
-        // Email indexing
         (async () => {
           const s = performance.now()
           for (let i = 0; i < emails.length; i += 32) {
@@ -477,7 +449,6 @@ describe('Background Indexing Performance', () => {
           results.emails = { count: emails.length, duration: performance.now() - s }
         })(),
 
-        // Message indexing
         (async () => {
           const s = performance.now()
           for (let i = 0; i < messages.length; i += 32) {
@@ -486,7 +457,6 @@ describe('Background Indexing Performance', () => {
           results.messages = { count: messages.length, duration: performance.now() - s }
         })(),
 
-        // Calendar indexing
         (async () => {
           const s = performance.now()
           for (let i = 0; i < events.length; i += 32) {
@@ -504,7 +474,6 @@ describe('Background Indexing Performance', () => {
       console.log(`  Events: ${results.events.count} in ${results.events.duration.toFixed(1)}ms`)
       console.log(`  Total: ${totalDuration.toFixed(1)}ms`)
 
-      // Concurrent should be faster than sequential
       const sequentialEstimate = results.emails.duration + results.messages.duration + results.events.duration
       console.log(`  Sequential estimate: ${sequentialEstimate.toFixed(1)}ms`)
       console.log(`  Speedup: ${(sequentialEstimate / totalDuration).toFixed(2)}x`)
@@ -517,7 +486,6 @@ describe('Background Indexing Performance', () => {
     it('should cleanup resources after indexing', async () => {
       const memBefore = getMemoryUsage()
 
-      // Perform indexing
       const emails = generateEmails(500)
       for (let i = 0; i < emails.length; i += 32) {
         await mocks.embedder.embedder(emails.slice(i, i + 32).map(e => e.subject))
@@ -525,10 +493,8 @@ describe('Background Indexing Performance', () => {
 
       const memAfterIndexing = getMemoryUsage()
 
-      // Simulate cleanup
       await wait(100)
 
-      // Force garbage collection if available
       if (global.gc) {
         global.gc()
       }
@@ -542,7 +508,6 @@ describe('Background Indexing Performance', () => {
       console.log(`  After indexing: ${memAfterIndexing.heapUsed.toFixed(1)}MB`)
       console.log(`  After cleanup: ${memAfterCleanup.heapUsed.toFixed(1)}MB`)
 
-      // Memory should not grow unboundedly
       const growth = memAfterCleanup.heapUsed - memBefore.heapUsed
       expect(growth).toBeLessThan(100)
     })
