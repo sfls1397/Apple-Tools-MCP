@@ -1,19 +1,9 @@
-/**
- * Unit tests for batch embedding functionality
- * Tests: embedBatch, embed, embedding pipeline behavior
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Standard embedding dimensions for all-MiniLM-L6-v2
 const EMBEDDING_DIM = 384
 const BATCH_SIZE = 32
 
-/**
- * Calculate cosine similarity between two vectors
- */
 function cosineSimilarity(vec1, vec2) {
   if (vec1.length !== vec2.length) {
     throw new Error('Vectors must have the same length')
@@ -35,9 +25,6 @@ function cosineSimilarity(vec1, vec2) {
   return dotProduct / magnitude
 }
 
-/**
- * Generate test search texts
- */
 function generateSearchTexts(count) {
   const templates = [
     'Meeting about project planning',
@@ -57,7 +44,6 @@ describe('embedBatch logic', () => {
     it('should return empty array for empty input', () => {
       const texts = []
 
-      // Expected behavior: empty input returns empty result
       const result = texts.length === 0 ? [] : texts
 
       expect(result).toEqual([])
@@ -66,7 +52,6 @@ describe('embedBatch logic', () => {
     it('should detect when embedder should not be called', () => {
       const texts = []
 
-      // Logic check: should not process empty arrays
       const shouldProcess = texts.length > 0
 
       expect(shouldProcess).toBe(false)
@@ -83,7 +68,6 @@ describe('embedBatch logic', () => {
     it('should identify single text case', () => {
       const texts = ['test']
 
-      // Single text can be processed without batching
       const isSingleText = texts.length === 1
 
       expect(isSingleText).toBe(true)
@@ -92,7 +76,6 @@ describe('embedBatch logic', () => {
 
   describe('vector dimensions', () => {
     it('should expect 384-dim vectors for all-MiniLM-L6-v2', () => {
-      // This is the expected dimension for the model we use
       expect(EMBEDDING_DIM).toBe(384)
     })
 
@@ -114,7 +97,6 @@ describe('embedBatch logic', () => {
     it('should correctly calculate batch slicing', () => {
       const texts = ['text one', 'text two', 'text three']
 
-      // Expected: each text gets EMBEDDING_DIM dimensions
       const expectedSlices = texts.map((_, i) => ({
         start: i * EMBEDDING_DIM,
         end: (i + 1) * EMBEDDING_DIM
@@ -135,7 +117,6 @@ describe('embedBatch logic', () => {
 
   describe('vector quality expectations', () => {
     it('should expect non-zero vectors', () => {
-      // Mock a non-zero vector
       const vector = new Array(EMBEDDING_DIM).fill(0.1)
 
       const hasNonZero = vector.some(v => v !== 0)
@@ -143,7 +124,6 @@ describe('embedBatch logic', () => {
     })
 
     it('should expect vectors with values in reasonable range', () => {
-      // Normalized vectors should have values roughly in [-1, 1]
       const validRangeCheck = (v) => v >= -2 && v <= 2
 
       const vector = new Array(EMBEDDING_DIM).fill(0).map((_, i) =>
@@ -157,10 +137,8 @@ describe('embedBatch logic', () => {
 
   describe('deterministic output expectations', () => {
     it('should produce identical vectors for identical text', () => {
-      // This tests the contract: same input = same output
       const text = 'identical text input'
 
-      // Hash function as proxy for deterministic behavior
       const hashText = (t) => {
         let hash = 0
         for (let i = 0; i < t.length; i++) {
@@ -181,7 +159,6 @@ describe('embedBatch logic', () => {
 
 describe('embedding pipeline initialization', () => {
   it('should support lazy loading pattern', () => {
-    // The pipeline should not be initialized until first use
     let initialized = false
 
     const getEmbedder = () => {
@@ -191,7 +168,6 @@ describe('embedding pipeline initialization', () => {
       return { initialized }
     }
 
-    // First call initializes
     const embedder1 = getEmbedder()
     expect(embedder1.initialized).toBe(true)
     expect(initialized).toBe(true)
@@ -209,7 +185,6 @@ describe('embedding pipeline initialization', () => {
       return instance
     }
 
-    // Multiple calls should return same instance
     const p1 = getPipeline()
     const p2 = getPipeline()
     const p3 = getPipeline()
@@ -224,13 +199,11 @@ describe('embedding performance characteristics', () => {
   it('should process batches efficiently', () => {
     const texts = generateSearchTexts(32)
 
-    // Verify batch is properly sized
     expect(texts.length).toBe(32)
     expect(texts.length).toBeLessThanOrEqual(BATCH_SIZE)
   })
 
   it('should scale linearly with batch size', () => {
-    // Conceptual test: larger batches = proportionally larger results
     const batch16 = generateSearchTexts(16)
     const batch32 = generateSearchTexts(32)
 
@@ -245,7 +218,6 @@ describe('vector similarity', () => {
 
     const similarity = cosineSimilarity(vec1, vec2)
 
-    // Identical vectors should have similarity = 1
     expect(similarity).toBeCloseTo(1, 5)
   })
 
@@ -255,7 +227,6 @@ describe('vector similarity', () => {
 
     const similarity = cosineSimilarity(vec1, vec2)
 
-    // Orthogonal vectors should have similarity = 0
     expect(similarity).toBeCloseTo(0, 5)
   })
 
@@ -267,7 +238,6 @@ describe('vector similarity', () => {
   })
 
   it('should handle normalized vectors', () => {
-    // Create a normalized vector (magnitude = 1)
     const normalize = (vec) => {
       const magnitude = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0))
       return vec.map(v => v / magnitude)
@@ -276,31 +246,25 @@ describe('vector similarity', () => {
     const raw = new Array(EMBEDDING_DIM).fill(0).map((_, i) => Math.sin(i))
     const normalized = normalize(raw)
 
-    // Normalized vector should have magnitude close to 1
     const magnitude = Math.sqrt(normalized.reduce((sum, v) => sum + v * v, 0))
     expect(magnitude).toBeCloseTo(1, 5)
   })
 
   it('should compute similarity for similar content', () => {
-    // Vectors representing similar content should have high similarity
-    // This is a conceptual test using synthetic similar vectors
     const base = new Array(EMBEDDING_DIM).fill(0).map((_, i) => Math.sin(i / 10))
     const similar = base.map(v => v + (Math.random() - 0.5) * 0.1)
 
     const similarity = cosineSimilarity(base, similar)
 
-    // Should be highly similar (> 0.9)
     expect(similarity).toBeGreaterThan(0.9)
   })
 
   it('should compute low similarity for dissimilar content', () => {
-    // Vectors representing dissimilar content should have low similarity
     const vec1 = new Array(EMBEDDING_DIM).fill(0).map((_, i) => Math.sin(i / 10))
     const vec2 = new Array(EMBEDDING_DIM).fill(0).map((_, i) => Math.cos(i / 10))
 
     const similarity = cosineSimilarity(vec1, vec2)
 
-    // Should have lower similarity
     expect(similarity).toBeLessThan(0.5)
   })
 })
@@ -308,7 +272,7 @@ describe('vector similarity', () => {
 describe('text preprocessing', () => {
   it('should handle long texts via truncation', () => {
     const longText = 'x'.repeat(10000)
-    const maxLength = 512 // Common token limit consideration
+    const maxLength = 512
 
     const truncated = longText.substring(0, maxLength)
 
@@ -318,7 +282,6 @@ describe('text preprocessing', () => {
   it('should handle empty strings', () => {
     const text = ''
 
-    // Empty text should be handled gracefully
     expect(text.length).toBe(0)
   })
 

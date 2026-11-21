@@ -1,32 +1,23 @@
-/**
- * Security tests for path traversal prevention
- * Tests validateEmailPath and path validation utilities
- */
 
 import { describe, it, expect } from 'vitest'
 import path from 'path'
 import os from 'os'
 
 describe('Path Traversal Prevention', () => {
-  // Simulated validateEmailPath implementation
   const validateEmailPath = (filePath) => {
     if (typeof filePath !== 'string') return false
     if (filePath.length === 0) return false
 
-    // Must be absolute path
     if (!path.isAbsolute(filePath)) return false
 
-    // Reject path traversal sequences
     if (filePath.includes('..')) return false
 
-    // Must be under Mail directory
     const homeDir = os.homedir()
     const mailDir = path.join(homeDir, 'Library', 'Mail')
     const normalizedPath = path.normalize(filePath)
 
     if (!normalizedPath.startsWith(mailDir)) return false
 
-    // Must end with .emlx
     if (!normalizedPath.endsWith('.emlx') && !normalizedPath.endsWith('.partial.emlx')) {
       return false
     }
@@ -112,39 +103,33 @@ describe('Path Traversal Prevention', () => {
     const decodeAndCheck = (str) => {
       if (typeof str !== 'string') return false
 
-      // Decode URL encoding
       let decoded
       try {
         decoded = decodeURIComponent(str)
       } catch {
-        return false // Invalid encoding
+        return false
       }
 
-      // Check for traversal after decoding
       return !decoded.includes('..')
     }
 
     it('should detect %2e%2e%2f (../)', () => {
-      // %2e = . , %2f = /
       const encoded = '%2e%2e%2fpasswd'
       expect(decodeAndCheck(encoded)).toBe(false)
     })
 
     it('should detect double-encoded traversal', () => {
-      // %252e%252e = %2e%2e (double encoded)
       const doubleEncoded = '%252e%252e%252f'
 
-      // First decode
       const firstDecode = decodeURIComponent(doubleEncoded)
       expect(firstDecode).toBe('%2e%2e%2f')
 
-      // Second decode reveals traversal
       const secondDecode = decodeURIComponent(firstDecode)
       expect(secondDecode).toBe('../')
     })
 
     it('should pass clean encoded paths', () => {
-      const encoded = '%2Fpath%2Fto%2Ffile.emlx' // /path/to/file.emlx
+      const encoded = '%2Fpath%2Fto%2Ffile.emlx'
       expect(decodeAndCheck(encoded)).toBe(true)
     })
 
@@ -154,20 +139,17 @@ describe('Path Traversal Prevention', () => {
   })
 
   describe('symlink handling', () => {
-    // Simulated realpath check (in real code, use fs.realpathSync)
     const simulateSymlinkResolution = (inputPath, resolvedPath) => {
-      // In real implementation: fs.realpathSync(inputPath)
       return { input: inputPath, resolved: resolvedPath }
     }
 
     it('should detect symlink escaping Mail directory', () => {
       const homeDir = os.homedir()
       const inputPath = `${homeDir}/Library/Mail/V10/symlink.emlx`
-      const resolvedPath = '/etc/passwd' // Symlink points outside
+      const resolvedPath = '/etc/passwd'
 
       const result = simulateSymlinkResolution(inputPath, resolvedPath)
 
-      // Resolved path should still be under Mail dir
       const mailDir = path.join(homeDir, 'Library', 'Mail')
       expect(result.resolved.startsWith(mailDir)).toBe(false)
     })
@@ -203,19 +185,15 @@ describe('Path Traversal Prevention', () => {
       const pathWithTrailing = '/path/to/dir/'
       const normalized = path.normalize(pathWithTrailing)
 
-      // path.normalize preserves trailing slash in modern Node.js
-      // Use a custom function to strip it if needed
       const stripTrailing = (p) => p.replace(/\/+$/, '')
       expect(stripTrailing(normalized)).toBe('/path/to/dir')
     })
 
     it('should preserve root traversal attempts after normalize', () => {
-      // This is why we check BEFORE normalize
       const malicious = '/Library/Mail/../../../etc/passwd'
       const normalized = path.normalize(malicious)
 
       expect(normalized).toBe('/etc/passwd')
-      // After normalize, it escapes - which is why we check for .. first
     })
   })
 
@@ -224,13 +202,10 @@ describe('Path Traversal Prevention', () => {
       if (typeof component !== 'string') return false
       if (component.length === 0) return false
 
-      // No path separators
       if (component.includes('/') || component.includes('\\')) return false
 
-      // No traversal
       if (component === '.' || component === '..') return false
 
-      // No null bytes
       if (component.includes('\x00')) return false
 
       return true
@@ -308,11 +283,9 @@ describe('Path Traversal Prevention', () => {
     it('should handle case-insensitive filesystems (macOS)', () => {
       const homeDir = os.homedir()
 
-      // On macOS, /Library and /library are same
       const path1 = `${homeDir}/Library/Mail/file.emlx`
       const path2 = `${homeDir}/library/mail/file.emlx`
 
-      // For security, should normalize case before comparison
       const normalize = (p) => p.toLowerCase()
 
       expect(normalize(path1)).toBe(normalize(path2))
@@ -323,7 +296,7 @@ describe('Path Traversal Prevention', () => {
         '../passwd',
         '..\\passwd',
         '..%2fpasswd',
-        '..%5cpasswd' // %5c = backslash
+        '..%5cpasswd'
       ]
 
       const hasTraversal = (p) => {

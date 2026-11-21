@@ -1,19 +1,9 @@
-/**
- * Resource tests for memory leak detection
- * Tests long-running operation stability
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, vi } from 'vitest'
 
-// Standard indexer constants
 const BATCH_SIZE = 32
 const EMBEDDING_DIM = 384
 
-/**
- * Generate test data
- */
 function generateTestData(count, options = {}) {
   const { bodySize = 100 } = options
   return Array.from({ length: count }, (_, i) => ({
@@ -22,9 +12,6 @@ function generateTestData(count, options = {}) {
   }))
 }
 
-/**
- * Measure current memory usage
- */
 function measureMemory() {
   if (typeof process !== 'undefined' && process.memoryUsage) {
     const usage = process.memoryUsage()
@@ -38,9 +25,6 @@ function measureMemory() {
   return { heapUsed: 0, heapTotal: 0, external: 0, rss: 0 }
 }
 
-/**
- * Force garbage collection if available
- */
 function forceGC() {
   if (typeof global !== 'undefined' && global.gc) {
     global.gc()
@@ -62,7 +46,6 @@ describe('Memory Leak Detection', () => {
 
         for (let i = 0; i < items.length; i += BATCH_SIZE) {
           const batch = items.slice(i, i + BATCH_SIZE)
-          // Simulate batch processing
           await Promise.resolve(batch)
         }
 
@@ -70,14 +53,12 @@ describe('Memory Leak Detection', () => {
         memoryPerCycle.push(measureMemory().heapUsed)
       }
 
-      // Check that memory doesn't grow significantly between cycles
       const laterCycles = memoryPerCycle.slice(1)
       if (laterCycles.length > 0) {
         const avgLaterMemory = laterCycles.reduce((a, b) => a + b, 0) / laterCycles.length
         const maxLaterMemory = Math.max(...laterCycles)
 
-        // Max should not exceed average by more than 50%
-        expect(maxLaterMemory).toBeLessThan(avgLaterMemory * 1.5 + 10) // +10MB tolerance
+        expect(maxLaterMemory).toBeLessThan(avgLaterMemory * 1.5 + 10)
       }
     })
 
@@ -86,7 +67,6 @@ describe('Memory Leak Detection', () => {
       const testCycles = 5
       const itemsPerCycle = 100
 
-      // Warmup
       for (let i = 0; i < warmupCycles; i++) {
         const items = generateTestData(itemsPerCycle)
         for (let j = 0; j < items.length; j += BATCH_SIZE) {
@@ -97,7 +77,6 @@ describe('Memory Leak Detection', () => {
       forceGC()
       const postWarmupMemory = measureMemory().heapUsed
 
-      // Test cycles
       const testMemory = []
       for (let i = 0; i < testCycles; i++) {
         const items = generateTestData(itemsPerCycle)
@@ -111,7 +90,6 @@ describe('Memory Leak Detection', () => {
       const finalMemory = testMemory[testMemory.length - 1]
       const memoryGrowth = finalMemory - postWarmupMemory
 
-      // Memory should not grow significantly after warmup
       expect(memoryGrowth).toBeLessThan(50)
     })
   })
@@ -128,7 +106,6 @@ describe('Memory Leak Detection', () => {
 
         for (let i = 0; i < items.length; i += BATCH_SIZE) {
           const batch = items.slice(i, i + BATCH_SIZE)
-          // Simulate vector creation and disposal
           const _vectors = new Float32Array(batch.length * EMBEDDING_DIM)
         }
       }
@@ -137,7 +114,6 @@ describe('Memory Leak Detection', () => {
       const endMemory = measureMemory().heapUsed
       const growth = endMemory - startMemory
 
-      // Growth should be minimal (vectors not accumulating)
       expect(growth).toBeLessThan(50)
     })
   })
@@ -152,23 +128,19 @@ describe('Memory Leak Detection', () => {
       for (let i = 0; i < iterations; i++) {
         const largeData = generateTestData(100)
 
-        // Create a closure that references large data
         const callback = async () => {
           for (let j = 0; j < largeData.length; j += BATCH_SIZE) {
             await Promise.resolve()
           }
         }
 
-        // Execute and discard
         await callback()
-        // Don't keep reference to callback
       }
 
       forceGC()
       const endMemory = measureMemory().heapUsed
       const growth = endMemory - startMemory
 
-      // Closures should be garbage collected
       expect(growth).toBeLessThan(30)
     })
   })
@@ -179,21 +151,17 @@ describe('Memory Leak Detection', () => {
       const listeners = new Map()
 
       for (let i = 0; i < iterations; i++) {
-        // Add listener
         const listener = vi.fn()
         listeners.set(`listener-${i}`, listener)
 
-        // Process some data
         const items = generateTestData(50)
         for (let j = 0; j < items.length; j += BATCH_SIZE) {
           await Promise.resolve()
         }
 
-        // Remove listener (simulate cleanup)
         listeners.delete(`listener-${i}`)
       }
 
-      // All listeners should be cleaned up
       expect(listeners.size).toBe(0)
     })
   })
@@ -203,25 +171,21 @@ describe('Memory Leak Detection', () => {
       const iterations = 5
       const itemsPerIteration = BATCH_SIZE
 
-      // Pre-allocate buffer (reusable)
       const reuseableBuffer = new Float32Array(BATCH_SIZE * EMBEDDING_DIM)
 
       for (let i = 0; i < iterations; i++) {
         const items = generateTestData(itemsPerIteration)
 
-        // Simulate embedding and copy to reusable buffer
         const simulatedEmbedding = new Float32Array(BATCH_SIZE * EMBEDDING_DIM)
         reuseableBuffer.set(simulatedEmbedding.slice(0, reuseableBuffer.length))
       }
 
-      // Buffer should still be valid
       expect(reuseableBuffer.length).toBe(BATCH_SIZE * EMBEDDING_DIM)
     })
   })
 
   describe('string interning', () => {
     it('should not duplicate identical strings', async () => {
-      // Generate items with duplicate subjects
       const uniqueSubjects = ['Meeting', 'Update', 'Review', 'Sync', 'Call']
       const count = 100
 
@@ -233,7 +197,6 @@ describe('Memory Leak Detection', () => {
         })
       }
 
-      // Process them
       const texts = items.map(e => `${e.subject}: ${e.content}`)
 
       forceGC()
@@ -247,7 +210,6 @@ describe('Memory Leak Detection', () => {
       const endMemory = measureMemory().heapUsed
       const growth = endMemory - startMemory
 
-      // Should not grow much despite processing 100 items
       expect(growth).toBeLessThan(20)
     })
   })
@@ -263,7 +225,6 @@ describe('Memory Leak Detection', () => {
         await Promise.resolve()
 
         const progress = i / items.length
-        // Sample at 0%, 25%, 50%, 75%
         if (progress === 0 || Math.abs(progress - 0.25) < 0.05 ||
             Math.abs(progress - 0.5) < 0.05 || Math.abs(progress - 0.75) < 0.05) {
           memoryAtQuartiles.push({
@@ -273,43 +234,36 @@ describe('Memory Leak Detection', () => {
         }
       }
 
-      // Final measurement
       memoryAtQuartiles.push({
         progress: 100,
         memory: measureMemory().heapUsed
       })
 
-      // Memory at 100% should not be more than 2x memory at 25%
       const earlyMemory = memoryAtQuartiles[1]?.memory || memoryAtQuartiles[0].memory
       const finalMemory = memoryAtQuartiles[memoryAtQuartiles.length - 1].memory
 
-      expect(finalMemory).toBeLessThan(earlyMemory * 2 + 20) // +20MB tolerance
+      expect(finalMemory).toBeLessThan(earlyMemory * 2 + 20)
     })
   })
 
   describe('WeakRef simulation', () => {
     it('should demonstrate weak reference pattern', async () => {
-      // Simulate weak reference pattern for cache
       const weakCache = new Map()
 
       for (let i = 0; i < 5; i++) {
         const items = generateTestData(50)
 
-        // Store with "weak" semantics (simulated)
         const cacheKey = `batch-${i}`
         weakCache.set(cacheKey, {
           items,
           timestamp: Date.now()
         })
 
-        // Process
         for (let j = 0; j < items.length; j += BATCH_SIZE) {
           await Promise.resolve()
         }
 
-        // Simulate cache cleanup (every 2 iterations)
         if (i % 2 === 1) {
-          // Clear old entries
           const cutoff = Date.now() - 1000
           for (const [key, value] of weakCache) {
             if (value.timestamp < cutoff) {
@@ -319,7 +273,6 @@ describe('Memory Leak Detection', () => {
         }
       }
 
-      // Cache should have been cleaned
       expect(weakCache.size).toBeLessThanOrEqual(5)
     })
   })

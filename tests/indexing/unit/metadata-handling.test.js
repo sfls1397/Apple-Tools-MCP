@@ -1,9 +1,3 @@
-/**
- * Unit tests for index metadata handling
- * Tests: loadIndexMeta, saveIndexMeta, metadata file operations
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 import path from 'path'
@@ -11,7 +5,6 @@ import path from 'path'
 describe('loadIndexMeta', () => {
   describe('missing file handling', () => {
     it('should return empty object when file does not exist', () => {
-      // Simulate loadIndexMeta behavior
       const fileExists = false
 
       const result = fileExists ? { data: 'exists' } : {}
@@ -61,7 +54,6 @@ describe('loadIndexMeta', () => {
     })
 
     it('should handle gracefully on read error', () => {
-      // Simulate error handling behavior
       let result = {}
       try {
         throw new Error('EACCES: permission denied')
@@ -87,7 +79,6 @@ describe('saveIndexMeta', () => {
       const dirExists = false
       let mkdirCalled = false
 
-      // Simulate saveIndexMeta behavior
       if (!dirExists) {
         mkdirCalled = true
       }
@@ -173,7 +164,6 @@ describe('saveIndexMeta', () => {
 
       const output = JSON.stringify(meta, null, 2)
 
-      // Verify it's complete JSON
       expect(() => JSON.parse(output)).not.toThrow()
     })
   })
@@ -194,7 +184,7 @@ describe('metadata state management', () => {
     let meta = { ...initialMeta }
 
     meta = { ...meta, new: 'data' }
-    meta = { ...initialMeta } // Reset
+    meta = { ...initialMeta }
 
     expect(meta).toEqual({ original: 'value' })
     expect(meta.new).toBeUndefined()
@@ -205,8 +195,6 @@ describe('metadata timestamp handling', () => {
   it('should save current timestamp before indexing starts', () => {
     const indexStartTime = Date.now()
 
-    // This ensures any emails arriving during indexing
-    // will be picked up on the next incremental scan
     const meta = { lastEmailIndexTime: indexStartTime }
 
     expect(meta.lastEmailIndexTime).toBe(indexStartTime)
@@ -217,7 +205,6 @@ describe('metadata timestamp handling', () => {
     const ONE_DAY_MS = 24 * 60 * 60 * 1000
     const lastIndexTime = Date.now() - (2 * ONE_DAY_MS)
 
-    // The implementation applies a 1-day buffer to catch edge cases
     const effectiveTime = lastIndexTime - ONE_DAY_MS
 
     expect(effectiveTime).toBeLessThan(lastIndexTime)

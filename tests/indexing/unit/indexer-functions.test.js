@@ -1,19 +1,9 @@
-/**
- * Unit tests for indexer.js functions
- * Tests: indexEmails, indexMessages, indexCalendar, indexAll
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Standard indexer constants
 const BATCH_SIZE = 32
 const BATCH_DELAY_MS = 100
 
-/**
- * Generate test emails for logic testing
- */
 function generateTestEmails(count, options = {}) {
   const { daysBack = 15 } = options
   const now = Date.now()
@@ -26,9 +16,6 @@ function generateTestEmails(count, options = {}) {
   }))
 }
 
-/**
- * Generate test messages for logic testing
- */
 function generateTestMessages(count) {
   return Array.from({ length: count }, (_, i) => ({
     id: i + 1,
@@ -38,9 +25,6 @@ function generateTestMessages(count) {
   }))
 }
 
-/**
- * Generate calendar events for logic testing
- */
 function generateCalendarEvents(count, options = {}) {
   const { recurringRate = 0.3 } = options
   const now = Date.now()
@@ -56,11 +40,10 @@ function generateCalendarEvents(count, options = {}) {
 describe('indexEmails', () => {
   describe('incremental vs full scan detection', () => {
     it('should use mdfind when lastEmailIndexTime exists', () => {
-      const lastIndexTime = Date.now() - (24 * 60 * 60 * 1000) // 1 day ago
+      const lastIndexTime = Date.now() - (24 * 60 * 60 * 1000)
       const metadataExists = true
       const metadata = { lastEmailIndexTime: lastIndexTime }
 
-      // When metadata exists with lastEmailIndexTime, incremental scan should be used
       const useIncremental = metadataExists && metadata.lastEmailIndexTime != null
 
       expect(useIncremental).toBe(true)
@@ -69,7 +52,6 @@ describe('indexEmails', () => {
     it('should use full find scan when no metadata exists', () => {
       const metadataExists = false
 
-      // When metadata doesn't exist, full scan should be used
       const useIncremental = metadataExists
 
       expect(useIncremental).toBe(false)
@@ -81,11 +63,9 @@ describe('indexEmails', () => {
       const emailCount = 100
       const expectedBatches = Math.ceil(emailCount / BATCH_SIZE)
 
-      // Generate test emails
       const emails = generateTestEmails(emailCount)
       const filePaths = emails.map(e => e.path)
 
-      // Verify chunking logic
       const batches = []
       for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
         batches.push(filePaths.slice(i, i + BATCH_SIZE))
@@ -97,7 +77,6 @@ describe('indexEmails', () => {
     })
 
     it('should apply BATCH_DELAY_MS between batches', () => {
-      // Verify the delay constant is correct
       expect(BATCH_DELAY_MS).toBe(100)
     })
   })
@@ -107,10 +86,8 @@ describe('indexEmails', () => {
       const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000)
       const fortyDaysAgo = Date.now() - (40 * 24 * 60 * 60 * 1000)
 
-      // Email 40 days old should be filtered out
       expect(fortyDaysAgo).toBeLessThan(thirtyDaysAgo)
 
-      // This filter is applied in indexEmails based on dateTimestamp
       const emails = [{ timestamp: Date.now() }, { timestamp: fortyDaysAgo }]
       const recentEmails = emails.filter(e => e.timestamp >= thirtyDaysAgo)
 
@@ -159,14 +136,12 @@ describe('indexEmails', () => {
 describe('indexMessages', () => {
   describe('attributedBody extraction', () => {
     it('should extract text from attributedBody when text is NULL', () => {
-      // NSAttributedString extraction is tested via the extractTextFromAttributedBody function
       const messages = generateTestMessages(5)
 
-      // Simulate message without text but with attributedBodyHex
       const msgWithoutText = {
         ...messages[0],
         text: null,
-        attributedBodyHex: '4e53537472696e67' // "NSString" in hex
+        attributedBodyHex: '4e53537472696e67'
       }
 
       expect(msgWithoutText.text).toBeNull()
@@ -237,7 +212,6 @@ describe('indexCalendar', () => {
     it('should handle events from OccurrenceCache', () => {
       const events = generateCalendarEvents(10, { recurringRate: 0.5 })
 
-      // At least some should have recurring notes
       const recurringCount = events.filter(e => e.notes?.includes('Recurring')).length
 
       expect(recurringCount).toBeGreaterThan(0)

@@ -1,7 +1,3 @@
-/**
- * Config path must stay under ~/.apple-tools-mcp/. Contents are data, not
- * instructions or alternate filesystem roots.
- */
 
 import { describe, it, expect } from 'vitest'
 import { getAppleToolsDir, getConfigPath, loadConfigFile } from '../../../lib/config.js'
