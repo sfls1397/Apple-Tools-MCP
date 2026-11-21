@@ -952,8 +952,6 @@
   {"count": 1, "file": "tests/integration/advanced-features.test.js", "hash": "fd0d3f3e457c9c8a", "line": 423, "rule": "no-unused-vars", "tool": "eslint"},
   {"count": 1, "file": "tests/integration/performance.test.js", "hash": "bf691848c6f4a643", "line": 187, "rule": "no-unused-vars", "tool": "eslint"},
   {"count": 1, "file": "tests/perf/background-indexing.perf.test.js", "hash": "deccd15dbc9e9376", "line": 427, "rule": "no-unused-vars", "tool": "eslint"},
-  {"count": 1, "file": "tests/perf/datasources.perf.test.js", "hash": "5e67e2ee6aec81ca", "line": 335, "rule": "no-unused-vars", "tool": "eslint"},
-  {"count": 1, "file": "tests/perf/datasources.perf.test.js", "hash": "5e9ad6f04b08a6d9", "line": 334, "rule": "no-unused-vars", "tool": "eslint"},
   {"count": 1, "file": "tests/perf/datasources.perf.test.js", "hash": "eea35b5d5f953228", "line": 10, "rule": "no-unused-vars", "tool": "eslint"},
   {"count": 1, "file": "tests/perf/edge-cases.perf.test.js", "hash": "13a96c842948e529", "line": 638, "rule": "no-unused-vars", "tool": "eslint"},
   {"count": 1, "file": "tests/perf/edge-cases.perf.test.js", "hash": "202d7f9870e8847b", "line": 43, "rule": "no-unused-vars", "tool": "eslint"},

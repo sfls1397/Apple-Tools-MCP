@@ -331,8 +331,6 @@ describe('Data Source Performance', () => {
         const result = await benchmark(
           () => {
             const slots = []
-            const workStart = 9 * 60
-            const workEnd = 17 * 60
 
             for (let i = 0; i < events.length - 1; i++) {
               const gap = events[i + 1].startTimestamp - events[i].endTimestamp
