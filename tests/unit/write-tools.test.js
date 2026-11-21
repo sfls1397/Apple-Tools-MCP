@@ -1,10 +1,3 @@
-/**
- * Unit tests for the 2.0.0 write tools.
- *
- * osascript is mocked the way the rest of the suite mocks shell wrappers, so
- * these run anywhere: they assert on the AppleScript that would run, on
- * escaping, and on the dry_run / confirm gates that keep it from running.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
@@ -239,7 +232,6 @@ function mockContactsAppleScript(writeOutput = '') {
   })
 }
 
-// ============ MAIL ============
 
 describe('mail_send', () => {
   it('sends to a single recipient and reports what happened only after Sent verify', () => {
@@ -574,11 +566,6 @@ describe('mail_send', () => {
   })
 
   it('reports unconfirmed (not failed) when send returns but Sent/Outbox verify misses within budget', () => {
-    // Regression (2026-09-23): 6/6 real sends on an iCloud account eventually
-    // landed in Sent despite a verify-miss within any bounded polling window
-    // (observed sync lag up to ~65s, longer than the MCP client SDK's own
-    // 60s default CallTool timeout can safely be blocked for). A verify-miss
-    // here is not evidence of failure, so it must not say "failed".
     osascript.mockImplementation((script) => {
       if (isMailSentVerifyScript(script)) return 'NOT_FOUND'
       return 'OK'
@@ -1715,7 +1702,6 @@ describe('mail_trash with message_ids (bulk)', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toContain('moved: 1')
     expect(result.message).toContain('stale: 1')
-    // copy 5 never reported back: treated as not attempted
     expect(result.message).toContain('remaining: 2')
     expect(result.message).toContain('failed: 1')
     expect(result.message).toContain('failure_reasons: error -1728')
@@ -1796,7 +1782,6 @@ describe('mail_unjunk', () => {
     expect(script).toContain('{"INBOX", "Inbox"}')
     expect(script).not.toMatch(/\bdelete\b/)
     expect(script).not.toContain('read status')
-    // No screen: nothing comes to the front, no window, no GUI scripting (Peter: no computer control; 9:27 PM CT Nov 12 2026)
     expect(script).not.toMatch(/\bactivate\b|System Events|\bwindow\b|\breopen\b|\blaunch\b|\bclick\b|keystroke/)
     expect(osascript).toHaveBeenCalledTimes(1)
   })
@@ -1853,7 +1838,6 @@ describe('resolveMailMessageId', () => {
   })
 })
 
-// ============ MESSAGES ============
 
 describe('messages_send', () => {
   it('sends an iMessage to one handle', () => {
@@ -1949,7 +1933,6 @@ describe('messages_send', () => {
   })
 })
 
-// ============ CALENDAR ============
 
 describe('recurrence and alerts', () => {
   it('builds an RRULE from structured arguments', () => {
@@ -2435,7 +2418,6 @@ describe('calendar_edit, calendar_remove, calendar_rsvp', () => {
 
 })
 
-// ============ CONTACTS ============
 
 describe('contacts writes', () => {
   it('creates a contact and returns its id', () => {
@@ -2712,7 +2694,6 @@ describe('contacts writes', () => {
   })
 })
 
-// ============ TOOL SURFACE ============
 
 describe('write tool definitions', () => {
   it('registers every handler with a schema, and no Reminders tools', () => {
@@ -2800,8 +2781,6 @@ describe('write tool definitions', () => {
 
     expect(dispatchAt).toBeGreaterThan(-1)
     expect(dispatchAt).toBeLessThan(switchAt)
-    // The write path must not call requireIndex(): writes talk to the apps,
-    // not the vector index, and 1.2.1 read/search gating stays untouched.
     const writeBlock = indexSrc.slice(dispatchAt, switchAt)
     expect(writeBlock).not.toContain('requireIndex')
     expect(indexSrc).toContain('requireIndex("emails")')
@@ -2822,8 +2801,6 @@ describe('write tool definitions', () => {
     const bridgeAt = indexSrc.indexOf('await startWriteBridge()')
     const readinessAt = indexSrc.indexOf('await checkIfFirstRun()')
 
-    // A missing or locked vector index must not stop the daemon from
-    // serving writes, so the bridge comes up first.
     expect(bridgeAt).toBeGreaterThan(-1)
     expect(bridgeAt).toBeLessThan(readinessAt)
     expect(indexSrc).toContain('Could not determine index state')
@@ -2848,8 +2825,6 @@ describe('write smoke script routing (ship gate)', () => {
     expect(route.proceed).toBe(false)
     expect(route.reason).toContain('LaunchAgent')
     expect(route.reason).toContain('--allow-local')
-    // It must not quietly run in-process under a foreign parent and then
-    // report that as a package failure.
     expect(route.reason).toContain('refused')
   })
 
@@ -2868,8 +2843,6 @@ describe('write smoke script routing (ship gate)', () => {
 
   it('treats the live calendar listing as advisory during a dry run', async () => {
     const { calendarListSeverity } = await import('../../scripts/smoke-writes.js')
-    // calendar_list_calendars is a real Calendar.app query even on a dry
-    // run, so a denial must not fail a run that changed nothing.
     expect(calendarListSeverity(false)).toBe('warning')
     expect(calendarListSeverity(true)).toBe('error')
   })
@@ -2915,7 +2888,6 @@ describe('write smoke script routing (ship gate)', () => {
     expect(readme).toContain('only prints a reminder')
     expect(readme).toContain('optional `eventkit_id` from add')
 
-    // Fail-path copy must not send QA back to the privacy-list + button.
     expect(smoke).toContain('Privacy & Security > Automation')
     expect(smoke).toContain('Do not add node via +')
     expect(smoke).toContain('Mail.app')
@@ -2975,8 +2947,6 @@ describe('write smoke script routing (ship gate)', () => {
 
     expect(source).toContain('dispatchWriteTool')
     expect(source).toContain('result.planned === true')
-    // Importing the write modules directly is what made the smoke test
-    // bypass the bridge and fail the Mini ship gate.
     expect(source).not.toMatch(/from "\.\.\/lib\/contactsWrite\.js"/)
     expect(source).not.toMatch(/from "\.\.\/lib\/calendarWrite\.js"/)
   })

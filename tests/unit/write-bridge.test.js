@@ -1,14 +1,3 @@
-/**
- * Write bridge + routing tests.
- *
- * The bridge exists because macOS attributes Apple events to the process
- * responsible for the MCP server: a stdio host without Contacts/Calendar
- * automation rights blocks those writes even when node has Full Disk Access.
- * The launchd-started indexer daemon does not have that problem, so it
- * performs writes on behalf of stdio clients over a user-only unix socket.
- *
- * The socket itself is portable, so this exercises the real transport.
- */
 
 import { describe, it, expect, afterEach } from 'vitest'
 import fs from 'fs'
@@ -68,7 +57,6 @@ afterEach(() => {
     try {
       bridge.close()
     } catch {
-      // already closed
     }
   }
 })
@@ -284,7 +272,6 @@ describe('AppleScript error classification', () => {
     expect(classifyAppleScriptError("Calendar got an error: Application isn't running. (-600)", { appInstalled: true })).toBe('app_not_running')
     expect(classifyAppleScriptError("Not authorized to send Apple events to Contacts. (-1743)", { appInstalled: true })).toBe('tcc')
     expect(classifyAppleScriptError('weird failure')).toBe('unknown')
-    // Detached Calendar delete specifier — not a missing Calendar.app.
     expect(classifyAppleScriptError(
       'Calendar got an error: Can\'t get event id "EVT-1" of calendar "Work". (-1728)',
       { appInstalled: true }
@@ -303,7 +290,6 @@ describe('TCC guidance separates reads from writes', () => {
     expect(CONTACTS_TCC_GUIDANCE).toContain('com.apple.security.personal-information.addressbook')
     expect(CONTACTS_TCC_GUIDANCE).toContain('reads')
     expect(CONTACTS_TCC_GUIDANCE).toContain('Full Disk Access')
-    // Never tell the user to fix a missing entitlement with tccutil or FDA.
     expect(CONTACTS_TCC_GUIDANCE).toContain('cannot be fixed with Full Disk Access or tccutil')
   })
 
@@ -324,9 +310,6 @@ describe('TCC guidance separates reads from writes', () => {
   })
 
   it('treats a hung Mail compose timeout as TCC / Automation denied, not a missing app', () => {
-    // Mini: make new outgoing message blocks until spawnSync times out when
-    // node → Mail Automation is denied. The error string contains
-    // "spawnSync osascript" but must not be classified as ENOENT.
     expect(classifyAppleScriptError('spawnSync osascript ETIMEDOUT')).toBe('timeout')
     expect(classifyAppleScriptError('Error: spawnSync osascript ETIMEDOUT')).toBe('timeout')
     expect(classifyAppleScriptError('Mail got an error: AppleEvent timed out. (-1712)')).toBe('timeout')
@@ -368,9 +351,6 @@ describe('TCC guidance separates reads from writes', () => {
   })
 
   it('calls an installed app that will not respond an attribution failure', () => {
-    // QA hit this on the Mini: Contacts.app and Calendar.app are present in
-    // /System/Applications, but the smoke test reported "not available on
-    // this host" when the real problem was the responsible process.
     const message = "Contacts got an error: Can't get application \"Contacts\". (-1728)"
 
     expect(classifyAppleScriptError(message, { appInstalled: true })).toBe('attribution')
@@ -391,7 +371,6 @@ describe('TCC guidance separates reads from writes', () => {
     expect(appBundleInstalled('Contacts', exists)).toBe(true)
     expect(seen).toContain('/System/Applications/Contacts.app')
     expect(appBundleInstalled('Calendar', () => false)).toBe(false)
-    // No app name means we cannot tell, which must not be read as "missing".
     expect(appBundleInstalled(null)).toBeNull()
     expect(appBundleInstalled('../../evil', () => true)).toBeNull()
   })
