@@ -31,7 +31,12 @@ HEAD_WAIT = 15
 ROOT = Path(__file__).resolve().parent.parent
 PINS = {'gitleaks': ('.cursor/install-gitleaks.sh', ['gitleaks', 'version']),
         'semgrep': ('.cursor/install-semgrep.sh', ['semgrep', '--version']),
-        'shellcheck': ('.cursor/install-shellcheck.sh', ['shellcheck', '--version'])}
+        'shellcheck': ('.cursor/install-shellcheck.sh', ['shellcheck', '--version']),
+        'ruff': ('.cursor/install-lint.sh', ['python3', '.security/lint.py', 'version', 'ruff']),
+        'shfmt': ('.cursor/install-lint.sh#shfmt_version', ['python3', '.security/lint.py', 'version', 'shfmt']),
+        'eslint': ('.lint/package.json:eslint', ['python3', '.security/lint.py', 'version', 'eslint']),
+        'typescript': ('.lint/package.json:typescript', ['python3', '.security/lint.py', 'version', 'typescript']),
+        'pyright': ('.lint/package.json:pyright', ['python3', '.security/lint.py', 'version', 'pyright'])}
 STANDARD = [
     # Both history scans read the gated head's own history (HEAD in the gate's worktree), never --all: the worktree shares
     # this repo's refs, so --all read other jobs' branches and scratch worktrees (Toolbox PR 554, Nov 12).
@@ -39,6 +44,9 @@ STANDARD = [
     ('Gitleaks full history', ['gitleaks', 'git', '--log-opts=HEAD', '--config', '.gitleaks.toml',
                                '--redact=100', '--no-banner', '.']),
     ('Pre-commit hook', ['.githooks/pre-commit']),
+    ('Install dependencies', ['npm', 'ci']),
+    ('Types and strict lint (Ruff, Pyright, ESLint, tsc, imports, comments)', ['python3', '.security/lint.py', 'gate']),
+    ('Lint step probes', ['python3', '.security/test_lint.py']),
     ('npm audit (production, high) + offline Semgrep + ShellCheck/Clang', ['python3', '.security/scan.py', 'all']),
     ('Gate enforcement probes', ['python3', '.security/test_gates.py']),
     ('Repository standard probes', ['python3', '.security/test_standard.py']),
@@ -61,7 +69,14 @@ def gh(args):
 
 
 def pin(script):
-    match = re.search(r"""^version=['"]?([0-9][0-9.]*)""", (ROOT / script).read_text(), re.M)
+    if ':' in script:
+        path, package = script.split(':', 1)
+        version = json.loads((ROOT / path).read_text()).get('devDependencies', {}).get(package, '')
+        if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+            raise GateError('No exact version pin for %s in %s' % (package, path))
+        return version
+    path, _, variable = script.partition('#')
+    match = re.search(r"""^%s=['"]?([0-9][0-9.]*)""" % re.escape(variable or 'version'), (ROOT / path).read_text(), re.M)
     if not match:
         raise GateError('No version pin in ' + script)
     return match.group(1)
@@ -70,7 +85,7 @@ def pin(script):
 def tools(env):
     found = {}
     for name, (script, args) in PINS.items():
-        if not (ROOT / script).exists():
+        if not (ROOT / re.split('[:#]', script, maxsplit=1)[0]).exists():
             continue
         wanted = pin(script)
         result = subprocess.run(args, capture_output=True, text=True, env=env)
@@ -185,12 +200,16 @@ def main():
         raise GateError('Use local-gate.py PR_NUMBER (from the reviewed PR checkout) or local-gate.py deploy')
     os.chdir(ROOT)
     env = dict(os.environ, PATH=str(Path.home() / '.local/bin') + os.pathsep + os.environ.get('PATH', ''))
+    env.pop('LOCAL_GATE_BASE', None)
     repo = gh(['repo', 'view', '--json', 'nameWithOwner'])['nameWithOwner']
     local = out(['git', 'rev-parse', 'HEAD'])
     number = None
     if sys.argv[1] != 'deploy':
         number = sys.argv[1]
         check_pr(number, local)
+        merge_base = subprocess.run(['git', 'merge-base', 'origin/main', local], capture_output=True, text=True)
+        if not merge_base.returncode and re.fullmatch(r'[0-9a-f]{40}', merge_base.stdout.strip()):
+            env['LOCAL_GATE_BASE'] = merge_base.stdout.strip()
     with tempfile.TemporaryDirectory(prefix='local-gate-logs-') as logs:
         try:
             results, *hashes = run_gate(local, Path(logs), env)
