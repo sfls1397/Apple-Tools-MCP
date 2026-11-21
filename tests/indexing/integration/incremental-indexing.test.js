@@ -1,24 +1,16 @@
-/**
- * Integration tests for incremental indexing
- * Tests timestamp-based filtering for messages and emails
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Mac Absolute Time epoch: Jan 1, 2001 00:00:00 UTC
 const MAC_ABSOLUTE_EPOCH = 978307200
 
 describe('Incremental Indexing', () => {
   describe('timestamp-based message filtering', () => {
-    // Simulate the getMessages filtering logic
     const filterMessagesBySinceTimestamp = (messages, sinceTimestamp) => {
       if (!sinceTimestamp) return messages
 
-      // Convert Unix ms to Mac Absolute Time nanoseconds
       const macAbsoluteNs = (sinceTimestamp / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000
 
       return messages.filter(m => {
-        // Messages have dateTimestamp in Unix seconds
         const msgMacAbsoluteNs = (m.dateTimestamp - MAC_ABSOLUTE_EPOCH) * 1000000000
         return msgMacAbsoluteNs >= macAbsoluteNs
       })
@@ -37,12 +29,11 @@ describe('Incremental Indexing', () => {
 
     it('should filter messages older than sinceTimestamp', () => {
       const messages = [
-        { id: 1, dateTimestamp: MAC_ABSOLUTE_EPOCH + 1000 }, // Old
-        { id: 2, dateTimestamp: MAC_ABSOLUTE_EPOCH + 2000 }, // Old
-        { id: 3, dateTimestamp: MAC_ABSOLUTE_EPOCH + 3000 }  // New
+        { id: 1, dateTimestamp: MAC_ABSOLUTE_EPOCH + 1000 },
+        { id: 2, dateTimestamp: MAC_ABSOLUTE_EPOCH + 2000 },
+        { id: 3, dateTimestamp: MAC_ABSOLUTE_EPOCH + 3000 }
       ]
 
-      // sinceTimestamp in Unix ms - want messages from MAC_ABSOLUTE_EPOCH + 2500 onwards
       const sinceTimestamp = (MAC_ABSOLUTE_EPOCH + 2500) * 1000
 
       const result = filterMessagesBySinceTimestamp(messages, sinceTimestamp)
@@ -68,7 +59,6 @@ describe('Incremental Indexing', () => {
   })
 
   describe('metadata timestamp management', () => {
-    // Simulate metadata loading/saving
     let mockMeta = {}
 
     const loadIndexMeta = () => ({ ...mockMeta })
@@ -138,10 +128,10 @@ describe('Incremental Indexing', () => {
     })
 
     it('should handle timestamps at epoch', () => {
-      const lastIndexTime = ONE_HOUR_MS // 1 hour after epoch
+      const lastIndexTime = ONE_HOUR_MS
       const result = calculateEffectiveTimestamp(lastIndexTime, false)
 
-      expect(result).toBe(0) // Should be at epoch
+      expect(result).toBe(0)
     })
   })
 
@@ -180,46 +170,38 @@ describe('Incremental Indexing', () => {
 
   describe('Mac Absolute Time conversion', () => {
     it('should correctly convert Unix ms to Mac Absolute nanoseconds', () => {
-      // Known conversion: Jan 1, 2001 00:00:00 UTC = 978307200 Unix seconds
-      const unixMs = MAC_ABSOLUTE_EPOCH * 1000 // Mac epoch in Unix ms
+      const unixMs = MAC_ABSOLUTE_EPOCH * 1000
       const macAbsoluteNs = (unixMs / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000
 
-      expect(macAbsoluteNs).toBe(0) // Should be 0 at Mac epoch
+      expect(macAbsoluteNs).toBe(0)
     })
 
     it('should handle current time correctly', () => {
       const now = Date.now()
       const macAbsoluteNs = (now / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000
 
-      // Should be positive (we're after Jan 1, 2001)
       expect(macAbsoluteNs).toBeGreaterThan(0)
     })
 
     it('should handle timestamps before Mac epoch', () => {
-      // Year 2000 - before Mac epoch
       const year2000 = new Date('2000-01-01T00:00:00Z').getTime()
       const macAbsoluteNs = (year2000 / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000
 
-      // Should be negative
       expect(macAbsoluteNs).toBeLessThan(0)
     })
 
     it('should produce consistent round-trip conversion', () => {
       const originalUnixMs = Date.now()
 
-      // Convert to Mac Absolute nanoseconds
       const macAbsoluteNs = (originalUnixMs / 1000 - MAC_ABSOLUTE_EPOCH) * 1000000000
 
-      // Convert back to Unix ms
       const convertedUnixMs = (macAbsoluteNs / 1000000000 + MAC_ABSOLUTE_EPOCH) * 1000
 
-      // Should be very close (within 1ms due to floating point)
       expect(Math.abs(convertedUnixMs - originalUnixMs)).toBeLessThan(1)
     })
   })
 
   describe('indexing workflow integration', () => {
-    // Simulate the full indexing workflow
     const simulateIndexMessages = async (options) => {
       const {
         existingMessages,
@@ -231,11 +213,9 @@ describe('Incremental Indexing', () => {
       const ONE_HOUR_MS = 60 * 60 * 1000
       const indexStartTime = Date.now()
 
-      // Determine effective timestamp
       const effectiveTimestamp = forceFullScan ? null :
         (lastMessageIndexTime ? lastMessageIndexTime - ONE_HOUR_MS : null)
 
-      // Filter messages by timestamp
       let messages = existingMessages
       if (effectiveTimestamp) {
         messages = existingMessages.filter(m =>
@@ -243,7 +223,6 @@ describe('Incremental Indexing', () => {
         )
       }
 
-      // Filter out already indexed
       const toIndex = messages.filter(m => !indexedIds.has(String(m.id)))
 
       return {
@@ -257,9 +236,9 @@ describe('Incremental Indexing', () => {
     it('should perform full scan and index all messages on first run', async () => {
       const result = await simulateIndexMessages({
         existingMessages: [
-          { id: 1, dateTimestamp: Date.now() / 1000 - 86400 }, // 1 day ago
-          { id: 2, dateTimestamp: Date.now() / 1000 - 3600 },  // 1 hour ago
-          { id: 3, dateTimestamp: Date.now() / 1000 }          // Now
+          { id: 1, dateTimestamp: Date.now() / 1000 - 86400 },
+          { id: 2, dateTimestamp: Date.now() / 1000 - 3600 },
+          { id: 3, dateTimestamp: Date.now() / 1000 }
         ],
         indexedIds: new Set(),
         forceFullScan: false,
@@ -277,19 +256,17 @@ describe('Incremental Indexing', () => {
 
       const result = await simulateIndexMessages({
         existingMessages: [
-          { id: 1, dateTimestamp: (now - 3 * 60 * 60 * 1000) / 1000 }, // 3 hours ago
-          { id: 2, dateTimestamp: (now - 30 * 60 * 1000) / 1000 },     // 30 min ago
-          { id: 3, dateTimestamp: now / 1000 }                         // Now
+          { id: 1, dateTimestamp: (now - 3 * 60 * 60 * 1000) / 1000 },
+          { id: 2, dateTimestamp: (now - 30 * 60 * 1000) / 1000 },
+          { id: 3, dateTimestamp: now / 1000 }
         ],
-        indexedIds: new Set(['1']), // id 1 already indexed
+        indexedIds: new Set(['1']),
         forceFullScan: false,
-        lastMessageIndexTime: twoHoursAgo // Last indexed 2 hours ago
+        lastMessageIndexTime: twoHoursAgo
       })
 
       expect(result.scanType).toBe('incremental')
-      // With 1-hour buffer, should find messages from 3 hours ago onwards
       expect(result.messagesFound).toBe(3)
-      // But only 2 need indexing (1 is already indexed)
       expect(result.messagesToIndex).toBe(2)
     })
 
@@ -298,12 +275,12 @@ describe('Incremental Indexing', () => {
 
       const result = await simulateIndexMessages({
         existingMessages: [
-          { id: 1, dateTimestamp: (now - 7 * 24 * 60 * 60 * 1000) / 1000 }, // 7 days ago
+          { id: 1, dateTimestamp: (now - 7 * 24 * 60 * 60 * 1000) / 1000 },
           { id: 2, dateTimestamp: now / 1000 }
         ],
         indexedIds: new Set(['1']),
         forceFullScan: true,
-        lastMessageIndexTime: now - 60 * 60 * 1000 // Has recent timestamp
+        lastMessageIndexTime: now - 60 * 60 * 1000
       })
 
       expect(result.scanType).toBe('full')

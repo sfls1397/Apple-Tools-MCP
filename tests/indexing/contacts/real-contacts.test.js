@@ -1,8 +1,3 @@
-/**
- * Real Contacts Integration Tests
- *
- * Tests contact resolution and enrichment using actual Contacts.app data
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { checkDataSources, CONTACTS_DB } from '../helpers/real-data.js'
@@ -11,7 +6,6 @@ import fs from 'fs'
 
 const sources = checkDataSources()
 
-// Try to import real contact functions
 let contactFunctions = null
 try {
   contactFunctions = await import('../../../contacts.js')
@@ -23,7 +17,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
   'Real Contacts Integration',
   () => {
     beforeAll(async () => {
-      // Load contacts from real database
       if (contactFunctions?.loadContacts) {
         await contactFunctions.loadContacts()
       }
@@ -40,12 +33,10 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
       })
 
       it('should have contacts with names', async () => {
-        // Search for any contact
         const results = contactFunctions.searchContacts?.('a', 5)
 
         if (results && results.length > 0) {
           const contact = results[0]
-          // Contact should have at least a name
           expect(
             contact.firstName || contact.lastName || contact.organization
           ).toBeTruthy()
@@ -55,7 +46,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
 
     describe('Email Resolution', () => {
       it('should resolve known email addresses', async () => {
-        // Get a sample contact with email
         const results = contactFunctions.searchContacts?.('', 10)
 
         if (results && results.length > 0) {
@@ -120,7 +110,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
       })
 
       it('should handle various phone formats', async () => {
-        // Test that different formats resolve to same contact
         const results = contactFunctions.searchContacts?.('', 10)
 
         if (results && results.length > 0) {
@@ -130,16 +119,14 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
             const phoneObj = contactWithPhone.phones[0]
             const phone = typeof phoneObj === 'string' ? phoneObj : phoneObj.phone
 
-            // Try different formats of same number
             const formats = [
               phone,
-              phone.replace(/\D/g, ''), // digits only
-              phone.replace(/-/g, ' ') // spaces instead of dashes
+              phone.replace(/\D/g, ''),
+              phone.replace(/-/g, ' ')
             ]
 
             for (const format of formats) {
               const resolved = contactFunctions.resolvePhone?.(format)
-              // All formats should resolve to same contact (or null if not found)
               if (resolved) {
                 expect(resolved.id).toBe(contactWithPhone.id)
               }
@@ -161,7 +148,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
             const resolved = contactFunctions.resolveByName?.(name)
 
             if (resolved && resolved.length > 0) {
-              // Should find at least one match
               expect(resolved.length).toBeGreaterThan(0)
             }
           }
@@ -171,7 +157,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
       it('should handle partial name matches', async () => {
         const results = contactFunctions.searchContacts?.('a', 5)
 
-        // Search with partial name should return results
         expect(Array.isArray(results)).toBe(true)
       })
     })
@@ -182,7 +167,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
 
         if (results && results.length > 0) {
           const contact = results[0]
-          // Use email, phone, or name as identifier (not ID)
           let identifier = null
           if (contact.emails?.length > 0) {
             const emailObj = contact.emails[0]
@@ -199,7 +183,6 @@ describe.skipIf(!sources.contacts || !contactFunctions)(
 
             if (details) {
               expect(details.id).toBe(contact.id)
-              // Should have name fields
               expect(
                 details.firstName !== undefined || details.lastName !== undefined
               ).toBe(true)
@@ -239,7 +222,6 @@ describe.skipIf(!sources.contacts)('Contacts Database Access', () => {
       expect(count).toBeGreaterThanOrEqual(0)
       console.log('Total contacts in database:', count)
     } catch (e) {
-      // May fail if permissions not granted
       console.warn('Could not query contacts DB:', e.message)
     }
   })

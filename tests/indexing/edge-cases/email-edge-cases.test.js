@@ -1,9 +1,3 @@
-/**
- * Edge case tests for email indexing
- * Tests partial IMAP, HTML stripping, flagged emails, and header parsing
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
@@ -68,7 +62,7 @@ Body text`
         'X-Flagged: yes',
         'X-FLAGGED: YES',
         'x-flagged: Yes',
-        'X-Flagged:Yes' // No space
+        'X-Flagged:Yes'
       ]
 
       for (const header of variants) {
@@ -123,7 +117,6 @@ Body`
     it('should strip basic HTML tags', () => {
       const html = '<html><body><p>Hello <b>World</b>!</p></body></html>'
 
-      // Safe regex-based stripping (no ReDoS vulnerability)
       const stripped = html.replace(/<[^>]*>/g, '')
 
       expect(stripped).toBe('Hello World!')
@@ -162,14 +155,12 @@ Body`
     })
 
     it('should not be vulnerable to ReDoS', () => {
-      // Malicious input that could cause ReDoS with naive regex
       const malicious = '<' + 'a'.repeat(1000) + '>'
 
       const start = performance.now()
       malicious.replace(/<[^>]*>/g, '')
       const duration = performance.now() - start
 
-      // Should complete in < 100ms even for malicious input
       expect(duration).toBeLessThan(100)
     })
   })
@@ -217,7 +208,6 @@ Body`
       const dateStr = 'Mon, 1 Jan 2024 12:00:00 PST'
       const date = new Date(dateStr)
 
-      // May be invalid in some JS engines, but should not throw
       expect(() => new Date(dateStr)).not.toThrow()
     })
 
@@ -238,7 +228,6 @@ Body`
 
       for (const dateStr of invalidDates) {
         const date = new Date(dateStr)
-        // Should either be NaN or a weird date, but not throw
         expect(() => new Date(dateStr)).not.toThrow()
       }
     })
@@ -314,7 +303,6 @@ To: recipient@example.com
 
 Body`
 
-      // Use [ \t]* instead of \s* to avoid matching newlines
       const match = content.match(/^Subject:[ \t]*(.*)$/im)
       const subject = match ? match[1].trim() || '(No Subject)' : '(No Subject)'
 

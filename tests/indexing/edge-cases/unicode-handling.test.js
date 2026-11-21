@@ -1,9 +1,3 @@
-/**
- * Edge case tests for Unicode handling
- * Tests CJK, emoji, RTL, and multi-byte characters
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
@@ -42,13 +36,12 @@ describe('Unicode Handling', () => {
       const subject = 'Re: 会議の件'
 
       expect(subject.includes('会議')).toBe(true)
-      expect(subject.length).toBe(8) // "Re: " (4) + "会議の件" (4) = 8
+      expect(subject.length).toBe(8)
     })
 
     it('should count CJK characters correctly', () => {
       const text = '日本語テスト'
 
-      // Each CJK character is 1 character in JS
       expect(text.length).toBe(6)
       expect([...text].length).toBe(6)
     })
@@ -70,7 +63,6 @@ describe('Unicode Handling', () => {
     })
 
     it('should handle emoji sequences (ZWJ)', () => {
-      // Family emoji: man + ZWJ + woman + ZWJ + girl
       const text = 'Family event 👨‍👩‍👧'
 
       expect(text).toContain('👨')
@@ -147,20 +139,16 @@ describe('Unicode Handling', () => {
     })
 
     it('should correctly count surrogate pairs', () => {
-      // 𝕳 is a surrogate pair (2 UTF-16 code units)
       const text = '𝕳'
 
-      // JS string length counts UTF-16 code units
       expect(text.length).toBe(2)
 
-      // Spread operator counts graphemes
       expect([...text].length).toBe(1)
     })
 
     it('should handle combining characters', () => {
-      // é can be e + combining acute accent
-      const composed = 'é' // Single code point
-      const decomposed = 'e\u0301' // e + combining accent
+      const composed = 'é'
+      const decomposed = 'e\u0301'
 
       expect(composed.normalize('NFC')).toBe(composed)
       expect(decomposed.normalize('NFC')).toBe(composed)
@@ -192,7 +180,6 @@ describe('Unicode Handling', () => {
         body: 'Discussion about 项目 project with שלום'
       }
 
-      // All fields should be valid strings
       expect(typeof email.from).toBe('string')
       expect(typeof email.to).toBe('string')
       expect(typeof email.subject).toBe('string')
@@ -205,11 +192,10 @@ describe('Unicode Handling', () => {
       const text = 'Hello\u200BWorld'
 
       expect(text.includes('\u200B')).toBe(true)
-      expect(text.length).toBe(11) // Includes invisible char
+      expect(text.length).toBe(11)
     })
 
     it('should handle zero-width joiner (U+200D)', () => {
-      // Used in emoji sequences
       const emoji = '👨\u200D👩\u200D👧'
 
       expect(emoji.includes('\u200D')).toBe(true)
@@ -238,7 +224,7 @@ describe('Unicode Handling', () => {
 
   describe('normalization', () => {
     it('should normalize to NFC form', () => {
-      const decomposed = 'e\u0301' // e + combining accent
+      const decomposed = 'e\u0301'
       const normalized = decomposed.normalize('NFC')
 
       expect(normalized).toBe('é')
@@ -261,19 +247,17 @@ describe('Unicode Handling', () => {
 
   describe('truncation with unicode', () => {
     it('should not break surrogate pairs when truncating', () => {
-      const text = '😀'.repeat(100) // Each emoji is 2 UTF-16 code units
+      const text = '😀'.repeat(100)
       const maxLength = 50
 
-      // Safe truncation using spread
       const chars = [...text]
       const truncated = chars.slice(0, maxLength).join('')
 
-      // Should not end with half a surrogate pair
       expect(truncated).not.toMatch(/[\uD800-\uDBFF]$/)
     })
 
     it('should handle CJK truncation correctly', () => {
-      const text = '会議会議会議会議会議' // 10 CJK chars
+      const text = '会議会議会議会議会議'
       const maxLength = 5
 
       const chars = [...text]
@@ -283,16 +267,13 @@ describe('Unicode Handling', () => {
     })
 
     it('should preserve complete graphemes', () => {
-      // Family emoji is single grapheme but multiple code points
       const text = '👨‍👩‍👧'.repeat(3)
 
-      // Use Intl.Segmenter if available (Node 16+)
       if (typeof Intl.Segmenter !== 'undefined') {
         const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' })
         const graphemes = [...segmenter.segment(text)]
         expect(graphemes.length).toBe(3)
       } else {
-        // Fallback: just verify the string contains expected content
         expect(text.includes('👨')).toBe(true)
       }
     })
@@ -320,7 +301,6 @@ describe('Unicode Handling', () => {
         body: 'テスト本文'
       }
 
-      // Verify unicode is preserved
       expect(record.subject.includes('日本語')).toBe(true)
       expect(record.body.includes('テスト')).toBe(true)
     })
@@ -351,7 +331,6 @@ describe('Unicode Handling', () => {
     it('should handle control characters gracefully', () => {
       const text = 'Text\x00with\x01control\x02chars'
 
-      // Should be able to strip or handle control chars
       const cleaned = text.replace(/[\x00-\x1F]/g, '')
 
       expect(cleaned).toBe('Textwithcontrolchars')
