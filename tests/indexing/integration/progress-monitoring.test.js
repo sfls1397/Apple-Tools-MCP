@@ -1,12 +1,8 @@
-/**
- * Tests for progress monitoring and hung process detection
- * Covers: progress callbacks, progress tracking, hung detection
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-const PROGRESS_CHECK_INTERVAL_MS = 60 * 1000 // 1 minute
-const MAX_NO_PROGRESS_MS = 10 * 60 * 1000 // 10 minutes
+const PROGRESS_CHECK_INTERVAL_MS = 60 * 1000
+const MAX_NO_PROGRESS_MS = 10 * 60 * 1000
 
 describe('Progress Monitoring', () => {
   let progressTracker
@@ -41,7 +37,7 @@ describe('Progress Monitoring', () => {
       const initialTime = Date.now()
       progressTracker.lastProgressTime = initialTime
 
-      vi.advanceTimersByTime(5000) // 5 seconds
+      vi.advanceTimersByTime(5000)
       progressTracker.updateProgress()
 
       expect(progressTracker.lastProgressTime).toBeGreaterThan(initialTime)
@@ -50,7 +46,7 @@ describe('Progress Monitoring', () => {
     it('should track time since last progress', () => {
       progressTracker.updateProgress()
 
-      vi.advanceTimersByTime(60000) // 1 minute
+      vi.advanceTimersByTime(60000)
 
       const timeSinceProgress = progressTracker.getTimeSinceProgress()
       expect(timeSinceProgress).toBeGreaterThanOrEqual(60000)
@@ -63,7 +59,6 @@ describe('Progress Monitoring', () => {
       const time1 = progressTracker.getTimeSinceProgress()
       expect(time1).toBeGreaterThanOrEqual(30000)
 
-      // Simulate batch completion
       progressTracker.updateProgress()
       const time2 = progressTracker.getTimeSinceProgress()
 
@@ -76,9 +71,8 @@ describe('Progress Monitoring', () => {
       let hungDetected = false
       progressTracker.updateProgress()
 
-      // Simulate checking every minute for 15 minutes with progress every 2 minutes
       for (let i = 0; i < 15; i++) {
-        vi.advanceTimersByTime(60000) // 1 minute
+        vi.advanceTimersByTime(60000)
 
         const timeSinceProgress = progressTracker.getTimeSinceProgress()
         if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
@@ -86,7 +80,6 @@ describe('Progress Monitoring', () => {
           break
         }
 
-        // Make progress every 2 minutes
         if (i % 2 === 0) {
           progressTracker.updateProgress()
         }
@@ -99,8 +92,7 @@ describe('Progress Monitoring', () => {
       let hungDetected = false
       progressTracker.updateProgress()
 
-      // Advance time without any progress updates
-      vi.advanceTimersByTime(11 * 60 * 1000) // 11 minutes
+      vi.advanceTimersByTime(11 * 60 * 1000)
 
       const timeSinceProgress = progressTracker.getTimeSinceProgress()
       if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
@@ -114,7 +106,7 @@ describe('Progress Monitoring', () => {
     it('should NOT detect hung process at exactly 9 minutes', () => {
       progressTracker.updateProgress()
 
-      vi.advanceTimersByTime(9 * 60 * 1000) // 9 minutes
+      vi.advanceTimersByTime(9 * 60 * 1000)
 
       const timeSinceProgress = progressTracker.getTimeSinceProgress()
       expect(timeSinceProgress).toBeLessThan(MAX_NO_PROGRESS_MS)
@@ -123,7 +115,7 @@ describe('Progress Monitoring', () => {
     it('should detect hung process at exactly 10 minutes', () => {
       progressTracker.updateProgress()
 
-      vi.advanceTimersByTime(10 * 60 * 1000) // Exactly 10 minutes
+      vi.advanceTimersByTime(10 * 60 * 1000)
 
       const timeSinceProgress = progressTracker.getTimeSinceProgress()
       expect(timeSinceProgress).toBeGreaterThanOrEqual(MAX_NO_PROGRESS_MS)
@@ -133,7 +125,7 @@ describe('Progress Monitoring', () => {
   describe('progress check interval', () => {
     it('should check progress every minute', () => {
       const checkInterval = PROGRESS_CHECK_INTERVAL_MS
-      expect(checkInterval).toBe(60000) // 1 minute
+      expect(checkInterval).toBe(60000)
     })
 
     it('should trigger multiple checks over time', () => {
@@ -149,10 +141,9 @@ describe('Progress Monitoring', () => {
         }
       }, PROGRESS_CHECK_INTERVAL_MS)
 
-      // Simulate 5 minutes
       vi.advanceTimersByTime(5 * 60 * 1000)
 
-      expect(checkCount).toBe(5) // Should check 5 times
+      expect(checkCount).toBe(5)
     })
   })
 
@@ -161,18 +152,15 @@ describe('Progress Monitoring', () => {
       let hungDetected = false
       progressTracker.updateProgress()
 
-      // Simulate 30 minutes with progress every 2 minutes
       for (let minute = 0; minute < 30; minute++) {
-        vi.advanceTimersByTime(60000) // 1 minute
+        vi.advanceTimersByTime(60000)
 
-        // Check for hung state
         const timeSinceProgress = progressTracker.getTimeSinceProgress()
         if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
           hungDetected = true
           break
         }
 
-        // Make progress every 2 minutes
         if (minute % 2 === 0) {
           progressTracker.updateProgress()
         }
@@ -185,9 +173,8 @@ describe('Progress Monitoring', () => {
       let hungDetected = false
       progressTracker.updateProgress()
 
-      // Simulate 2 hours with progress every 5 minutes
       for (let minute = 0; minute < 120; minute++) {
-        vi.advanceTimersByTime(60000) // 1 minute
+        vi.advanceTimersByTime(60000)
 
         const timeSinceProgress = progressTracker.getTimeSinceProgress()
         if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
@@ -195,7 +182,6 @@ describe('Progress Monitoring', () => {
           break
         }
 
-        // Make progress every 5 minutes
         if (minute % 5 === 0) {
           progressTracker.updateProgress()
         }
@@ -253,13 +239,11 @@ describe('Progress Monitoring', () => {
       let hungDetected = false
       progressTracker.updateProgress()
 
-      // Make progress for 20 minutes
       for (let i = 0; i < 10; i++) {
-        vi.advanceTimersByTime(2 * 60 * 1000) // 2 minutes
+        vi.advanceTimersByTime(2 * 60 * 1000)
         progressTracker.updateProgress()
       }
 
-      // Then hang for 11 minutes
       vi.advanceTimersByTime(11 * 60 * 1000)
 
       const timeSinceProgress = progressTracker.getTimeSinceProgress()
@@ -273,14 +257,13 @@ describe('Progress Monitoring', () => {
     it('should handle rapid progress updates', () => {
       progressTracker.updateProgress()
 
-      // Simulate very rapid progress (every second for 5 minutes)
       for (let i = 0; i < 300; i++) {
-        vi.advanceTimersByTime(1000) // 1 second
+        vi.advanceTimersByTime(1000)
         progressTracker.updateProgress()
       }
 
       const timeSinceProgress = progressTracker.getTimeSinceProgress()
-      expect(timeSinceProgress).toBeLessThan(5000) // Less than 5 seconds
+      expect(timeSinceProgress).toBeLessThan(5000)
     })
   })
 
@@ -289,10 +272,8 @@ describe('Progress Monitoring', () => {
       let timerCleared = false
 
       progressCheckTimer = setInterval(() => {
-        // Check progress
       }, PROGRESS_CHECK_INTERVAL_MS)
 
-      // Simulate completion
       if (progressCheckTimer) {
         clearInterval(progressCheckTimer)
         progressCheckTimer = null
@@ -307,10 +288,8 @@ describe('Progress Monitoring', () => {
       let timerCleared = false
 
       progressCheckTimer = setInterval(() => {
-        // Check progress
       }, PROGRESS_CHECK_INTERVAL_MS)
 
-      // Simulate error
       try {
         throw new Error('Indexing error')
       } catch (e) {

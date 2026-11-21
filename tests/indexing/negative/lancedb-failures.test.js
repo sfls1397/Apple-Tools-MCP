@@ -1,7 +1,3 @@
-/**
- * Negative tests for LanceDB failure handling
- * Tests graceful handling of table creation, write, and delete failures
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -144,12 +140,11 @@ describe('LanceDB Failure Handling', () => {
         }
       }
 
-      expect(writtenBatches).toHaveLength(1) // Only first batch succeeded
-      expect(failedBatches).toHaveLength(2) // Batches 2 and 3 failed
+      expect(writtenBatches).toHaveLength(1)
+      expect(failedBatches).toHaveLength(2)
     })
 
     it('should track partial batch success', async () => {
-      // Simulate a table that fails on specific items
       const createPartialFailTable = () => {
         const data = []
 
@@ -178,8 +173,8 @@ describe('LanceDB Failure Handling', () => {
 
       const result = await table.add(items)
 
-      expect(result.added).toBe(4) // 1, 2, 4, 5
-      expect(result.failed).toHaveLength(2) // 3, 6
+      expect(result.added).toBe(4)
+      expect(result.failed).toHaveLength(2)
     })
 
     it('should handle vector validation failure', async () => {
@@ -210,14 +205,14 @@ describe('LanceDB Failure Handling', () => {
 
       const items = [
         { id: 1, vector: new Array(384).fill(0.1) },
-        { id: 2, vector: new Array(100).fill(0.1) }, // Wrong dimension
-        { id: 3, vector: new Array(384).fill(NaN) }, // Invalid values
+        { id: 2, vector: new Array(100).fill(0.1) },
+        { id: 3, vector: new Array(384).fill(NaN) },
         { id: 4, vector: new Array(384).fill(0.2) }
       ]
 
       const result = await validateAndAdd(mockTable, items)
 
-      expect(result.added).toBe(2) // Items 1 and 4
+      expect(result.added).toBe(2)
       expect(result.invalid).toHaveLength(2)
     })
   })
@@ -239,7 +234,6 @@ describe('LanceDB Failure Handling', () => {
         delete: async (filter) => {
           if (deleteFails) throw new Error(errorMessage)
 
-          // Parse simple filter like "id = 'value'" or "id = 'v1' OR id = 'v2'"
           const matches = filter.match(/id\s*=\s*'([^']+)'/g) || []
           const ids = matches.map(m => m.match(/'([^']+)'/)[1])
 
@@ -314,7 +308,6 @@ describe('LanceDB Failure Handling', () => {
     })
 
     it('should continue after delete error in batch OR condition', async () => {
-      // Test the actual batch delete pattern used in indexer.js
       const executeBatchDelete = async (table, ids, batchSize = 100) => {
         const results = { success: 0, failed: 0 }
 
@@ -326,7 +319,6 @@ describe('LanceDB Failure Handling', () => {
             await table.delete(conditions)
             results.success += batch.length
           } catch (e) {
-            // Log error but continue with next batch
             results.failed += batch.length
             console.error(`Batch delete failed: ${e.message}`)
           }
@@ -347,7 +339,6 @@ describe('LanceDB Failure Handling', () => {
       const ids = Array.from({ length: 250 }, (_, i) => `id${i}`)
       const result = await executeBatchDelete(flakyTable, ids, 100)
 
-      // 3 batches: batch 1 succeeds (100), batch 2 fails (100), batch 3 succeeds (50)
       expect(result.success).toBe(150)
       expect(result.failed).toBe(100)
     })
@@ -386,13 +377,12 @@ describe('LanceDB Failure Handling', () => {
         }
       }
 
-      // Simulate connection drop
       const result = await withReconnect(async (conn) => {
         if (connectionCount === 1) {
           conn.disconnect()
-          return conn.query() // Will fail
+          return conn.query()
         }
-        return conn.query() // Will succeed on reconnect
+        return conn.query()
       })
 
       expect(connectionCount).toBe(2)
@@ -420,14 +410,11 @@ describe('LanceDB Failure Handling', () => {
         }
       }
 
-      // First open succeeds
       let result = await safeOpen('/path/to/db')
       expect(result.db).not.toBeNull()
 
-      // Simulate deletion
       dbExists = false
 
-      // Second open fails gracefully
       result = await safeOpen('/path/to/db')
       expect(result.db).toBeNull()
       expect(result.error).toBe('database_not_found')
@@ -444,15 +431,12 @@ describe('LanceDB Failure Handling', () => {
         }
 
         try {
-          // Test 1: Can execute simple query
           await table.search('test').execute()
           tests.canQuery = true
 
-          // Test 2: Has expected columns
           const schema = await table.schema()
           tests.hasValidSchema = schema.fields.some(f => f.name === 'vector')
 
-          // Test 3: Row count is reasonable
           const count = await table.countRows()
           tests.rowCountMatches = count >= 0
 
@@ -462,7 +446,6 @@ describe('LanceDB Failure Handling', () => {
         }
       }
 
-      // Simulate healthy table
       const healthyTable = {
         search: () => ({ execute: async () => [] }),
         schema: async () => ({ fields: [{ name: 'vector' }, { name: 'id' }] }),
@@ -472,7 +455,6 @@ describe('LanceDB Failure Handling', () => {
       const healthResult = await checkIndexHealth(healthyTable)
       expect(healthResult.healthy).toBe(true)
 
-      // Simulate corrupted table
       const corruptTable = {
         search: () => ({ execute: async () => { throw new Error('Index corrupted') } }),
         schema: async () => ({ fields: [] }),

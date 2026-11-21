@@ -1,9 +1,3 @@
-/**
- * Real Data Integration Tests for Indexing
- *
- * These tests validate the PRODUCTION index at ~/.apple-tools-mcp/vector-index/
- * Production index must be built separately via npm run rebuild-index
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
@@ -16,16 +10,13 @@ import {
   PRODUCTION_INDEX_DIR
 } from '../helpers/real-data.js'
 
-// Check what data sources are available
 const sources = checkDataSources()
 
 describe('Real Data Indexing', () => {
-  // Skip entire suite if no data sources available or index missing
   describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sources.productionIndex)(
     'Full Indexing Workflow',
     () => {
       beforeAll(async () => {
-        // Production index must already exist
         const ready = await isProductionIndexReady()
         if (!ready) {
           throw new Error(
@@ -38,7 +29,6 @@ describe('Real Data Indexing', () => {
       it('should have valid production index data', async () => {
         const stats = await getProductionIndexStats()
 
-        // At least one table should have rows
         const totalRows = stats.emails + stats.messages + stats.calendar
         expect(totalRows).toBeGreaterThan(0)
 
@@ -52,7 +42,6 @@ describe('Real Data Indexing', () => {
       it('should have valid production index stats', async () => {
         const stats = await getProductionIndexStats()
 
-        // At least one table should have rows
         const totalRows = stats.emails + stats.messages + stats.calendar
         expect(totalRows).toBeGreaterThan(0)
 
@@ -69,7 +58,6 @@ describe('Real Data Indexing', () => {
 
 describe.skipIf(!sources.mail)('Email Indexing (Real Data)', () => {
   beforeAll(async () => {
-    // Production index must already exist
     const ready = await isProductionIndexReady()
     if (!ready) {
       throw new Error('Production index not found. Run "npm run rebuild-index" first.')
@@ -82,10 +70,8 @@ describe.skipIf(!sources.mail)('Email Indexing (Real Data)', () => {
   })
 
   it('should search emails with real embeddings', async () => {
-    // Search for a common term
     const results = await searchProductionIndex('meeting', 'emails', 5)
 
-    // Results should have expected structure
     if (results.length > 0) {
       expect(results[0]).toHaveProperty('filePath')
       expect(results[0]).toHaveProperty('subject')
@@ -101,14 +87,12 @@ describe.skipIf(!sources.mail)('Email Indexing (Real Data)', () => {
     if (results.length > 0) {
       const email = results[0]
 
-      // Check required fields
       expect(email).toHaveProperty('filePath')
       expect(email).toHaveProperty('from')
       expect(email).toHaveProperty('subject')
       expect(email).toHaveProperty('dateTimestamp')
       expect(email).toHaveProperty('vector')
 
-      // Vector should be 384-dim
       expect(email.vector).toHaveLength(384)
     }
   }, 30000)
@@ -145,13 +129,11 @@ describe.skipIf(!sources.messages)('Message Indexing (Real Data)', () => {
     if (results.length > 0) {
       const message = results[0]
 
-      // Check required fields
       expect(message).toHaveProperty('id')
       expect(message).toHaveProperty('text')
       expect(message).toHaveProperty('dateTimestamp')
       expect(message).toHaveProperty('vector')
 
-      // Vector should be 384-dim
       expect(message.vector).toHaveLength(384)
     }
   }, 30000)
@@ -188,13 +170,11 @@ describe.skipIf(!sources.calendar)('Calendar Indexing (Real Data)', () => {
     if (results.length > 0) {
       const event = results[0]
 
-      // Check required fields
       expect(event).toHaveProperty('id')
       expect(event).toHaveProperty('title')
       expect(event).toHaveProperty('startTimestamp')
       expect(event).toHaveProperty('vector')
 
-      // Vector should be 384-dim
       expect(event.vector).toHaveLength(384)
     }
   }, 30000)
@@ -217,7 +197,6 @@ describe.skipIf(!sources.embedder)('Real Embedding Quality', () => {
     const vec1 = await embed(text1)
     const vec2 = await embed(text2)
 
-    // Calculate cosine similarity
     let dotProduct = 0
     let norm1 = 0
     let norm2 = 0
@@ -228,7 +207,6 @@ describe.skipIf(!sources.embedder)('Real Embedding Quality', () => {
     }
     const similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2))
 
-    // Unrelated text should have lower similarity (< 0.7)
     expect(similarity).toBeLessThan(0.7)
   }, 30000)
 
@@ -239,7 +217,6 @@ describe.skipIf(!sources.embedder)('Real Embedding Quality', () => {
     const vec1 = await embed(text1)
     const vec2 = await embed(text2)
 
-    // Calculate cosine similarity
     let dotProduct = 0
     let norm1 = 0
     let norm2 = 0
@@ -250,7 +227,6 @@ describe.skipIf(!sources.embedder)('Real Embedding Quality', () => {
     }
     const similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2))
 
-    // Similar text should have high similarity (> 0.7)
     expect(similarity).toBeGreaterThan(0.7)
   }, 30000)
 })

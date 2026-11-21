@@ -1,13 +1,8 @@
-/**
- * Negative tests for database failure handling
- * Tests graceful handling of SQLite errors, timeouts, and connection issues
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 describe('Database Failure Handling', () => {
   describe('SQLite error handling', () => {
-    // Simulate SQLite query function that can fail
     const createMockSqlite = (options = {}) => {
       const {
         shouldFail = false,
@@ -125,11 +120,10 @@ describe('Database Failure Handling', () => {
             reject(new Error('Query timeout'))
           }, timeoutMs)
 
-          // Simulate slow query
           setTimeout(() => {
             clearTimeout(timer)
             resolve([{ id: 1 }])
-          }, timeoutMs + 100) // Always slower than timeout
+          }, timeoutMs + 100)
         })
       }
 
@@ -155,7 +149,7 @@ describe('Database Failure Handling', () => {
         return new Promise((resolve) => {
           setTimeout(() => {
             resolve([{ id: 1 }])
-          }, 10) // Much faster than timeout
+          }, 10)
         })
       }
 
@@ -183,7 +177,6 @@ describe('Database Failure Handling', () => {
             throw new Error('Simulated failure')
           }
 
-          // Process batch
           processedCount += Math.min(BATCH_SIZE, items.length - i)
           lastSuccessfulBatch = batchIndex
         }
@@ -191,15 +184,14 @@ describe('Database Failure Handling', () => {
         return { processed: processedCount }
       }
 
-      // Fail at batch 2 (after processing 64 items)
       try {
         await processWithFailure(2)
       } catch (e) {
         expect(e.message).toBe('Simulated failure')
       }
 
-      expect(processedCount).toBe(64) // 2 batches of 32
-      expect(lastSuccessfulBatch).toBe(1) // Batches 0 and 1 completed
+      expect(processedCount).toBe(64)
+      expect(lastSuccessfulBatch).toBe(1)
     })
 
     it('should allow resuming from last successful batch', async () => {
@@ -217,9 +209,8 @@ describe('Database Failure Handling', () => {
         return processed
       }
 
-      // Resume from batch 2
       const remaining = processFromBatch(2)
-      expect(remaining).toBe(36) // 100 - 64 = 36 items remaining
+      expect(remaining).toBe(36)
     })
   })
 

@@ -1,18 +1,8 @@
-/**
- * Performance tests for scaling behavior
- * Tests linear O(n) complexity and throughput at varying sizes
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Standard indexer constants
 const BATCH_SIZE = 32
 
-/**
- * Generate test data
- */
 function generateTestData(count, type = 'email') {
   const now = Date.now()
   return Array.from({ length: count }, (_, i) => {
@@ -37,9 +27,6 @@ function generateTestData(count, type = 'email') {
   })
 }
 
-/**
- * Measure execution time
- */
 async function measureTime(fn) {
   const start = performance.now()
   await fn()
@@ -47,16 +34,10 @@ async function measureTime(fn) {
   return { duration }
 }
 
-/**
- * Calculate throughput
- */
 function calculateThroughput(items, durationMs) {
-  return (items / durationMs) * 1000 // items per second
+  return (items / durationMs) * 1000
 }
 
-/**
- * Track throughput
- */
 class ThroughputTracker {
   constructor() {
     this.startTime = 0
@@ -99,9 +80,8 @@ describe('Scaling Behavior', () => {
         const items = generateTestData(size, 'email')
 
         const { duration } = await measureTime(async () => {
-          // Simulate batched processing
           for (let i = 0; i < items.length; i += BATCH_SIZE) {
-            await Promise.resolve() // Simulate async work
+            await Promise.resolve()
           }
         })
 
@@ -112,7 +92,6 @@ describe('Scaling Behavior', () => {
         })
       }
 
-      // Time per item should be relatively constant (within 3x tolerance)
       const avgTimePerItem = results.reduce((s, r) => s + r.timePerItem, 0) / results.length
 
       for (const result of results) {
@@ -140,7 +119,6 @@ describe('Scaling Behavior', () => {
         })
       }
 
-      // Verify linear scaling
       const avgTimePerItem = results.reduce((s, r) => s + r.timePerItem, 0) / results.length
 
       for (const result of results) {
@@ -191,7 +169,6 @@ describe('Scaling Behavior', () => {
 
       const summary = tracker.getSummary()
 
-      // With pure logic, should achieve good throughput
       expect(summary.overallThroughput).toBeGreaterThan(50)
     })
 
@@ -226,7 +203,6 @@ describe('Scaling Behavior', () => {
 
       const summary = tracker.getSummary()
 
-      // Throughput should stay reasonable even at scale
       expect(summary.overallThroughput).toBeGreaterThan(50)
     })
   })
@@ -236,7 +212,6 @@ describe('Scaling Behavior', () => {
       const smallCount = 100
       const largeCount = 1000
 
-      // Small batch
       const smallItems = generateTestData(smallCount, 'email')
       const { duration: smallDuration } = await measureTime(async () => {
         for (let i = 0; i < smallItems.length; i += BATCH_SIZE) {
@@ -245,7 +220,6 @@ describe('Scaling Behavior', () => {
       })
       const smallThroughput = calculateThroughput(smallCount, smallDuration)
 
-      // Large batch
       const largeItems = generateTestData(largeCount, 'email')
       const { duration: largeDuration } = await measureTime(async () => {
         for (let i = 0; i < largeItems.length; i += BATCH_SIZE) {
@@ -254,7 +228,6 @@ describe('Scaling Behavior', () => {
       })
       const largeThroughput = calculateThroughput(largeCount, largeDuration)
 
-      // Throughput should not degrade by more than 50%
       expect(largeThroughput).toBeGreaterThan(smallThroughput * 0.5)
     })
   })
@@ -276,16 +249,12 @@ describe('Scaling Behavior', () => {
     })
 
     it('should handle edge case batch boundaries', () => {
-      // Exactly one batch
       expect(Math.ceil(32 / BATCH_SIZE)).toBe(1)
 
-      // One more than batch size
       expect(Math.ceil(33 / BATCH_SIZE)).toBe(2)
 
-      // Multiple full batches
       expect(Math.ceil(96 / BATCH_SIZE)).toBe(3)
 
-      // Multiple with remainder
       expect(Math.ceil(100 / BATCH_SIZE)).toBe(4)
     })
   })
@@ -322,7 +291,7 @@ describe('Scaling Behavior', () => {
 
   describe('consistent batch throughput', () => {
     it('should have consistent per-batch throughput', async () => {
-      const count = 320 // 10 batches
+      const count = 320
       const items = generateTestData(count, 'email')
 
       const batchDurations = []
@@ -335,14 +304,11 @@ describe('Scaling Behavior', () => {
         batchDurations.push(duration)
       }
 
-      // Calculate variance in batch durations
       const avgDuration = batchDurations.reduce((a, b) => a + b, 0) / batchDurations.length
       const variance = batchDurations.reduce((sum, d) => sum + Math.pow(d - avgDuration, 2), 0) / batchDurations.length
       const stdDev = Math.sqrt(variance)
-      const cv = stdDev / avgDuration // Coefficient of variation
+      const cv = stdDev / avgDuration
 
-      // Coefficient of variation should be reasonable (< 300%)
-      // Higher tolerance for pure logic operations which can have timing jitter
       expect(cv).toBeLessThan(3)
     })
   })

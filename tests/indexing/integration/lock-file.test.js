@@ -1,16 +1,7 @@
-/**
- * Integration tests for lock file management
- * Tests multi-instance lock handling and race condition prevention
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import path from 'path'
 
-/**
- * Create a lock file mock for testing lock behavior
- */
 function createLockFileMock() {
   let holder = null
 
@@ -41,9 +32,6 @@ function createLockFileMock() {
   }
 }
 
-/**
- * Create a file system mock for testing file operations
- */
 function createFileSystemMock() {
   const files = new Map()
   const calls = {
@@ -129,11 +117,9 @@ describe('Lock File Management', () => {
     it('should return true if we already hold the lock', () => {
       const pid = process.pid
 
-      // First acquire
       const first = lockMock.acquire(pid)
       expect(first).toBe(true)
 
-      // Second acquire by same process
       const second = lockMock.acquire(pid)
       expect(second).toBe(true)
 
@@ -143,15 +129,13 @@ describe('Lock File Management', () => {
 
   describe('stale lock detection', () => {
     it('should remove stale lock from dead process', () => {
-      // Simulate stale lock from non-existent process
-      const deadPid = 99999999 // Very unlikely to exist
+      const deadPid = 99999999
 
-      // Simulate the behavior
       let lockRemoved = false
       const checkAndRemoveStale = (existingPid) => {
         try {
           if (existingPid === deadPid) {
-            throw new Error('ESRCH') // No such process
+            throw new Error('ESRCH')
           }
         } catch {
           lockRemoved = true
@@ -164,13 +148,10 @@ describe('Lock File Management', () => {
     })
 
     it('should successfully acquire after removing stale lock', () => {
-      // Start with "stale" lock
       lockMock.acquire(99999)
 
-      // Simulate stale lock removal
       lockMock.release(99999)
 
-      // Now our process can acquire
       const acquired = lockMock.acquire(process.pid)
 
       expect(acquired).toBe(true)
@@ -180,12 +161,10 @@ describe('Lock File Management', () => {
 
   describe('live process handling', () => {
     it('should fail if another process holds lock', () => {
-      const otherPid = process.ppid || 1 // Parent PID or init
+      const otherPid = process.ppid || 1
 
-      // Other process holds lock
       lockMock.acquire(otherPid)
 
-      // Our process tries to acquire
       const acquired = lockMock.acquire(process.pid)
 
       expect(acquired).toBe(false)
@@ -196,7 +175,7 @@ describe('Lock File Management', () => {
       const otherPid = process.ppid || 1
 
       lockMock.acquire(otherPid)
-      lockMock.acquire(process.pid) // Should fail
+      lockMock.acquire(process.pid)
 
       expect(lockMock.getHolder()).toBe(otherPid)
     })
@@ -204,10 +183,6 @@ describe('Lock File Management', () => {
 
   describe('atomic file operations', () => {
     it('should use atomic wx flag to prevent race condition', () => {
-      // The 'wx' flag ensures:
-      // - File is created exclusively
-      // - Fails with EEXIST if file already exists
-      // - Prevents TOCTOU (time-of-check-time-of-use) race
 
       const flag = 'wx'
 
@@ -224,10 +199,8 @@ describe('Lock File Management', () => {
     it('should handle EEXIST error from race condition', () => {
       let raceDetected = false
 
-      // First write creates the file
       fsMock.writeFileSync(LOCK_FILE, '1001', { flag: 'wx' })
 
-      // Second write should fail
       try {
         fsMock.writeFileSync(LOCK_FILE, String(process.pid), { flag: 'wx' })
       } catch (err) {
@@ -268,7 +241,6 @@ describe('Lock File Management', () => {
     it('should delete lock file on release', () => {
       fsMock._setFile(LOCK_FILE, String(process.pid))
 
-      // Simulate release behavior
       const filePid = parseInt(fsMock.readFileSync(LOCK_FILE))
       if (filePid === process.pid) {
         fsMock.unlinkSync(LOCK_FILE)
@@ -288,20 +260,16 @@ describe('Lock File Management', () => {
         expect(signals).toContain(signal)
       })
 
-      // Lock should be released on any of these signals
       lockMock.acquire(process.pid)
 
-      // Simulate signal handler
       lockMock.release(process.pid)
 
       expect(lockMock.isLocked()).toBe(false)
     })
 
     it('should release lock when stdin closes', () => {
-      // stdin.on('close') should trigger lock release
       lockMock.acquire(process.pid)
 
-      // Simulate client disconnect
       lockMock.release(process.pid)
 
       expect(lockMock.isLocked()).toBe(false)
@@ -324,7 +292,6 @@ describe('Lock File Management', () => {
 
   describe('error handling', () => {
     it('should fail safe on lock error', () => {
-      // Create a mock that throws on write
       const errorFs = {
         writeFileSync() {
           throw new Error('Permission denied')
@@ -338,24 +305,23 @@ describe('Lock File Management', () => {
         acquired = false
       }
 
-      // Should fail safe - don't proceed without lock
       expect(acquired).toBe(false)
     })
   })
 
   describe('lock timeout handling', () => {
-    const LOCK_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes
+    const LOCK_TIMEOUT_MS = 30 * 60 * 1000
 
     it('should define lock timeout as 30 minutes', () => {
       expect(LOCK_TIMEOUT_MS).toBe(30 * 60 * 1000)
-      expect(LOCK_TIMEOUT_MS).toBe(1800000) // 1,800,000 ms = 30 minutes
+      expect(LOCK_TIMEOUT_MS).toBe(1800000)
     })
 
     it('should detect stale lock after 30 minutes', () => {
       const now = Date.now()
       const lockData = {
         pid: 99999,
-        timestamp: now - (35 * 60 * 1000) // 35 minutes ago
+        timestamp: now - (35 * 60 * 1000)
       }
 
       const lockAge = now - lockData.timestamp
@@ -369,7 +335,7 @@ describe('Lock File Management', () => {
       const now = Date.now()
       const lockData = {
         pid: 99999,
-        timestamp: now - (5 * 60 * 1000) // 5 minutes ago
+        timestamp: now - (5 * 60 * 1000)
       }
 
       const lockAge = now - lockData.timestamp
@@ -383,13 +349,12 @@ describe('Lock File Management', () => {
       const now = Date.now()
       const lockData = {
         pid: 99999,
-        timestamp: now - LOCK_TIMEOUT_MS // Exactly 30 minutes
+        timestamp: now - LOCK_TIMEOUT_MS
       }
 
       const lockAge = now - lockData.timestamp
       const isStale = lockAge > LOCK_TIMEOUT_MS
 
-      // At exactly 30 minutes, should NOT be considered stale (use > not >=)
       expect(isStale).toBe(false)
     })
 
@@ -410,19 +375,19 @@ describe('Lock File Management', () => {
     })
 
     it('should handle missing timestamp gracefully', () => {
-      const lockContent = '12345' // Old format without timestamp
+      const lockContent = '12345'
       const [pidStr, timestampStr] = lockContent.split(':')
       const pid = parseInt(pidStr)
       const timestamp = parseInt(timestampStr) || Date.now()
 
       expect(pid).toBe(12345)
-      expect(timestamp).toBeGreaterThan(0) // Defaults to now
+      expect(timestamp).toBeGreaterThan(0)
     })
 
     it('should log warning for stale lock removal', () => {
       const now = Date.now()
       const stalePid = 99999
-      const staleTimestamp = now - (45 * 60 * 1000) // 45 minutes
+      const staleTimestamp = now - (45 * 60 * 1000)
       const lockAge = now - staleTimestamp
 
       const shouldWarn = lockAge > LOCK_TIMEOUT_MS
@@ -441,28 +406,26 @@ describe('Lock File Management', () => {
     it('should remove stale lock even if process exists', () => {
       const now = Date.now()
       const lockData = {
-        pid: process.pid, // Our own PID (definitely exists)
-        timestamp: now - (35 * 60 * 1000) // But 35 minutes old
+        pid: process.pid,
+        timestamp: now - (35 * 60 * 1000)
       }
 
       const lockAge = now - lockData.timestamp
       let shouldRemove = false
 
-      // Check if process exists
       let processExists = true
       try {
-        process.kill(lockData.pid, 0) // Signal 0 = check existence
+        process.kill(lockData.pid, 0)
       } catch {
         processExists = false
       }
 
-      // Remove if stale, even if process exists
       if (lockAge > LOCK_TIMEOUT_MS) {
         shouldRemove = true
       }
 
-      expect(processExists).toBe(true) // Process exists
-      expect(shouldRemove).toBe(true)  // But lock is stale
+      expect(processExists).toBe(true)
+      expect(shouldRemove).toBe(true)
     })
   })
 })

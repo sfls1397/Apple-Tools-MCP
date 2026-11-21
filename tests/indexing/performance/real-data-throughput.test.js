@@ -1,8 +1,3 @@
-/**
- * Real Data Performance Tests
- *
- * Measures actual throughput with real embeddings and real data
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import {
@@ -39,11 +34,10 @@ describe('Real Data Throughput', () => {
       }
 
       const avgTime = times.reduce((a, b) => a + b, 0) / times.length
-      const throughput = 1000 / avgTime // embeddings per second
+      const throughput = 1000 / avgTime
 
       console.log(`Single embedding: ${avgTime.toFixed(0)}ms avg (${throughput.toFixed(1)}/sec)`)
 
-      // Real embeddings should complete in reasonable time (< 2 seconds each)
       expect(avgTime).toBeLessThan(2000)
     }, 60000)
 
@@ -63,12 +57,12 @@ describe('Real Data Throughput', () => {
       const vectors = await embedBatch(batch)
       const duration = performance.now() - start
 
-      const throughput = (batch.length / duration) * 1000 // items per second
+      const throughput = (batch.length / duration) * 1000
 
       console.log(`Batch embedding (${batch.length} items): ${duration.toFixed(0)}ms (${throughput.toFixed(1)}/sec)`)
 
       expect(vectors).toHaveLength(batch.length)
-      expect(duration).toBeLessThan(30000) // Should complete in 30 seconds
+      expect(duration).toBeLessThan(30000)
     }, 60000)
   })
 
@@ -103,27 +97,22 @@ describe('Real Data Throughput', () => {
 
         console.log(`Search query: ${avgTime.toFixed(0)}ms avg (${throughput.toFixed(1)} queries/sec)`)
 
-        // Search should be fast (< 5 seconds per query including embedding)
         expect(avgTime).toBeLessThan(5000)
       }, 60000)
 
       it('should measure repeated query performance (caching)', async () => {
         const query = 'important meeting discussion'
 
-        // First query (cold)
         const start1 = performance.now()
         await searchProductionIndex(query, 'emails', 10)
         const cold = performance.now() - start1
 
-        // Second query (warm - embedding cached)
         const start2 = performance.now()
         await searchProductionIndex(query, 'emails', 10)
         const warm = performance.now() - start2
 
         console.log(`Cold query: ${cold.toFixed(0)}ms, Warm query: ${warm.toFixed(0)}ms`)
 
-        // Warm query should be faster or similar (not significantly slower)
-        // Allow some variance due to system load - either relative (2x cold) or absolute (50ms)
         const isReasonable = warm < cold * 2 || warm < 50
         expect(isReasonable).toBe(true)
       }, 60000)
@@ -146,7 +135,6 @@ describe('Real Data Throughput', () => {
         console.log(`${queries.length} concurrent searches: ${duration.toFixed(0)}ms`)
 
         expect(results).toHaveLength(queries.length)
-        // Concurrent should complete in reasonable time
         expect(duration).toBeLessThan(30000)
       }, 60000)
     }
@@ -184,7 +172,7 @@ describe('Data Sampling Performance', () => {
 
     console.log(`Sampled ${emails.length} emails in ${duration.toFixed(0)}ms`)
 
-    expect(duration).toBeLessThan(30000) // Should complete in 30 seconds
+    expect(duration).toBeLessThan(30000)
   }, 60000)
 
   it.skipIf(!sources.messages)('should sample messages efficiently', async () => {
@@ -194,7 +182,7 @@ describe('Data Sampling Performance', () => {
 
     console.log(`Sampled ${messages.length} messages in ${duration.toFixed(0)}ms`)
 
-    expect(duration).toBeLessThan(10000) // SQLite query should be fast
+    expect(duration).toBeLessThan(10000)
   }, 30000)
 
   it.skipIf(!sources.calendar)('should sample calendar events efficiently', async () => {

@@ -1,7 +1,3 @@
-/**
- * Negative tests for embedding failure handling
- * Tests graceful handling of NaN vectors, dimension errors, and partial failures
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -73,16 +69,14 @@ describe('Embedding Failure Handling', () => {
   })
 
   describe('batch embedding with failures', () => {
-    // Simulate embedder that fails on specific inputs
     const createFailingEmbedder = (failOnTexts = []) => {
       return async (texts) => {
         const results = []
 
         for (const text of texts) {
           if (failOnTexts.includes(text)) {
-            results.push(null) // Failed embedding
+            results.push(null)
           } else {
-            // Return valid mock embedding
             results.push(new Array(EMBEDDING_DIM).fill(0.1))
           }
         }
@@ -176,7 +170,7 @@ describe('Embedding Failure Handling', () => {
 
     it('should handle tokenization overflow', () => {
       const MAX_TOKENS = 512
-      const CHARS_PER_TOKEN = 4 // Rough estimate
+      const CHARS_PER_TOKEN = 4
 
       const truncateForTokenLimit = (text) => {
         const maxChars = MAX_TOKENS * CHARS_PER_TOKEN
@@ -199,7 +193,6 @@ describe('Embedding Failure Handling', () => {
         const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0))
 
         if (magnitude === 0) {
-          // Return uniform distribution instead of dividing by zero
           const uniformVal = 1 / Math.sqrt(vector.length)
           return vector.map(() => uniformVal)
         }
@@ -210,10 +203,8 @@ describe('Embedding Failure Handling', () => {
       const zeroVector = new Array(EMBEDDING_DIM).fill(0)
       const normalized = normalizeVector(zeroVector)
 
-      // Should not have NaN values
       expect(normalized.every(v => !Number.isNaN(v))).toBe(true)
 
-      // Should have unit magnitude
       const magnitude = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0))
       expect(Math.abs(magnitude - 1)).toBeLessThan(0.001)
     })
@@ -234,7 +225,6 @@ describe('Embedding Failure Handling', () => {
       const tinyVector = new Array(EMBEDDING_DIM).fill(1e-20)
       const normalized = normalizeVector(tinyVector)
 
-      // Should not have NaN or Infinity
       expect(normalized.every(v => Number.isFinite(v))).toBe(true)
     })
 
@@ -247,7 +237,6 @@ describe('Embedding Failure Handling', () => {
       const original = [1, 2, 3, ...new Array(EMBEDDING_DIM - 3).fill(0)]
       const normalized = normalizeVector(original)
 
-      // First 3 values should have same relative ratios
       const ratio12 = original[0] / original[1]
       const normalizedRatio12 = normalized[0] / normalized[1]
       expect(Math.abs(ratio12 - normalizedRatio12)).toBeLessThan(0.0001)
@@ -264,7 +253,6 @@ describe('Embedding Failure Handling', () => {
           const batch = items.slice(i, i + BATCH_SIZE)
           const embeddings = await embedder(batch.map(item => item.text))
 
-          // Save successful items immediately
           batch.forEach((item, idx) => {
             if (embeddings[idx] !== null) {
               savedItems.push({ ...item, vector: embeddings[idx] })
@@ -275,10 +263,8 @@ describe('Embedding Failure Handling', () => {
         return savedItems.length
       }
 
-      // Embedder that fails on items 40-60
       const partialFailEmbedder = async (texts) => {
         return texts.map((_, idx) => {
-          // Simulate failure for certain range in second batch
           if (idx >= 8 && idx < 24) return null
           return new Array(EMBEDDING_DIM).fill(0.1)
         })
@@ -292,10 +278,6 @@ describe('Embedding Failure Handling', () => {
       savedItems = []
       const savedCount = await processWithPartialSave(items, partialFailEmbedder)
 
-      // First batch (32 items): 32 - 16 failures = 16 success (indices 8-23 fail)
-      // Actually let me recalculate: batch 0 is items 0-31, batch 1 is items 32-63
-      // Within each batch, indices 8-23 fail, so 16 fail per batch
-      // 64 items total, 32 fail (16 per batch), 32 succeed
       expect(savedCount).toBe(32)
     })
 
