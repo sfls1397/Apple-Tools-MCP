@@ -1,16 +1,9 @@
-/**
- * Performance test data generators
- * Generates large datasets for performance testing
- */
 
 const MAC_ABSOLUTE_EPOCH = 978307200
 
-/**
- * Generate test emails with configurable size
- */
 export function generateEmails(count, options = {}) {
   const {
-    bodySize = 'medium', // small, medium, large
+    bodySize = 'medium',
     attachmentRate = 0.2,
     mailboxes = ['INBOX', 'Sent', 'Archive', 'Work'],
     daysSpread = 365
@@ -50,9 +43,6 @@ export function generateEmails(count, options = {}) {
   return emails
 }
 
-/**
- * Generate test messages
- */
 export function generateMessages(count, options = {}) {
   const {
     groupChatRate = 0.3,
@@ -89,9 +79,6 @@ export function generateMessages(count, options = {}) {
   return messages
 }
 
-/**
- * Generate calendar events
- */
 export function generateCalendarEvents(count, options = {}) {
   const {
     allDayRate = 0.15,
@@ -108,7 +95,7 @@ export function generateCalendarEvents(count, options = {}) {
     const isAllDay = Math.random() < allDayRate
     const daysOffset = -daysBack + Math.floor(Math.random() * (daysAhead + daysBack))
     const startTime = Date.now() + (daysOffset * 24 * 60 * 60 * 1000)
-    const duration = isAllDay ? 24 * 60 : (30 + Math.floor(Math.random() * 90)) // 30-120 mins
+    const duration = isAllDay ? 24 * 60 : (30 + Math.floor(Math.random() * 90))
     const calendar = calendars[i % calendars.length]
 
     events.push({
@@ -135,9 +122,6 @@ export function generateCalendarEvents(count, options = {}) {
   return events
 }
 
-/**
- * Generate contacts
- */
 export function generateContacts(count) {
   const firstNames = ['John', 'Jane', 'Bob', 'Alice', 'Charlie', 'Diana', 'Edward', 'Fiona']
   const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis']
@@ -163,12 +147,9 @@ export function generateContacts(count) {
   return contacts
 }
 
-/**
- * Generate search queries for testing
- */
 export function generateSearchQueries(count, options = {}) {
   const {
-    complexity = 'mixed' // simple, medium, complex, mixed
+    complexity = 'mixed'
   } = options
 
   const simpleQueries = [
@@ -212,9 +193,6 @@ export function generateSearchQueries(count, options = {}) {
   return queries
 }
 
-/**
- * Generate text for embedding tests
- */
 export function generateEmbeddingTexts(count, options = {}) {
   const {
     minLength = 20,
@@ -232,9 +210,6 @@ export function generateEmbeddingTexts(count, options = {}) {
   return texts
 }
 
-/**
- * Generate vector embeddings (mock)
- */
 export function generateMockEmbeddings(count, dimension = 384) {
   const embeddings = []
 
@@ -249,9 +224,6 @@ export function generateMockEmbeddings(count, dimension = 384) {
   return embeddings
 }
 
-/**
- * Generate .emlx file content
- */
 export function generateEmlxContent(email) {
   const contentType = email.hasAttachment
     ? 'multipart/mixed; boundary="boundary123"'
@@ -276,7 +248,6 @@ ${email.body}`
   return content
 }
 
-// Helper: Generate random words
 const wordList = [
   'meeting', 'project', 'budget', 'review', 'team', 'schedule',
   'email', 'response', 'follow', 'update', 'report', 'analysis',
@@ -297,22 +268,16 @@ function generateWords(count) {
   return words.join(' ')
 }
 
-/**
- * Scale factor calculator for different test intensities
- */
 export function getScaleFactor(intensity = 'normal') {
   const factors = {
-    quick: 0.1,      // Fast smoke tests
-    normal: 1.0,     // Standard tests
-    thorough: 5.0,   // Thorough tests
-    stress: 10.0     // Stress tests
+    quick: 0.1,
+    normal: 1.0,
+    thorough: 5.0,
+    stress: 10.0
   }
   return factors[intensity] || factors.normal
 }
 
-/**
- * Generate a dataset bundle for comprehensive testing
- */
 export function generateTestDataBundle(scale = 1.0) {
   return {
     emails: generateEmails(Math.floor(1000 * scale)),

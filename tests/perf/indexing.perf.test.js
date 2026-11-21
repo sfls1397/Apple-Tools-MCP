@@ -1,7 +1,3 @@
-/**
- * Performance tests for indexing operations
- * Tests: email indexing, message indexing, calendar indexing, incremental updates
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -36,7 +32,6 @@ describe('Indexing Performance', () => {
     it('should index 100 emails within performance threshold', async () => {
       const emails = generateEmails(100)
 
-      // Mock email file content
       emails.forEach(email => {
         mocks.fs.readFileSync.mockImplementation((path) => {
           const found = emails.find(e => e.path === path)
@@ -46,11 +41,8 @@ describe('Indexing Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate email indexing workflow
           for (const email of emails) {
-            // Parse email
             const content = mocks.fs.readFileSync(email.path)
-            // Generate embedding
             await mocks.embedder.embedder([email.subject + ' ' + email.body])
           }
         },
@@ -59,9 +51,8 @@ describe('Indexing Performance', () => {
 
       reporter.addResult(result)
 
-      // Performance assertions
-      expect(result.mean).toBeLessThan(5000) // Should complete in under 5s
-      expect(calculateThroughput(100, result.mean)).toBeGreaterThan(20) // At least 20 emails/sec
+      expect(result.mean).toBeLessThan(5000)
+      expect(calculateThroughput(100, result.mean)).toBeGreaterThan(20)
     })
 
     it('should index 1000 emails with batch processing', async () => {
@@ -81,8 +72,7 @@ describe('Indexing Performance', () => {
 
       reporter.addResult(result)
 
-      // Batch processing should be efficient
-      expect(result.mean).toBeLessThan(10000) // Under 10s for 1000 emails
+      expect(result.mean).toBeLessThan(10000)
     })
 
     it('should scale linearly with email count', async () => {
@@ -104,10 +94,8 @@ describe('Indexing Performance', () => {
         reporter.addResult(result)
       }
 
-      // Check roughly linear scaling (4x size should scale reasonably)
-      // Note: first iteration has warmup overhead, so ratio can be higher
       const ratio = timings[2].mean / timings[0].mean
-      expect(ratio).toBeLessThan(40) // Allow overhead for data generation and test infrastructure
+      expect(ratio).toBeLessThan(40)
     })
   })
 
@@ -173,12 +161,10 @@ describe('Indexing Performance', () => {
 
     it('should handle recurring event expansion', async () => {
       const events = generateCalendarEvents(100, { recurringRate: 0.5 })
-      // Simulate expansion to 500 instances
       const expandedEvents = []
       for (const event of events) {
         expandedEvents.push(event)
         if (Math.random() < 0.5) {
-          // Simulate 4 more occurrences
           for (let i = 1; i <= 4; i++) {
             expandedEvents.push({ ...event, id: event.id * 1000 + i })
           }
@@ -203,14 +189,12 @@ describe('Indexing Performance', () => {
   describe('Incremental Indexing', () => {
     it('should detect and index only new emails', async () => {
       const allEmails = generateEmails(1000)
-      const newEmails = allEmails.slice(0, 50) // Only 50 new
+      const newEmails = allEmails.slice(0, 50)
 
       const result = await benchmark(
         async () => {
-          // Simulate mdfind returning only new files
           const newPaths = newEmails.map(e => e.path)
 
-          // Index only new emails
           for (const email of newEmails) {
             await mocks.embedder.embedder([email.subject + ' ' + email.body])
           }
@@ -220,7 +204,6 @@ describe('Indexing Performance', () => {
 
       reporter.addResult(result)
 
-      // Incremental should be much faster than full
       expect(result.mean).toBeLessThan(2000)
     })
 
@@ -231,10 +214,8 @@ describe('Indexing Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Filter to new only
           const toIndex = newMessages
 
-          // Index new messages
           const texts = toIndex.map(m => m.text)
           for (let i = 0; i < texts.length; i += 32) {
             await mocks.embedder.embedder(texts.slice(i, i + 32))
@@ -256,21 +237,18 @@ describe('Indexing Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Email indexing
           for (let i = 0; i < emails.length; i += 32) {
             await mocks.embedder.embedder(
               emails.slice(i, i + 32).map(e => e.subject + ' ' + e.body)
             )
           }
 
-          // Message indexing
           for (let i = 0; i < messages.length; i += 32) {
             await mocks.embedder.embedder(
               messages.slice(i, i + 32).map(m => m.text)
             )
           }
 
-          // Calendar indexing
           for (let i = 0; i < events.length; i += 32) {
             await mocks.embedder.embedder(
               events.slice(i, i + 32).map(e => e.title)
@@ -282,8 +260,7 @@ describe('Indexing Performance', () => {
 
       reporter.addResult(result)
 
-      // Full reindex should complete in reasonable time
-      expect(result.mean).toBeLessThan(20000) // Under 20s
+      expect(result.mean).toBeLessThan(20000)
     })
   })
 
@@ -298,7 +275,6 @@ describe('Indexing Performance', () => {
             const batch = emails.slice(i, i + 32)
             await mocks.embedder.embedder(batch.map(e => e.subject))
 
-            // Apply throttle delay between batches
             if (i + 32 < emails.length) {
               await new Promise(r => setTimeout(r, BATCH_DELAY_MS))
             }
@@ -309,13 +285,11 @@ describe('Indexing Performance', () => {
 
       reporter.addResult(result)
 
-      // Should include throttling delays
       const expectedMinTime = Math.floor(200 / 32) * BATCH_DELAY_MS
-      expect(result.mean).toBeGreaterThan(expectedMinTime * 0.8) // At least 80% of expected
+      expect(result.mean).toBeGreaterThan(expectedMinTime * 0.8)
     })
   })
 
-  // Print report after all tests
   afterAll(() => {
     reporter.report()
   })

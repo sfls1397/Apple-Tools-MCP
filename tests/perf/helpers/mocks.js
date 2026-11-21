@@ -1,24 +1,15 @@
-/**
- * Performance test mocks
- * Lightweight mocks optimized for performance testing
- */
 
 import { vi } from 'vitest'
 
 const EMBEDDING_DIM = 384
 
-/**
- * Create a fast mock embedder for performance testing
- */
 export function createFastEmbedder() {
-  // Pre-allocate buffer for efficiency
-  const buffer = new Float32Array(EMBEDDING_DIM * 128) // Max batch size
+  const buffer = new Float32Array(EMBEDDING_DIM * 128)
 
   const embedder = vi.fn().mockImplementation(async (texts, options) => {
     const count = Array.isArray(texts) ? texts.length : 1
     const data = buffer.subarray(0, count * EMBEDDING_DIM)
 
-    // Fast deterministic fill
     for (let i = 0; i < count * EMBEDDING_DIM; i++) {
       data[i] = Math.sin(i) * 0.1
     }
@@ -32,9 +23,6 @@ export function createFastEmbedder() {
   }
 }
 
-/**
- * Create an in-memory LanceDB mock for performance testing
- */
 export function createLanceDBMock() {
   const tables = new Map()
 
@@ -104,9 +92,6 @@ export function createLanceDBMock() {
   }
 }
 
-/**
- * Create mock SQLite results
- */
 export function createSQLiteMock(data = {}) {
   return {
     safeSqlite3Json: vi.fn().mockImplementation((db, query) => {
@@ -125,9 +110,6 @@ export function createSQLiteMock(data = {}) {
   }
 }
 
-/**
- * Create mock file system
- */
 export function createFileSystemMock(files = {}) {
   return {
     existsSync: vi.fn().mockImplementation((path) => {
@@ -149,9 +131,6 @@ export function createFileSystemMock(files = {}) {
   }
 }
 
-/**
- * Create mock shell commands
- */
 export function createShellMock(options = {}) {
   return {
     execAsync: vi.fn().mockImplementation(async (cmd) => {
@@ -164,9 +143,6 @@ export function createShellMock(options = {}) {
   }
 }
 
-/**
- * Create mock MCP server transport
- */
 export function createMCPTransportMock() {
   const messages = []
 
@@ -180,9 +156,6 @@ export function createMCPTransportMock() {
   }
 }
 
-/**
- * Create comprehensive mock setup for testing
- */
 export function createPerformanceMocks(data = {}) {
   return {
     embedder: createFastEmbedder(),
@@ -194,17 +167,11 @@ export function createPerformanceMocks(data = {}) {
   }
 }
 
-/**
- * Simple timer for latency simulation
- */
 export function simulateLatency(minMs, maxMs) {
   const delay = minMs + Math.random() * (maxMs - minMs)
   return new Promise(resolve => setTimeout(resolve, delay))
 }
 
-/**
- * Create a mock with controllable latency
- */
 export function withLatency(mockFn, minMs = 1, maxMs = 5) {
   return vi.fn().mockImplementation(async (...args) => {
     await simulateLatency(minMs, maxMs)

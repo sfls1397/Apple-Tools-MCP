@@ -1,9 +1,3 @@
-/**
- * Performance tests for search operations
- * Tests: vector search, hybrid scoring, query expansion, RRF merging
- *
- * Run with real data: USE_REAL_DATA=1 npm run perf
- */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import {
@@ -32,7 +26,6 @@ import {
   cleanup as cleanupRealData
 } from './helpers/real-data.js'
 
-// Check if we should use real data
 const USE_REAL_DATA = process.env.USE_REAL_DATA === '1' || process.env.USE_REAL_DATA === 'true'
 const REAL_DATA_AVAILABLE = isRealDataAvailable()
 const useRealData = USE_REAL_DATA && REAL_DATA_AVAILABLE
@@ -52,7 +45,6 @@ describe('Search Performance', () => {
       tableStats = await getTableStats()
       console.log(`Index stats: ${tableStats.emails} emails, ${tableStats.messages} messages, ${tableStats.calendar} events`)
 
-      // Pre-load real data
       realEmails = await getRealEmails(1000)
       realMessages = await getRealMessages(500)
       realEvents = await getRealCalendarEvents(200)
@@ -70,7 +62,7 @@ describe('Search Performance', () => {
     vi.clearAllMocks()
     mocks = createPerformanceMocks()
     reporter = new PerformanceReporter('Search Performance')
-    histogram = new LatencyHistogram(5) // 5ms buckets
+    histogram = new LatencyHistogram(5)
   })
 
   afterEach(() => {
@@ -87,7 +79,6 @@ describe('Search Performance', () => {
   describe('Vector Search', () => {
     it('should perform vector search efficiently', async () => {
       if (useRealData) {
-        // Real vector search against LanceDB
         const result = await benchmark(
           async () => {
             await realVectorSearch('emails', 'meeting about budget', 20)
@@ -95,9 +86,8 @@ describe('Search Performance', () => {
           { name: 'Real vector search (emails)', iterations: 10, warmup: 2 }
         )
         reporter.addResult(result)
-        expect(result.p95).toBeLessThan(500) // Allow more time for real search
+        expect(result.p95).toBeLessThan(500)
       } else {
-        // Mock search
         const records = generateEmails(10000).map((e, i) => ({
           ...e,
           vector: generateMockEmbeddings(1, 384)[0]
@@ -143,7 +133,7 @@ describe('Search Performance', () => {
           { name: `${concurrency} concurrent real searches`, iterations: 5, warmup: 1 }
         )
         reporter.addResult(result)
-        expect(result.mean).toBeLessThan(2000) // Allow time for real searches
+        expect(result.mean).toBeLessThan(2000)
       } else {
         const searchFn = async () => {
           await mocks.embedder.embedder(['test query'])
@@ -191,7 +181,6 @@ describe('Search Performance', () => {
         }
       }
 
-      // Higher limits should take proportionally longer
       expect(results[3].mean).toBeLessThan(results[0].mean * 20)
     })
   })
@@ -287,7 +276,6 @@ describe('Search Performance', () => {
       if (useRealData) {
         const result = await benchmark(
           async () => {
-            // Real multi-query search
             await Promise.all(expandedQueries.map(q =>
               realVectorSearch('emails', q, 10)
             ))
@@ -429,20 +417,16 @@ describe('Search Performance', () => {
       if (useRealData) {
         const result = await benchmark(
           async () => {
-            // 1. Query embedding
             const embedding = await realEmbed(query)
 
-            // 2. Query expansion
             const variants = [query, 'budget meeting', 'important discussion']
 
-            // 3. Parallel searches across sources
             const [emailResults, messageResults, calendarResults] = await Promise.all([
               realVectorSearch('emails', query, 10),
               realVectorSearch('messages', query, 10),
               realVectorSearch('calendar', query, 5)
             ])
 
-            // 4. Merge and score
             const allResults = [...emailResults, ...messageResults, ...calendarResults]
             return allResults.sort((a, b) => (a._distance || 0) - (b._distance || 0))
           },
@@ -450,7 +434,7 @@ describe('Search Performance', () => {
         )
 
         reporter.addResult(result)
-        expect(result.p95).toBeLessThan(2000) // Allow time for real operations
+        expect(result.p95).toBeLessThan(2000)
       } else {
         const result = await benchmark(
           async () => {

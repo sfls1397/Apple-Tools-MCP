@@ -1,14 +1,9 @@
-/**
- * Real data loader for performance tests
- * Connects to actual LanceDB index and macOS data sources
- */
 
 import fs from 'fs'
 import path from 'path'
 import { connect } from '@lancedb/lancedb'
 import { pipeline } from '@huggingface/transformers'
 
-// Real paths
 const DATA_DIR = path.join(process.env.HOME, '.apple-tools-mcp')
 const DB_PATH = path.join(DATA_DIR, 'vector-index')
 
@@ -16,16 +11,10 @@ let db = null
 let embedder = null
 let tables = {}
 
-/**
- * Check if real data index exists
- */
 export function isRealDataAvailable() {
   return fs.existsSync(DB_PATH)
 }
 
-/**
- * Get the real embedder (Xenova/all-MiniLM-L6-v2)
- */
 export async function getRealEmbedder() {
   if (!embedder) {
     embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2')
@@ -33,18 +22,12 @@ export async function getRealEmbedder() {
   return embedder
 }
 
-/**
- * Generate embedding using real model
- */
 export async function realEmbed(text) {
   const emb = await getRealEmbedder()
   const output = await emb(text, { pooling: 'mean', normalize: true })
   return Array.from(output.data)
 }
 
-/**
- * Batch embed using real model
- */
 export async function realEmbedBatch(texts) {
   if (texts.length === 0) return []
   if (texts.length === 1) return [await realEmbed(texts[0])]
@@ -62,9 +45,6 @@ export async function realEmbedBatch(texts) {
   return embeddings
 }
 
-/**
- * Connect to real LanceDB
- */
 export async function connectToRealDB() {
   if (!db && isRealDataAvailable()) {
     db = await connect(DB_PATH)
@@ -72,9 +52,6 @@ export async function connectToRealDB() {
   return db
 }
 
-/**
- * Get a table from real DB
- */
 export async function getRealTable(tableName) {
   if (tables[tableName]) return tables[tableName]
 
@@ -93,9 +70,6 @@ export async function getRealTable(tableName) {
   }
 }
 
-/**
- * Get real emails from the index
- */
 export async function getRealEmails(limit = 1000) {
   const table = await getRealTable('emails')
   if (!table) return []
@@ -124,9 +98,6 @@ export async function getRealEmails(limit = 1000) {
   }
 }
 
-/**
- * Get real messages from the index
- */
 export async function getRealMessages(limit = 500) {
   const table = await getRealTable('messages')
   if (!table) return []
@@ -154,9 +125,6 @@ export async function getRealMessages(limit = 500) {
   }
 }
 
-/**
- * Get real calendar events from the index
- */
 export async function getRealCalendarEvents(limit = 200) {
   const table = await getRealTable('calendar')
   if (!table) return []
@@ -186,9 +154,6 @@ export async function getRealCalendarEvents(limit = 200) {
   }
 }
 
-/**
- * Perform real vector search
- */
 export async function realVectorSearch(tableName, query, limit = 20) {
   const table = await getRealTable(tableName)
   if (!table) return []
@@ -203,9 +168,6 @@ export async function realVectorSearch(tableName, query, limit = 20) {
   }
 }
 
-/**
- * Get table statistics
- */
 export async function getTableStats() {
   const stats = {}
 
@@ -225,9 +187,6 @@ export async function getTableStats() {
   return stats
 }
 
-/**
- * Create performance mocks that use real data
- */
 export function createRealDataMocks() {
   return {
     embedder: {
@@ -241,7 +200,6 @@ export function createRealDataMocks() {
       connect: connectToRealDB,
       tables
     },
-    // Real data loaders
     getEmails: getRealEmails,
     getMessages: getRealMessages,
     getCalendarEvents: getRealCalendarEvents,
@@ -249,9 +207,6 @@ export function createRealDataMocks() {
   }
 }
 
-/**
- * Cleanup resources
- */
 export async function cleanup() {
   db = null
   tables = {}

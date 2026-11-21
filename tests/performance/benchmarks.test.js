@@ -1,11 +1,3 @@
-/**
- * Performance Benchmark Tests
- *
- * Measures and asserts performance characteristics:
- * - Search latency
- * - Memory usage
- * - Throughput
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { connect } from '@lancedb/lancedb'
@@ -17,7 +9,6 @@ const indexExists = fs.existsSync(DB_PATH)
 
 let db = null
 
-// Helper to measure execution time
 async function measureTime(fn) {
   const start = performance.now()
   const result = await fn()
@@ -25,7 +16,6 @@ async function measureTime(fn) {
   return { result, duration }
 }
 
-// Helper to measure memory usage
 function measureMemory() {
   const usage = process.memoryUsage()
   return {
@@ -134,7 +124,6 @@ describe.skipIf(!indexExists)('Performance: Memory Usage', () => {
     console.log(`  → Heap before: ${beforeMem.heapUsed}MB, after: ${afterMem.heapUsed}MB`)
     console.log(`  → Heap growth: ${heapGrowth}MB`)
 
-    // Allow up to 100MB growth for 10 queries
     expect(heapGrowth).toBeLessThan(100)
   })
 
@@ -145,7 +134,6 @@ describe.skipIf(!indexExists)('Performance: Memory Usage', () => {
       return
     }
 
-    // Force GC if available
     if (global.gc) global.gc()
 
     const tbl = await db.openTable('messages')
@@ -158,12 +146,10 @@ describe.skipIf(!indexExists)('Performance: Memory Usage', () => {
 
     console.log(`  → Memory samples: ${measurements.join(', ')}MB`)
 
-    // Check that memory doesn't grow linearly
     const first = measurements[0]
     const last = measurements[measurements.length - 1]
     const growth = last - first
 
-    // Allow up to 50MB total growth
     expect(growth).toBeLessThan(50)
   })
 })
@@ -220,7 +206,6 @@ describe.skipIf(!indexExists)('Performance: Throughput', () => {
     console.log(`  → Latency: min=${min.toFixed(1)}ms, avg=${avg.toFixed(1)}ms, max=${max.toFixed(1)}ms`)
     console.log(`  → Variance: ${variance.toFixed(1)}ms`)
 
-    // Max should be less than 5x average (no major outliers)
     expect(max).toBeLessThan(avg * 5)
   })
 })
@@ -241,7 +226,6 @@ describe('Performance: Utility Functions', () => {
     })
 
     console.log(`  → 700 date parses in ${duration.toFixed(1)}ms`)
-    // chrono-node date parsing can be slower on first calls due to lazy loading
     expect(duration).toBeLessThan(500)
   })
 

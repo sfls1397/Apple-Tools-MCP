@@ -1,7 +1,3 @@
-/**
- * Regression detection performance tests
- * Tests: baseline comparisons, delta tracking, performance trends
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -16,7 +12,6 @@ import {
 } from './helpers/data-generators.js'
 import { createPerformanceMocks } from './helpers/mocks.js'
 
-// Simulated baseline data (in production, load from file)
 const BASELINES = {
   'search_latency': { mean: 15, p95: 25, threshold: 1.2 },
   'indexing_throughput': { mean: 500, threshold: 0.8 },
@@ -80,7 +75,7 @@ describe('Regression Detection', () => {
       }
 
       const duration = performance.now() - startTime
-      const throughput = (emails.length / duration) * 1000 // items per second
+      const throughput = (emails.length / duration) * 1000
 
       const baseline = BASELINES['indexing_throughput']
       const ratio = throughput / baseline.mean
@@ -90,7 +85,6 @@ describe('Regression Detection', () => {
       console.log(`  Ratio: ${ratio.toFixed(2)}x`)
       console.log(`  Status: ${ratio >= baseline.threshold ? '✅ PASS' : '❌ REGRESSION'}`)
 
-      // Throughput should not drop below threshold
       expect(ratio).toBeGreaterThan(baseline.threshold)
     })
 
@@ -118,7 +112,6 @@ describe('Regression Detection', () => {
     it('should compare tool dispatch latency against baseline', async () => {
       const result = await benchmark(
         async () => {
-          // Simulate tool dispatch
           const toolName = 'mail_search'
           const args = { query: 'test' }
           await mocks.embedder.embedder([args.query])
@@ -142,7 +135,6 @@ describe('Regression Detection', () => {
     it('should track performance delta across runs', async () => {
       const runs = []
 
-      // Simulate multiple runs
       for (let run = 0; run < 5; run++) {
         const queries = generateSearchQueries(20)
         const latencies = []
@@ -170,15 +162,12 @@ describe('Regression Detection', () => {
       console.log(`  StdDev: ${stdDev.toFixed(2)}ms`)
       console.log(`  CV: ${cv.toFixed(1)}%`)
 
-      // Coefficient of variation should be reasonable
-      // Higher threshold for mock operations where timer noise dominates
-      expect(cv).toBeLessThan(150) // Less than 150% variation
+      expect(cv).toBeLessThan(150)
     })
 
     it('should detect performance degradation trends', async () => {
       const samples = []
 
-      // Simulate increasing load
       for (let load = 1; load <= 5; load++) {
         const itemCount = load * 100
         const emails = generateEmails(itemCount)
@@ -201,14 +190,13 @@ describe('Regression Detection', () => {
         console.log(`  ${s.load} items: ${s.duration.toFixed(1)}ms (${s.perItem.toFixed(3)}ms/item)`)
       })
 
-      // Per-item time should not increase dramatically with load
       const firstPerItem = samples[0].perItem
       const lastPerItem = samples[samples.length - 1].perItem
       const degradation = lastPerItem / firstPerItem
 
       console.log(`  Degradation factor: ${degradation.toFixed(2)}x`)
 
-      expect(degradation).toBeLessThan(3) // Should not degrade more than 3x
+      expect(degradation).toBeLessThan(3)
     })
   })
 
@@ -216,7 +204,6 @@ describe('Regression Detection', () => {
     it('should compare memory usage against baseline', async () => {
       const memBefore = getMemoryUsage()
 
-      // Process 1000 items
       const emails = generateEmails(1000)
       for (let i = 0; i < emails.length; i += 32) {
         await mocks.embedder.embedder(emails.slice(i, i + 32).map(e => e.subject))
@@ -251,11 +238,9 @@ describe('Regression Detection', () => {
         console.log(`  Batch ${i + 1}: ${samples[i].toFixed(2)}MB (+${growth.toFixed(2)}MB)`)
       }
 
-      // Later batches should not use significantly more memory
       const firstGrowth = samples[1] - samples[0]
       const lastGrowth = samples[samples.length - 1] - samples[samples.length - 2]
 
-      // Allow for natural variation, but growth should not accelerate
       expect(lastGrowth).toBeLessThan(Math.max(firstGrowth * 3, 20))
     })
   })
@@ -290,7 +275,6 @@ describe('Regression Detection', () => {
       console.log(`  Mean: ${mean.toFixed(1)} items/sec`)
       console.log(`  Range: ${range.toFixed(1)} (${((range / mean) * 100).toFixed(1)}%)`)
 
-      // Throughput should be consistent (within 50% range)
       expect(range / mean).toBeLessThan(0.5)
     })
   })
@@ -319,8 +303,6 @@ describe('Regression Detection', () => {
         console.log(`  ${key}: ${value.toFixed(2)}ms`)
       })
 
-      // P99 should not be excessively higher than P50
-      // Higher threshold for mock operations where outliers dominate at microsecond scale
       const ratio = percentiles.p99 / percentiles.p50
       console.log(`  P99/P50 ratio: ${ratio.toFixed(2)}x`)
 
@@ -332,7 +314,6 @@ describe('Regression Detection', () => {
     it('should generate baseline data for future comparisons', async () => {
       const baselineData = {}
 
-      // Search latency
       const searchLatencies = []
       for (let i = 0; i < 100; i++) {
         const start = performance.now()
@@ -347,7 +328,6 @@ describe('Regression Detection', () => {
         p99: searchSorted[99]
       }
 
-      // Indexing throughput
       const emails = generateEmails(500)
       const indexStart = performance.now()
       for (let i = 0; i < emails.length; i += 32) {
@@ -359,7 +339,6 @@ describe('Regression Detection', () => {
         duration: indexDuration
       }
 
-      // Memory
       const memBefore = getMemoryUsage().heapUsed
       await mocks.embedder.embedder(generateEmails(100).map(e => e.subject))
       baselineData.memory = {
@@ -370,7 +349,6 @@ describe('Regression Detection', () => {
       console.log(JSON.stringify(baselineData, null, 2))
       console.log('=====================')
 
-      // Just verify we can generate baselines
       expect(baselineData.search.mean).toBeGreaterThan(0)
       expect(baselineData.indexing.throughput).toBeGreaterThan(0)
     })
@@ -383,7 +361,6 @@ describe('Regression Detection', () => {
         results: []
       }
 
-      // Test 1: Search
       const searchResult = await benchmark(
         async () => await mocks.embedder.embedder(['test query']),
         { name: 'Search', iterations: 50, warmup: 10 }
@@ -395,7 +372,6 @@ describe('Regression Detection', () => {
         status: searchResult.mean / BASELINES.search_latency.mean <= BASELINES.search_latency.threshold ? 'PASS' : 'FAIL'
       })
 
-      // Test 2: Indexing
       const emails = generateEmails(200)
       const indexStart = performance.now()
       for (let i = 0; i < emails.length; i += 32) {
