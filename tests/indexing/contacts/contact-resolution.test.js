@@ -1,7 +1,3 @@
-/**
- * Tests for contact resolution from various identifiers
- * Tests phone number normalization, email matching, and name resolution
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -10,15 +6,12 @@ describe('Contact Resolution', () => {
     const normalizePhone = (phone) => {
       if (typeof phone !== 'string') return ''
 
-      // Remove all non-digit characters except +
       let normalized = phone.replace(/[^\d+]/g, '')
 
-      // Handle US numbers without country code
       if (normalized.length === 10 && !normalized.startsWith('+')) {
         normalized = '+1' + normalized
       }
 
-      // Handle US numbers with 1 but no +
       if (normalized.length === 11 && normalized.startsWith('1')) {
         normalized = '+' + normalized
       }
@@ -196,21 +189,17 @@ describe('Contact Resolution', () => {
 
       const trimmed = identifier.trim()
 
-      // Check for email pattern
       if (trimmed.includes('@') && trimmed.includes('.')) {
         return 'email'
       }
 
-      // Check for phone pattern (contains mostly digits)
       const digitsOnly = trimmed.replace(/[^\d]/g, '')
       if (digitsOnly.length >= 7 && digitsOnly.length <= 15) {
-        // Check if identifier is mostly digits
         if (digitsOnly.length / trimmed.replace(/\s/g, '').length > 0.5) {
           return 'phone'
         }
       }
 
-      // Otherwise treat as name
       return 'name'
     }
 
@@ -255,7 +244,6 @@ describe('Contact Resolution', () => {
 
       const trimmed = identifier.trim()
 
-      // Try email match
       if (trimmed.includes('@')) {
         const byEmail = contacts.find(c =>
           c.emails.some(e => e.toLowerCase() === trimmed.toLowerCase())
@@ -263,7 +251,6 @@ describe('Contact Resolution', () => {
         if (byEmail) return byEmail
       }
 
-      // Try phone match
       const digitsOnly = trimmed.replace(/[^\d]/g, '')
       if (digitsOnly.length >= 7) {
         let normalized = digitsOnly
@@ -277,7 +264,6 @@ describe('Contact Resolution', () => {
         if (byPhone) return byPhone
       }
 
-      // Try name match
       const lower = trimmed.toLowerCase()
       const byName = contacts.find(c => {
         const fullName = `${c.firstName} ${c.lastName}`.toLowerCase()
@@ -328,23 +314,20 @@ describe('Contact Resolution', () => {
 
       const mockLookup = (key) => ({ id: key, name: 'Test' })
 
-      // First lookup
       const result1 = cachedLookup('test@example.com', mockLookup)
       expect(lookupCount.count).toBe(1)
 
-      // Second lookup - should be cached
       const result2 = cachedLookup('test@example.com', mockLookup)
       expect(lookupCount.count).toBe(1)
       expect(result2).toEqual(result1)
 
-      // Different key - should trigger new lookup
       cachedLookup('other@example.com', mockLookup)
       expect(lookupCount.count).toBe(2)
     })
 
     it('should expire cache entries', async () => {
       const cache = new Map()
-      const TTL_MS = 50 // 50ms for test
+      const TTL_MS = 50
 
       const setWithTTL = (key, value) => {
         cache.set(key, { value, expires: Date.now() + TTL_MS })
@@ -363,7 +346,6 @@ describe('Contact Resolution', () => {
       setWithTTL('key1', 'value1')
       expect(getWithTTL('key1')).toBe('value1')
 
-      // Wait for expiration
       await new Promise(resolve => setTimeout(resolve, 60))
 
       expect(getWithTTL('key1')).toBeNull()
@@ -417,7 +399,6 @@ describe('Contact Resolution', () => {
     const resolveHandle = (handleId, contacts) => {
       if (!handleId) return null
 
-      // Handle can be email or phone
       const isEmail = handleId.includes('@')
       const isPhone = /^\+?\d/.test(handleId)
 
@@ -498,7 +479,7 @@ describe('Contact Resolution', () => {
       expect(resolved).toHaveLength(3)
       expect(resolved[0].displayName).toBe('John Doe')
       expect(resolved[1].displayName).toBe('Jane Smith')
-      expect(resolved[2].displayName).toBe('+15553333333') // Unknown
+      expect(resolved[2].displayName).toBe('+15553333333')
     })
 
     it('should preserve original handle for unknown contacts', () => {

@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-/**
- * Minimal MCP stdio server wired like index.js (bindStdinCloseExit +
- * drain-on-close), with one slow tool so tests need no Mail access.
- * DRAIN=0 reproduces the pre-fix synchronous exit.
- */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";

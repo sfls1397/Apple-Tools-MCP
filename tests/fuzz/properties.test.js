@@ -1,11 +1,3 @@
-/**
- * Property-Based Testing
- *
- * Tests invariants that should hold for ALL inputs:
- * - Result structure consistency
- * - Limit constraints
- * - Idempotency
- */
 
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
@@ -16,7 +8,6 @@ describe('Properties: Validation Invariants', () => {
 
     fc.assert(
       fc.property(
-        // Use oneOf to avoid objects with problematic toString
         fc.oneof(
           fc.string(),
           fc.integer(),
@@ -32,7 +23,6 @@ describe('Properties: Validation Invariants', () => {
             const result = validateLimit(value, defaultVal, max)
             return result >= 1 && result <= Math.max(defaultVal, max)
           } catch {
-            // If it throws, that's also acceptable for edge cases
             return true
           }
         }
@@ -57,12 +47,9 @@ describe('Properties: Validation Invariants', () => {
         (value) => {
           try {
             const result = validateDaysBack(value)
-            // Should always return a number
             if (typeof result !== 'number') return false
-            // Should be non-negative and within bounds (0 to max which is 3650 default)
             return result >= 0 && result <= 3650
           } catch {
-            // If it throws, that's also acceptable for edge cases
             return true
           }
         }
@@ -89,7 +76,6 @@ describe('Properties: Validation Invariants', () => {
             const result = validateWeekOffset(value)
             return result >= 0 && result <= 52
           } catch {
-            // If it throws, that's also acceptable for edge cases
             return true
           }
         }
@@ -104,7 +90,6 @@ describe('Properties: Validation Invariants', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
         const result = escapeSQL(input)
-        // Escaping adds characters, never removes them
         return result.length >= input.length
       }),
       { numRuns: 500 }
@@ -114,7 +99,6 @@ describe('Properties: Validation Invariants', () => {
   it('escapeSQL: is idempotent for safe strings', async () => {
     const { escapeSQL } = await import('../../lib/validators.js')
 
-    // For strings without quotes or backslashes, escaping should be idempotent
     fc.assert(
       fc.property(
         fc.string().filter(s => !s.includes("'") && !s.includes("\\")),
@@ -134,7 +118,6 @@ describe('Properties: Validation Invariants', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
         const result = stripHtmlTags(input)
-        // Stripping tags removes characters
         return result.length <= input.length
       }),
       { numRuns: 500 }
@@ -147,7 +130,6 @@ describe('Properties: Validation Invariants', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
         const result = stripHtmlTags(input)
-        // Should not have any HTML-like tags
         return !/<[a-zA-Z][^>]*>/.test(result)
       }),
       { numRuns: 500 }
@@ -165,7 +147,6 @@ describe('Properties: Search Function Invariants', () => {
         (words) => {
           const input = words.join(' ')
           const keywords = extractKeywords(input)
-          // Each keyword should be derived from input
           return keywords.every(kw =>
             input.toLowerCase().includes(kw.toLowerCase())
           )
@@ -181,8 +162,6 @@ describe('Properties: Search Function Invariants', () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 200 }), (input) => {
         const { cleanQuery, negations } = parseNegation(input)
-        // Clean query should be a substring (with some words removed)
-        // Negations should be an array
         return typeof cleanQuery === 'string' && Array.isArray(negations)
       }),
       { numRuns: 300 }
@@ -195,7 +174,6 @@ describe('Properties: Search Function Invariants', () => {
     fc.assert(
       fc.property(fc.string({ minLength: 3, maxLength: 100 }), (input) => {
         const expansions = expandQuery(input)
-        // Original query should always be included
         return expansions.includes(input) || expansions[0] === input
       }),
       { numRuns: 200 }
@@ -208,7 +186,6 @@ describe('Properties: Search Function Invariants', () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 200 }), (input) => {
         const expansions = expandQuery(input)
-        // Should never return more than 3 expansions
         return expansions.length <= 3
       }),
       { numRuns: 200 }
@@ -218,11 +195,9 @@ describe('Properties: Search Function Invariants', () => {
 
 describe('Properties: Data Structure Invariants', () => {
   it('search result: results.length <= limit', async () => {
-    // This is a key invariant - we should never return more results than requested
     const limits = [1, 5, 10, 50, 100]
 
     for (const limit of limits) {
-      // Mock a result structure
       const mockResults = Array(limit + 10).fill({ rank: 1 })
       const sliced = mockResults.slice(0, limit)
 
@@ -300,15 +275,12 @@ describe('Properties: Composition', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
         try {
-          // Chain: validate -> strip HTML -> escape SQL
           const validated = validateSearchQuery(input)
           const stripped = stripHtmlTags(validated)
           const escaped = escapeSQL(stripped)
 
-          // Result should be a string
           return typeof escaped === 'string'
         } catch (e) {
-          // Empty/whitespace strings will throw in validateSearchQuery
           return e instanceof Error
         }
       }),

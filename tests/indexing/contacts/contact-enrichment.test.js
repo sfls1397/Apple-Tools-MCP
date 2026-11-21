@@ -1,7 +1,3 @@
-/**
- * Tests for contact enrichment in search results
- * Tests adding contact info to emails, messages, and calendar events
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -262,7 +258,6 @@ describe('Contact Enrichment', () => {
 
   describe('batch enrichment', () => {
     const batchEnrichEmails = (emails, contacts) => {
-      // Pre-build email lookup map for efficiency
       const emailToContact = new Map()
       for (const contact of contacts) {
         for (const email of contact.emails || []) {
@@ -309,13 +304,12 @@ describe('Contact Enrichment', () => {
       const duration = performance.now() - start
 
       expect(enriched).toHaveLength(1000)
-      expect(duration).toBeLessThan(100) // Should be fast
+      expect(duration).toBeLessThan(100)
     })
   })
 
   describe('person search across sources', () => {
     const searchPersonCommunication = (personName, data, contacts) => {
-      // Find contact
       const contact = contacts.find(c =>
         `${c.firstName} ${c.lastName}`.toLowerCase() === personName.toLowerCase()
       )
@@ -324,7 +318,6 @@ describe('Contact Enrichment', () => {
         return { emails: [], messages: [], events: [] }
       }
 
-      // Search each source
       const emailMatches = data.emails.filter(e =>
         contact.emails.some(ce =>
           e.from?.toLowerCase().includes(ce.toLowerCase()) ||
@@ -439,7 +432,6 @@ describe('Contact Enrichment', () => {
         }
       }
 
-      // Sort by frequency
       const sorted = Array.from(senderCounts.entries())
         .sort((a, b) => b[1] - a[1])
         .map(([email, count]) => {
@@ -492,7 +484,6 @@ describe('Contact Enrichment', () => {
       if (contact.photoData) return contact.photoData
       if (contact.photoUrl) return contact.photoUrl
 
-      // Generate initials-based placeholder
       const initials = [contact.firstName?.[0], contact.lastName?.[0]]
         .filter(Boolean)
         .join('')

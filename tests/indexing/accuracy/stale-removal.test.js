@@ -1,15 +1,6 @@
-/**
- * Accuracy tests for stale entry removal
- * Tests calendar event cleanup when events are removed from source
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, vi } from 'vitest'
 
-/**
- * Create a LanceDB mock for testing database operations
- */
 function createLanceDBMock() {
   const tables = new Map()
 
@@ -45,7 +36,6 @@ function createLanceDBMock() {
 describe('Stale Entry Removal', () => {
   describe('detecting stale events', () => {
     it('should identify events removed from calendar', () => {
-      // Events that were indexed
       const indexedIds = new Set([
         'Meeting A-2024-01-01 10:00',
         'Meeting B-2024-01-02 10:00',
@@ -54,7 +44,6 @@ describe('Stale Entry Removal', () => {
         'Meeting E-2024-01-05 10:00'
       ])
 
-      // Events currently in calendar (D and E were deleted)
       const currentEvents = [
         { title: 'Meeting A', start: '2024-01-01 10:00' },
         { title: 'Meeting B', start: '2024-01-02 10:00' },
@@ -72,7 +61,7 @@ describe('Stale Entry Removal', () => {
 
     it('should return empty array when no stale entries', () => {
       const indexedIds = new Set(['Event A', 'Event B'])
-      const currentIds = new Set(['Event A', 'Event B', 'Event C']) // C is new
+      const currentIds = new Set(['Event A', 'Event B', 'Event C'])
 
       const staleIds = [...indexedIds].filter(id => !currentIds.has(id))
 
@@ -81,7 +70,7 @@ describe('Stale Entry Removal', () => {
 
     it('should detect all entries as stale when calendar is empty', () => {
       const indexedIds = new Set(['Event A', 'Event B', 'Event C'])
-      const currentIds = new Set() // Calendar cleared
+      const currentIds = new Set()
 
       const staleIds = [...indexedIds].filter(id => !currentIds.has(id))
 
@@ -94,7 +83,6 @@ describe('Stale Entry Removal', () => {
       const lancedb = createLanceDBMock()
       const db = await lancedb.connect()
 
-      // Create table with events
       const records = [
         { id: 'Event A', title: 'Event A', vector: new Array(384).fill(0) },
         { id: 'Event B', title: 'Event B', vector: new Array(384).fill(0) },
@@ -104,7 +92,6 @@ describe('Stale Entry Removal', () => {
       await db.createTable('calendar', records)
       const table = await db.openTable('calendar')
 
-      // Delete stale entry
       await table.delete("id = 'Event B'")
 
       expect(table.delete).toHaveBeenCalledWith("id = 'Event B'")
@@ -115,7 +102,6 @@ describe('Stale Entry Removal', () => {
       let removedCount = 0
 
       for (const id of staleIds) {
-        // Simulate successful deletion
         removedCount++
       }
 
@@ -127,11 +113,8 @@ describe('Stale Entry Removal', () => {
     it('should validate IDs before delete operation', () => {
       const validateLanceDBId = (id) => {
         if (!id || typeof id !== 'string') return null
-        // Check for reasonable length
         if (id.length > 1000) return null
-        // Check for dangerous characters
         if (/[\x00-\x1f\x7f]/.test(id)) return null
-        // SQL injection prevention - basic check
         if (/[;'"\\]/.test(id) && id.includes('DROP')) return null
         return id
       }
@@ -148,9 +131,9 @@ describe('Stale Entry Removal', () => {
     it('should skip invalid IDs', () => {
       const staleIds = [
         'Valid Event-2024-01-01',
-        "'; DROP TABLE calendar; --", // Invalid
+        "'; DROP TABLE calendar; --",
         'Another Valid-2024-01-02',
-        '\x00BadId' // Invalid
+        '\x00BadId'
       ]
 
       const validateId = (id) => {
@@ -236,9 +219,9 @@ describe('Stale Entry Removal', () => {
   describe('result structure', () => {
     it('should return indexed, added, and removed counts', () => {
       const result = {
-        indexed: 100,  // Previously indexed count
-        added: 5,      // Newly added count
-        removed: 3     // Stale entries removed
+        indexed: 100,
+        added: 5,
+        removed: 3
       }
 
       expect(result.indexed).toBeDefined()

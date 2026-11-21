@@ -1,20 +1,10 @@
-/**
- * MCP Protocol Contract Tests
- *
- * Verifies compliance with Model Context Protocol specification:
- * - Tool definitions have required fields
- * - Response formats are correct
- * - Error handling follows protocol
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
-// Tool definitions from index.js (extracted for testing)
 const REQUIRED_TOOL_FIELDS = ['name', 'description', 'inputSchema']
 const REQUIRED_SCHEMA_FIELDS = ['type', 'properties']
 
-// All tools that should be registered
 const EXPECTED_TOOLS = [
   'smart_search',
   'mail_search', 'mail_recent', 'mail_date', 'mail_read', 'mail_senders', 'mail_thread', 'mail_find', 'mail_links',
@@ -25,7 +15,6 @@ const EXPECTED_TOOLS = [
   'rebuild_index'
 ]
 
-// Tools that require specific parameters
 const TOOLS_WITH_REQUIRED_PARAMS = {
   'mail_search': ['query'],
   'mail_date': ['date'],
@@ -46,18 +35,14 @@ describe('Contract: Tool Definition Compliance', () => {
   let toolDefinitions = []
 
   beforeAll(async () => {
-    // Import the tool definitions by reading the file
     const fs = await import('fs')
     const path = await import('path')
     const indexPath = path.join(process.cwd(), 'index.js')
     const content = fs.readFileSync(indexPath, 'utf-8')
 
-    // Extract tool names using a simpler pattern
-    // Look for name: "tool_name" or name: 'tool_name' patterns
     const toolMatches = content.matchAll(/name:\s*["']([a-z_]+)["']/g)
     const toolNames = new Set()
     for (const match of toolMatches) {
-      // Only collect names that look like our tool names
       if (EXPECTED_TOOLS.includes(match[1]) || match[1].includes('_')) {
         toolNames.add(match[1])
       }
@@ -68,11 +53,9 @@ describe('Contract: Tool Definition Compliance', () => {
   it('should have all expected tools registered', () => {
     const registeredNames = toolDefinitions.map(t => t.name)
 
-    // Check that we found at least most of the expected tools
     const foundCount = EXPECTED_TOOLS.filter(t => registeredNames.includes(t)).length
     console.log(`  → Found ${foundCount}/${EXPECTED_TOOLS.length} expected tools`)
 
-    // Allow some flexibility - at least 80% of tools should be found
     expect(foundCount).toBeGreaterThanOrEqual(Math.floor(EXPECTED_TOOLS.length * 0.8))
   })
 
@@ -95,7 +78,6 @@ describe('Contract: Tool Definition Compliance', () => {
     const indexPath = path.join(process.cwd(), 'index.js')
     const content = fs.readFileSync(indexPath, 'utf-8')
 
-    // Find all property names in inputSchema
     const paramMatches = content.matchAll(/properties:\s*\{([^}]+)\}/g)
     const invalidParams = []
 
@@ -125,7 +107,6 @@ describe('Contract: Input Schema Validation', () => {
     const indexPath = path.join(process.cwd(), 'index.js')
     const content = fs.readFileSync(indexPath, 'utf-8')
 
-    // Count inputSchema definitions
     const schemaMatches = content.match(/inputSchema:\s*\{/g) || []
     const typeObjectMatches = content.match(/inputSchema:\s*\{\s*type:\s*["']object["']/g) || []
 
@@ -139,11 +120,9 @@ describe('Contract: Input Schema Validation', () => {
     const indexPath = path.join(process.cwd(), 'index.js')
     const content = fs.readFileSync(indexPath, 'utf-8')
 
-    // Each inputSchema should have properties
     const schemaCount = (content.match(/inputSchema:\s*\{/g) || []).length
     const propsCount = (content.match(/inputSchema:\s*\{[^}]*properties:\s*\{/g) || []).length
 
-    // Some schemas might not have properties (empty input)
     console.log(`  → ${schemaCount} schemas, ${propsCount} with properties`)
     expect(propsCount).toBeGreaterThan(0)
   })
@@ -155,7 +134,6 @@ describe('Contract: Input Schema Validation', () => {
     const content = fs.readFileSync(indexPath, 'utf-8')
 
     for (const [toolName, requiredParams] of Object.entries(TOOLS_WITH_REQUIRED_PARAMS)) {
-      // Find the tool definition
       const toolRegex = new RegExp(`name:\\s*["']${toolName}["'][\\s\\S]*?required:\\s*\\[([^\\]]+)\\]`, 'm')
       const match = content.match(toolRegex)
 
@@ -173,11 +151,8 @@ describe('Contract: Input Schema Validation', () => {
     const indexPath = path.join(process.cwd(), 'index.js')
     const content = fs.readFileSync(indexPath, 'utf-8')
 
-    // JSON Schema types (integer is valid in JSON Schema though number is preferred)
-    // Also include 'text' which is used in MCP response content types
     const validTypes = ['string', 'number', 'boolean', 'array', 'object', 'integer', 'null', 'text']
 
-    // Find all type specifications
     const typeMatches = content.matchAll(/type:\s*["'](\w+)["']/g)
     const invalidTypes = []
 
@@ -225,7 +200,6 @@ describe('Contract: Write Tool Compliance', () => {
 
 describe('Contract: Response Format Compliance', () => {
   it('should return content array with type and text', async () => {
-    // Mock a successful response structure
     const validResponse = {
       content: [{ type: 'text', text: 'Result here' }]
     }
@@ -265,7 +239,6 @@ describe('Contract: Error Message Format', () => {
     }
 
     try {
-      // Use .emlx extension to pass extension check, then fail on path traversal
       validateEmailPath('../../../etc/passwd.emlx', '/home/user/Mail')
     } catch (e) {
       expect(e.message).toContain('denied')
@@ -278,7 +251,6 @@ describe('Contract: Error Message Format', () => {
     try {
       validateSearchQuery(null)
     } catch (e) {
-      // Should not contain stack traces or file paths
       expect(e.message).not.toContain('.js:')
       expect(e.message).not.toContain('node_modules')
     }
@@ -296,16 +268,16 @@ describe('Contract: Parameter Type Coercion', () => {
   it('should return defaults for invalid values', async () => {
     const { validateLimit, validateDaysBack } = await import('../../lib/validators.js')
 
-    expect(validateLimit('invalid')).toBe(30) // default
-    expect(validateLimit(-1)).toBe(30) // default
-    expect(validateDaysBack('invalid')).toBe(0) // default
+    expect(validateLimit('invalid')).toBe(30)
+    expect(validateLimit(-1)).toBe(30)
+    expect(validateDaysBack('invalid')).toBe(0)
   })
 
   it('should cap values at maximum', async () => {
     const { validateLimit, validateDaysBack } = await import('../../lib/validators.js')
 
-    expect(validateLimit(99999)).toBe(1000) // capped
-    expect(validateDaysBack(99999)).toBe(3650) // capped
+    expect(validateLimit(99999)).toBe(1000)
+    expect(validateDaysBack(99999)).toBe(3650)
   })
 })
 
@@ -316,7 +288,6 @@ describe('Contract: Enum Validation', () => {
     const indexPath = path.join(process.cwd(), 'index.js')
     const content = fs.readFileSync(indexPath, 'utf-8')
 
-    // Find sort_by enum definitions
     const sortByMatches = content.matchAll(/sort_by[^}]*enum:\s*\[([^\]]+)\]/g)
 
     for (const match of sortByMatches) {

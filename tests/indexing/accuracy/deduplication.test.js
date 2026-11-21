@@ -1,15 +1,6 @@
-/**
- * Accuracy tests for deduplication logic
- * Tests prevention of duplicate entries in indexes
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-/**
- * Create a LanceDB mock for testing database operations
- */
 function createLanceDBMock() {
   const tables = new Map()
 
@@ -45,9 +36,6 @@ function createLanceDBMock() {
   }
 }
 
-/**
- * Generate test calendar events
- */
 function generateCalendarEvents(count) {
   const events = []
   const now = Date.now()
@@ -90,14 +78,13 @@ describe('Email Deduplication', () => {
       const records = [
         { filePath: '/path/1.emlx', subject: 'Email 1' },
         { filePath: '/path/2.emlx', subject: 'Email 2' },
-        { filePath: '/path/1.emlx', subject: 'Duplicate' } // Duplicate
+        { filePath: '/path/1.emlx', subject: 'Duplicate' }
       ]
 
       const uniquePaths = new Set(records.map(r => r.filePath))
 
       expect(uniquePaths.size).toBe(2)
       expect(records.length).toBe(3)
-      // There IS a duplicate
       expect(uniquePaths.size).toBeLessThan(records.length)
     })
 
@@ -156,7 +143,7 @@ describe('Message Deduplication', () => {
       const messages = [
         { id: '1', text: 'Hello' },
         { id: '2', text: 'Hi' },
-        { id: '1', text: 'Duplicate Hello' } // Duplicate
+        { id: '1', text: 'Duplicate Hello' }
       ]
 
       const uniqueIds = new Set(messages.map(m => m.id))
@@ -171,9 +158,9 @@ describe('Message Deduplication', () => {
 
       const messages = [
         { id: '1' },
-        { id: '4' }, // New
+        { id: '4' },
         { id: '2' },
-        { id: '5' }  // New
+        { id: '5' }
       ]
 
       const toIndex = messages.filter(m => !indexed.has(String(m.id)))
@@ -185,7 +172,6 @@ describe('Message Deduplication', () => {
     it('should convert id to string for comparison', () => {
       const indexed = new Set(['1', '2', '3'])
 
-      // SQLite may return numeric id
       const message = { id: 2 }
 
       const isIndexed = indexed.has(String(message.id))
@@ -223,8 +209,8 @@ describe('Calendar Deduplication', () => {
     it('should create unique IDs from title-start combination', () => {
       const events = [
         { title: 'Meeting', start: '2024-01-01 10:00' },
-        { title: 'Meeting', start: '2024-01-02 10:00' }, // Different time
-        { title: 'Call', start: '2024-01-01 10:00' }     // Different title
+        { title: 'Meeting', start: '2024-01-02 10:00' },
+        { title: 'Call', start: '2024-01-01 10:00' }
       ]
 
       const ids = events.map(e => `${e.title}-${e.start}`)
@@ -238,18 +224,15 @@ describe('Calendar Deduplication', () => {
     })
 
     it('should handle same-title same-time collision', () => {
-      // Two events with identical title and start time
       const events = [
         { title: 'Meeting', start: '2024-01-01 10:00', calendar: 'Work' },
-        { title: 'Meeting', start: '2024-01-01 10:00', calendar: 'Personal' } // Same ID!
+        { title: 'Meeting', start: '2024-01-01 10:00', calendar: 'Personal' }
       ]
 
       const ids = events.map(e => `${e.title}-${e.start}`)
 
-      // These would collide
       expect(ids[0]).toBe(ids[1])
 
-      // In practice, the second would overwrite or be skipped
       const uniqueIds = new Set(ids)
       expect(uniqueIds.size).toBe(1)
     })
@@ -261,8 +244,8 @@ describe('Calendar Deduplication', () => {
       ])
 
       const events = [
-        { title: 'Meeting A', start: '2024-01-01 10:00' }, // Already indexed
-        { title: 'Meeting C', start: '2024-01-03 10:00' }  // New
+        { title: 'Meeting A', start: '2024-01-01 10:00' },
+        { title: 'Meeting C', start: '2024-01-03 10:00' }
       ]
 
       const toIndex = events.filter(e => {
@@ -289,7 +272,7 @@ describe('Calendar Deduplication', () => {
         'Event A-2024-01-01',
         'Event B-2024-01-02',
         'Event C-2024-01-03',
-        'Event D-2024-01-04' // Removed from calendar
+        'Event D-2024-01-04'
       ])
 
       const currentIds = new Set([
@@ -307,11 +290,9 @@ describe('Calendar Deduplication', () => {
 
 describe('Cross-Source Deduplication', () => {
   it('should allow same content in different sources', () => {
-    // It's valid to have "Meeting" in both email and calendar
     const emailRecord = { filePath: '/mail/1.emlx', subject: 'Meeting' }
     const calendarRecord = { id: 'Meeting-2024-01-01', title: 'Meeting' }
 
-    // These are in different tables, so not duplicates
     expect(emailRecord.subject).toBe(calendarRecord.title)
     expect(emailRecord.filePath).not.toBe(calendarRecord.id)
   })

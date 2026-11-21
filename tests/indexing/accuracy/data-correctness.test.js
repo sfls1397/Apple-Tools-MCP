@@ -1,13 +1,6 @@
-/**
- * Accuracy tests for data correctness in indexing
- * Tests field mapping, extraction, and transformation accuracy
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Mac Absolute Time epoch: seconds from Unix epoch (1970) to Mac epoch (2001)
 const MAC_ABSOLUTE_EPOCH = 978307200
 
 describe('Email Field Mapping', () => {
@@ -256,14 +249,11 @@ describe('Message Field Mapping', () => {
 
   describe('Mac Absolute Time conversion', () => {
     it('should convert to Unix timestamp correctly', () => {
-      // Mac Absolute Time: seconds since 2001-01-01 00:00:00 UTC
-      // Unix timestamp: seconds since 1970-01-01 00:00:00 UTC
-      // Difference: 978307200 seconds
 
-      const macTime = 0 // 2001-01-01 00:00:00 UTC
+      const macTime = 0
       const unixTimestamp = macTime + MAC_ABSOLUTE_EPOCH
 
-      expect(unixTimestamp).toBe(978307200) // 2001-01-01 in Unix time
+      expect(unixTimestamp).toBe(978307200)
     })
 
     it('should handle recent timestamps', () => {
@@ -358,7 +348,7 @@ describe('Calendar Field Mapping', () => {
 
   describe('time conversions', () => {
     it('should format Mac Absolute Time to readable date', () => {
-      const macTime = 757382400 // Some Mac Absolute Time value
+      const macTime = 757382400
 
       const formatMacAbsoluteDate = (time) => {
         const unixMs = (time + MAC_ABSOLUTE_EPOCH) * 1000
