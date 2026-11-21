@@ -210,7 +210,6 @@ describe('index.js wires the runtime helpers', () => {
     expect(indexSrc).toContain('waitForIndexerLock')
     expect(indexSrc).toContain('beginOwnedIndexing')
     expect(indexSrc).toContain('startHeartbeat: startLockHeartbeat')
-    expect(indexSrc).toContain('local fallback when no daemon is running')
   })
 
   it('passes HTTP mode to the startup helper and refuses rebuild_index over HTTP before taking the lock', () => {

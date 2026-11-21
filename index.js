@@ -50,11 +50,6 @@ const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
 ).version;
 
-// Canonical indexer entrypoint: `node index.js --mode=indexer` or `apple-tools-indexer`.
-// Permissions CLI: `apple-tools-mcp permissions` — short-lived, no MCP / indexer.
-// HTTP transport: `node index.js --transport=http` or `apple-tools-http` — same
-// tools as stdio, but bearer-token authenticated (see lib/httpAuth.js).
-// Token CLI: `apple-tools-mcp http-token` — short-lived, prints the token.
 const PERMISSIONS_MODE = isPermissionsMode();
 const INDEXER_MODE = isIndexerMode();
 const INDEXER_WORKER = INDEXER_MODE && process.connected && process.argv.includes("--indexer-worker");
@@ -65,15 +60,11 @@ const INDEX_INTERVAL = resolvedIndexInterval.ms;
 const LOCK_HEARTBEAT_MS = DEFAULT_LOCK_HEARTBEAT_MS;
 const LOCK_RETRY_MS = 5 * 1000;
 
-// Lock file to prevent duplicate indexing processes
 const LOCK_FILE = path.join(process.env.HOME, ".apple-tools-mcp", "indexer.lock");
 const indexerLock = createIndexerLock({
   lockFile: LOCK_FILE,
   log: (msg) => console.error(msg)
 });
-// True only while this process won the indexer lock. Distinct from
-// sessionIndexComplete: a secondary instance that lost the lock never
-// completes a local cycle and must not stay on "still indexing" forever.
 let ownsIndexLock = false;
 
 function acquireLock() {
@@ -102,8 +93,6 @@ function stopLockHeartbeat() {
   indexerLock.stopHeartbeat();
 }
 
-// Daemon-only: serves writes for stdio clients whose host app cannot be
-// granted Contacts/Calendar automation (see lib/writeBridge.js).
 const WRITE_SOCKET_PATH = defaultSocketPath();
 let writeBridge = null;
 let indexerWorker = null;
@@ -135,8 +124,6 @@ async function startWriteBridge() {
 
 async function startIndexerWorker() {
   if (shuttingDown) return;
-  // A worker orphaned by an abrupt parent death with its event loop blocked
-  // still holds indexer.lock; launchd never kills it (lib/orphanWorker.js).
   await reapOrphanedIndexWorker({ lockFile: LOCK_FILE, log: (msg) => console.error(msg) });
   if (shuttingDown) return;
   const worker = fork(new URL("./index.js", import.meta.url), ["--mode=indexer", "--indexer-worker"], {
@@ -168,7 +155,6 @@ function shutdownIndexing(exitCode = 0) {
   setTimeout(() => process.exit(exitCode), 3000);
 }
 
-// Clean up lock and timer on exit
 process.on("exit", () => {
   indexerWorker?.kill("SIGKILL");
   stopBackgroundIndexing();
@@ -179,7 +165,6 @@ process.on("exit", () => {
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => shutdownIndexing());
 if (INDEXER_WORKER) process.once("disconnect", () => shutdownIndexing());
 
-// Handle uncaught errors - cleanup before crashing
 process.on("uncaughtException", (err) => {
   console.error("Uncaught exception:", err);
   shutdownIndexing(1);
@@ -190,11 +175,6 @@ process.on("unhandledRejection", (reason, promise) => {
   shutdownIndexing(1);
 });
 
-// MCP stdio clients exit when the host closes stdin. The indexer daemon,
-// HTTP server, and short-lived CLIs must not — LaunchAgent / KeepAlive
-// often attaches stdin to /dev/null, and the CLIs exit on their own.
-// A caller that pipes a batch and closes stdin still gets every reply:
-// in-flight requests finish (up to STDIN_CLOSE_DRAIN_MS) before exit.
 const STDIN_CLOSE_DRAIN_MS = 120000;
 let stdioInFlight = null;
 bindStdinCloseExit(process.stdin, INDEXER_MODE || PERMISSIONS_MODE || HTTP_MODE || HTTP_TOKEN_MODE, () => {
@@ -206,7 +186,6 @@ bindStdinCloseExit(process.stdin, INDEXER_MODE || PERMISSIONS_MODE || HTTP_MODE 
   });
 });
 
-// Vector search imports
 import {
   indexAll,
   isIndexReady,
@@ -217,7 +196,6 @@ import {
   getWeekEvents,
   getEmailThread,
   getRecurringEvents,
-  // Contacts functions
   loadContacts,
   searchContacts,
   lookupContact,
@@ -254,26 +232,22 @@ import {
   formatAuditReport
 } from "./lib/audit.js";
 
-// Track indexing status
 let indexingInProgress = false;
-let sessionIndexComplete = false;  // Track if this session's indexing is done
-let isFirstEverRun = true;  // True if no index exists yet
+let sessionIndexComplete = false;
+let isFirstEverRun = true;
 let lastIndexTime = 0;
-let lastProgressTime = 0;  // Track when we last made progress (for hung detection)
+let lastProgressTime = 0;
 let indexTimer = null;
 let progressCheckTimer = null;
 let loggedIndexInterval = false;
 
-// Check if this is the first ever run (no index exists)
 async function checkIfFirstRun() {
   const emailsReady = await isIndexReady("emails");
   const messagesReady = await isIndexReady("messages");
   const calendarReady = await isIndexReady("calendar");
-  // If any index exists, this isn't the first run
   return !(emailsReady || messagesReady || calendarReady);
 }
 
-// Run a single indexing cycle (called by background timer)
 function runIndexCycle() {
   const cycle = beginIndexCycle(indexingInProgress);
   if (!cycle.started) {
@@ -281,7 +255,6 @@ function runIndexCycle() {
   }
   indexingInProgress = cycle.indexingInProgress;
 
-  // Safety net: check lock before indexing
   if (!acquireLock()) {
     indexingInProgress = false;
     console.error("Another instance is indexing. Skipping.");
@@ -292,13 +265,10 @@ function runIndexCycle() {
   const startMsg = isFirstEverRun ? "Building initial index..." : "Indexing new data...";
   console.error(startMsg);
 
-  // Initialize progress tracking - we're starting work now
   lastProgressTime = Date.now();
 
-  // Progress-based timeout: Check every minute if we're making progress
-  // If no progress for 10 minutes, assume the process is hung
-  const PROGRESS_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
-  const MAX_NO_PROGRESS_MS = 10 * 60 * 1000; // Kill if no progress for 10 minutes
+  const PROGRESS_CHECK_INTERVAL_MS = 60 * 1000;
+  const MAX_NO_PROGRESS_MS = 10 * 60 * 1000;
 
   progressCheckTimer = setInterval(() => {
     const timeSinceProgress = Date.now() - lastProgressTime;
@@ -306,21 +276,16 @@ function runIndexCycle() {
       console.error(`⚠️  No indexing progress for ${Math.round(timeSinceProgress / 60000)} minutes. Indexing still running; not starting another cycle.`);
       clearInterval(progressCheckTimer);
       progressCheckTimer = null;
-      // Allow searches, but do NOT clear indexingInProgress or release the lock
-      // while indexAll() is still running — overlapping writes can corrupt LanceDB.
       sessionIndexComplete = true;
     }
   }, PROGRESS_CHECK_INTERVAL_MS);
 
-  // Progress callback to track that indexing is making forward progress
   const reportProgress = (stage) => {
     lastProgressTime = Date.now();
-    // Progress reported, no need to log each batch
   };
 
   indexAll(reportProgress)
     .then(async () => {
-      // Clear progress monitor
       if (progressCheckTimer) {
         clearInterval(progressCheckTimer);
         progressCheckTimer = null;
@@ -330,10 +295,8 @@ function runIndexCycle() {
       lastProgressTime = Date.now();
       applyCycleEnd(true);
       console.error("Indexing complete.");
-      // Pre-warm tables to eliminate first-query latency
       await prewarmTables();
     }).catch(e => {
-      // Clear progress monitor
       if (progressCheckTimer) {
         clearInterval(progressCheckTimer);
         progressCheckTimer = null;
@@ -344,24 +307,17 @@ function runIndexCycle() {
     });
 }
 
-// DEPRECATED: Legacy function kept for backward compatibility
-// New implementation uses background timer instead of on-demand triggering
 function triggerIndexIfNeeded() {
-  // No-op: indexing now runs on background timer
-  // This function is kept to avoid breaking any external dependencies
 }
 
-// Start continuous background indexing
 function startBackgroundIndexing() {
   if (!loggedIndexInterval) {
     logResolvedInterval(resolvedIndexInterval);
     loggedIndexInterval = true;
   }
 
-  // Run indexing immediately on startup
   runIndexCycle();
 
-  // Then schedule every INDEX_INTERVAL milliseconds
   indexTimer = setInterval(() => {
     runIndexCycle();
   }, INDEX_INTERVAL);
@@ -369,7 +325,6 @@ function startBackgroundIndexing() {
   console.error(`Background indexing started (interval: ${resolvedIndexInterval.human} / ${INDEX_INTERVAL} ms)`);
 }
 
-// Stop background indexing and clean up timers
 function stopBackgroundIndexing() {
   const wasRunning = Boolean(indexTimer || progressCheckTimer);
   if (indexTimer) {
@@ -385,9 +340,6 @@ function stopBackgroundIndexing() {
   }
 }
 
-// Unblock searches after a cycle ends. Must run on failure as well as success
-// so tools are not stuck forever. The indexer daemon keeps indexer.lock for
-// the process lifetime; MCP local-fallback still releases between cycles.
 function applyCycleEnd(success) {
   const result = applyIndexerCycleEnd({
     success,
@@ -403,8 +355,6 @@ function applyCycleEnd(success) {
   }
 }
 
-// Index-backed tools wait only while THIS process owns the lock and has not
-// finished its cycle. Lost-lock secondaries fall through to isIndexReady().
 function stillIndexingMessage() {
   const gate = indexQueryGate({
     sessionIndexComplete,
@@ -415,7 +365,6 @@ function stillIndexingMessage() {
   return gate.ok ? null : gate.message;
 }
 
-/** Shared preflight for index-backed query tools (on-disk tables, not local cycle). */
 async function requireIndex(type) {
   const indexing = stillIndexingMessage();
   if (indexing) {
@@ -432,9 +381,6 @@ async function requireIndex(type) {
   return gate.ok ? null : gate.message;
 }
 
-// Tools that answer from the shared vector index. Their replies get a note
-// when the index has not finished a pass in several intervals, worded by
-// whether the indexer.lock holder is alive (still refreshing, stuck, or down).
 const INDEX_BACKED_TOOLS = new Set([
   "smart_search",
   "person_search",
@@ -477,16 +423,11 @@ function waitForLockAndStartDaemon() {
   });
 }
 
-// Initialize and start indexing
 async function initializeIndexing() {
   if (INDEXER_MODE && !INDEXER_WORKER) {
     console.error(`Apple Tools MCP indexer running (v${PACKAGE_VERSION})`);
     logResolvedInterval(resolvedIndexInterval);
     loggedIndexInterval = true;
-    // launchd started this process, so node owns its TCC prompts. Offer the
-    // write bridge to stdio clients whose host app cannot get those grants.
-    // This happens before any index work: writes must stay available even if
-    // the vector index is missing, locked, or unreadable.
     await startWriteBridge();
     startIndexerWorker();
     return;
@@ -495,8 +436,6 @@ async function initializeIndexing() {
   try {
     isFirstEverRun = await checkIfFirstRun();
   } catch (e) {
-    // A failed readiness probe must not take the daemon (or its write
-    // bridge) down; assume a first run and let the cycle report the details.
     console.error(`Could not determine index state: ${e.message}`);
     isFirstEverRun = true;
   }
@@ -506,34 +445,21 @@ async function initializeIndexing() {
     return;
   }
 
-  // MCP stdio: if the indexer daemon (or another instance) holds the lock,
-  // skip background refresh and use the shared index. If nothing holds the
-  // lock, index locally as before so the stdio happy path still works.
-  // The HTTP server never takes the lock (see mcpIndexingStartup).
   const startup = mcpIndexingStartup(() => acquireLock(), { httpMode: HTTP_MODE });
   if (!startup.startBackground) {
     console.error(startup.reason === "http-server"
       ? "HTTP server never takes indexer.lock; it serves the index the indexer daemon keeps fresh."
       : "Another apple-tools-mcp instance is indexing. Server will run without background indexing.");
-    // Lost lock is not "still indexing": this process will never complete a
-    // local cycle. Searches proceed whenever isIndexReady() is true (initDB
-    // re-lists shared on-disk tables; it must not cache an empty first connect).
     ownsIndexLock = false;
     return;
   }
 
-  // Start background indexing (local fallback when no daemon is running)
-  // using the same heartbeat path as the daemon so a long first-index cycle
-  // cannot look like a stale lock to another waiter.
   beginOwnedIndexing({
     startHeartbeat: startLockHeartbeat,
     startBackground: startBackgroundIndexing
   });
 }
 
-// Start indexing immediately on server startup. A startup failure is logged
-// rather than rejected: an unhandled rejection would tear down the daemon,
-// taking the write bridge with it.
 if (PERMISSIONS_MODE) {
   runPermissionsCommand({
     execPath: process.execPath,
@@ -547,9 +473,6 @@ if (PERMISSIONS_MODE) {
   });
 } else if (HTTP_TOKEN_MODE) {
   try {
-    // Token itself goes to stdout only, so `apple-tools-mcp http-token` is
-    // scriptable (`$(apple-tools-mcp http-token)`). Any one-time generation
-    // banner still goes to stderr from loadOrCreateHttpAuthToken() itself.
     const { token } = loadOrCreateHttpAuthToken();
     console.log(token);
     process.exit(0);
@@ -563,7 +486,6 @@ if (PERMISSIONS_MODE) {
   });
 }
 
-// ============ SEMANTIC SEARCH FUNCTIONS ============
 
 async function mailSearch(query, options = {}) {
   if (!query) {
@@ -647,13 +569,10 @@ async function calendarFreeTime(date, options = {}) {
   return formatFreeTimeResults(requireCalendarRead(await calculateFreeTime(date, options)));
 }
 
-// Mail directory for path validation
 const MAIL_DIR = path.join(process.env.HOME, "Library", "Mail");
 
-// Read full email content from file path
 function readFullEmail(filePath) {
   try {
-    // Validate file path to prevent path traversal attacks
     let validatedPath;
     try {
       validatedPath = validateEmailPath(filePath, MAIL_DIR);
@@ -661,7 +580,6 @@ function readFullEmail(filePath) {
       return `Invalid file path: ${e.message}. Use a path from mail_search results.`;
     }
 
-    // Verify file exists
     if (!fs.existsSync(validatedPath)) {
       return "Email file not found. The search index may hold this email's old path " +
         "(Mail moved or rebuilt its folders); the indexer re-paths moved mail on its next pass. " +
@@ -670,21 +588,16 @@ function readFullEmail(filePath) {
 
     const content = unfoldRfc822Headers(fs.readFileSync(validatedPath, 'utf-8'));
 
-    // Parse email headers and body
     const fromMatch = content.match(/^From:\s*(.+)$/m);
     const toMatch = content.match(/^To:\s*(.+)$/m);
     const subjectMatch = content.match(/^Subject:\s*(.+)$/m);
     const dateMatch = content.match(/^Date:\s*(.+)$/m);
 
-    // Find body after headers
     const headerEnd = content.search(/\r?\n\r?\n/);
     let body = headerEnd > 0 ? content.substring(headerEnd + 2) : content;
 
-    // Clean up body - remove HTML if present using safe method
     if (body.includes('<html') || body.includes('<HTML')) {
-      // Use safe HTML stripping to prevent ReDoS
       body = stripHtmlTags(body);
-      // Decode common HTML entities
       body = body.replace(/&nbsp;/g, ' ');
       body = body.replace(/&amp;/g, '&');
       body = body.replace(/&lt;/g, '<');
@@ -702,37 +615,29 @@ ${body.substring(0, 10000)}`;
   }
 }
 
-// ============ SMART SEARCH (AGENTIC RAG) ============
 
-// Detect which data sources to search based on query intent
 function detectSources(query) {
   const q = query.toLowerCase();
   const sources = [];
 
-  // Calendar indicators
   if (/\b(when|schedule|calendar|event|meeting|appointment|today|tomorrow|next \w+day|this week|free time|available|busy)\b/.test(q)) {
     sources.push('calendar');
   }
 
-  // Messages indicators
   if (/\b(said|message|text|chat|conversation|imessage|sms|texted|replied)\b/.test(q)) {
     sources.push('messages');
   }
 
-  // Mail indicators
   if (/\b(email|mail|sent|inbox|from .+ about|subject|attachment|forward|reply)\b/.test(q)) {
     sources.push('mail');
   }
 
-  // Default to all if no clear indicators
   return sources.length > 0 ? sources : ['mail', 'messages', 'calendar'];
 }
 
-// Format smart search results from multiple sources
 function formatSmartSearchResults(results, synthesizedGroups = null) {
   const sections = [];
 
-  // If we have synthesized timeline groups, show those first
   if (synthesizedGroups && synthesizedGroups.length > 0) {
     sections.push("=== Timeline View (Related Items Grouped) ===\n");
     for (const group of synthesizedGroups.slice(0, 5)) {
@@ -793,7 +698,6 @@ function formatSmartSearchResults(results, synthesizedGroups = null) {
   return sections.join("\n");
 }
 
-// Smart search - routes to appropriate sources and optionally synthesizes results
 async function smartSearch(query, options = {}) {
   const indexing = stillIndexingMessage();
   if (indexing) {
@@ -805,7 +709,6 @@ async function smartSearch(query, options = {}) {
   const sources = detectSources(query);
   const results = {};
 
-  // Search relevant sources in parallel
   const searches = [];
 
   if (sources.includes('calendar')) {
@@ -847,7 +750,6 @@ async function smartSearch(query, options = {}) {
     return indexUnavailableMessage();
   }
 
-  // Synthesize results into timeline if multiple sources returned data
   let synthesizedGroups = null;
   if (synthesize) {
     const hasMultipleSources =
@@ -867,12 +769,10 @@ async function smartSearch(query, options = {}) {
   return formatSmartSearchResults(results, synthesizedGroups);
 }
 
-// Synthesize results from multiple sources into time-based groups
 function synthesizeResults(mailResults, messageResults, calendarResults) {
-  const WINDOW_MS = 60 * 60 * 1000; // 1 hour window
+  const WINDOW_MS = 60 * 60 * 1000;
   const timeline = new Map();
 
-  // Helper to find/create time bucket
   function getBucket(timestamp) {
     if (!timestamp || isNaN(timestamp)) return null;
     const rounded = Math.floor(timestamp / WINDOW_MS) * WINDOW_MS;
@@ -882,31 +782,27 @@ function synthesizeResults(mailResults, messageResults, calendarResults) {
     return timeline.get(rounded);
   }
 
-  // Add mail results
   for (const r of mailResults) {
     const ts = toUnixMillis(r.dateTimestamp) || new Date(r.date).getTime();
     const bucket = getBucket(ts);
     if (bucket) bucket.mail.push(r);
   }
 
-  // Add message results
   for (const r of messageResults) {
     const ts = toUnixMillis(r.dateTimestamp) || new Date(r.date).getTime();
     const bucket = getBucket(ts);
     if (bucket) bucket.messages.push(r);
   }
 
-  // Add calendar results
   for (const r of calendarResults) {
     const ts = toUnixMillis(r.startTimestamp) || new Date(r.start).getTime();
     const bucket = getBucket(ts);
     if (bucket) bucket.calendar.push(r);
   }
 
-  // Format grouped results
   const groups = Array.from(timeline.entries())
     .filter(([_, g]) => g.mail.length + g.messages.length + g.calendar.length > 0)
-    .sort((a, b) => b[0] - a[0]) // Newest first
+    .sort((a, b) => b[0] - a[0])
     .map(([ts, group]) => ({
       timeWindow: new Date(ts).toLocaleString(),
       ...group,
@@ -916,7 +812,6 @@ function synthesizeResults(mailResults, messageResults, calendarResults) {
   return groups;
 }
 
-// ============ CONTACTS FORMATTING ============
 
 function formatContactsSearchResults(contacts) {
   if (!contacts || contacts.length === 0) {
@@ -971,7 +866,6 @@ function formatContactLookupResult(contact) {
   return output;
 }
 
-// ============ PERSON SEARCH (CROSS-SOURCE) ============
 
 async function personSearch(name, limit = 10) {
   const indexing = stillIndexingMessage();
@@ -979,15 +873,12 @@ async function personSearch(name, limit = 10) {
     return indexing;
   }
 
-  // First, try to find the contact to get all their identifiers
   const contacts = searchContacts(name, 5);
 
   if (contacts.length === 0) {
-    // No contact found, fall back to name-based search
     return await smartSearch(name, { limit, synthesize: true });
   }
 
-  // Get the best matching contact
   const contact = contacts[0];
   const emails = contact.emails.map(e => e.email);
   const phones = contact.phones.map(p => p.phone);
@@ -1004,21 +895,18 @@ async function personSearch(name, limit = 10) {
     calendar: null
   };
 
-  // Search all sources in parallel using the contact's identifiers
   const searches = [];
 
-  // Mail search - search by all email addresses
   if (emails.length > 0) {
     searches.push(
       (async () => {
         const ready = await isIndexReady("emails");
         if (ready) {
-          // Search for emails from any of the contact's addresses
-          for (const email of emails.slice(0, 3)) {  // Limit to first 3 emails
+          for (const email of emails.slice(0, 3)) {
             const emailResults = await searchEmails(contact.displayName, {
               limit,
               sender: email,
-              daysBack: 365  // Last year
+              daysBack: 365
             });
             if (emailResults.success && emailResults.results.length > 0) {
               if (!results.mail) results.mail = emailResults;
@@ -1030,13 +918,12 @@ async function personSearch(name, limit = 10) {
     );
   }
 
-  // Messages search - search by phone numbers
   if (phones.length > 0) {
     searches.push(
       (async () => {
         const ready = await isIndexReady("messages");
         if (ready) {
-          for (const phone of phones.slice(0, 3)) {  // Limit to first 3 phones
+          for (const phone of phones.slice(0, 3)) {
             const msgResults = await searchMessages(contact.displayName, {
               limit,
               contact: phone,
@@ -1052,7 +939,6 @@ async function personSearch(name, limit = 10) {
     );
   }
 
-  // Calendar search - search by name
   searches.push(
     (async () => {
       const ready = await isIndexReady("calendar");
@@ -1068,14 +954,12 @@ async function personSearch(name, limit = 10) {
 
   await Promise.all(searches);
 
-  // Format the results
   return formatPersonSearchResults(results);
 }
 
 function formatPersonSearchResults(results) {
   const sections = [];
 
-  // Contact info header
   sections.push(`👤 ${results.contact.name}`);
   if (results.contact.organization) {
     sections.push(`   Organization: ${results.contact.organization}`);
@@ -1090,7 +974,6 @@ function formatPersonSearchResults(results) {
   sections.push("=".repeat(50));
   sections.push("");
 
-  // Email results
   if (results.mail && results.mail.results && results.mail.results.length > 0) {
     sections.push(`📧 EMAILS (${results.mail.results.length}):`);
     for (const r of results.mail.results.slice(0, 10)) {
@@ -1103,7 +986,6 @@ function formatPersonSearchResults(results) {
     sections.push("");
   }
 
-  // Message results
   if (results.messages && results.messages.results && results.messages.results.length > 0) {
     sections.push(`💬 MESSAGES (${results.messages.results.length}):`);
     for (const r of results.messages.results.slice(0, 10)) {
@@ -1116,7 +998,6 @@ function formatPersonSearchResults(results) {
     sections.push("");
   }
 
-  // Calendar results
   if (results.calendar && results.calendar.results && results.calendar.results.length > 0) {
     sections.push(`📅 CALENDAR (${results.calendar.results.length}):`);
     for (const r of results.calendar.results.slice(0, 10)) {
@@ -1133,7 +1014,6 @@ function formatPersonSearchResults(results) {
 }
 
 
-// ============ MCP SERVER SETUP ============
 
 function createServer() {
   const server = new Server(
@@ -1141,10 +1021,8 @@ function createServer() {
     { capabilities: { tools: {} } }
   );
 
-  // Define available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      // ============ SMART SEARCH (AGENTIC) ============
       {
         name: "smart_search",
         description: "Intelligent search across Mail, Messages, and Calendar. Automatically determines which sources to search based on your query. Returns results grouped by time when multiple sources match. Use this for complex queries that might span multiple data sources.",
@@ -1159,7 +1037,6 @@ function createServer() {
         },
       },
 
-      // ============ EMAIL TOOLS ============
       {
         name: "mail_search",
         description: "Semantic search for emails using AI embeddings. Finds emails by meaning, not just keywords. Supports filtering by sender, recipient, attachments, mailbox, sent/received, and flagged.",
@@ -1252,7 +1129,6 @@ function createServer() {
         },
       },
 
-      // ============ MESSAGES TOOLS ============
       {
         name: "messages_search",
         description: "Semantic search for iMessages/SMS using AI embeddings. Finds messages by meaning. Supports filtering by contact, group chats, specific group name, and attachments.",
@@ -1295,7 +1171,6 @@ function createServer() {
         },
       },
 
-      // ============ CALENDAR TOOLS ============
       {
         name: "calendar_search",
         description: "Semantic search for calendar events using AI embeddings. Finds events by meaning. Supports filtering by calendar name and all-day events.",
@@ -1339,9 +1214,7 @@ function createServer() {
         },
       },
 
-      // ============ NEW TOOLS - PHASE 1 ============
 
-      // Mail tools
       {
         name: "mail_senders",
         description: "List most frequent email senders. Helps identify who you communicate with most.",
@@ -1387,7 +1260,6 @@ function createServer() {
         },
       },
 
-      // Messages tools
       {
         name: "messages_contacts",
         description: "List all contacts you've messaged, sorted by most recent. Shows message count and last message date.",
@@ -1399,7 +1271,6 @@ function createServer() {
         },
       },
 
-      // Calendar tools
       {
         name: "calendar_upcoming",
         description: "Get next N upcoming events across all calendars. Simpler than calendar_search for quick schedule overview.",
@@ -1411,7 +1282,6 @@ function createServer() {
         },
       },
 
-      // ============ NEW TOOLS - PHASE 2 ============
 
       {
         name: "calendar_week",
@@ -1423,7 +1293,6 @@ function createServer() {
           },
         },
       },
-      // ============ NEW TOOLS - PHASE 3 ============
 
       {
         name: "mail_thread",
@@ -1448,7 +1317,6 @@ function createServer() {
         },
       },
 
-      // ============ CONTACTS TOOLS ============
 
       {
         name: "contacts_search",
@@ -1486,22 +1354,16 @@ function createServer() {
         },
       },
 
-      // ============ WRITE TOOLS (2.0.0) ============
-      // Mail / Messages / Calendar / Contacts writes with dry_run + confirm.
       ...WRITE_TOOL_DEFINITIONS,
     ],
   }));
 
-  // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {
       let result;
 
-      // Writes never wait on the vector index: they talk to Mail / Messages /
-      // Calendar / Contacts directly and must keep working while the indexer
-      // daemon holds the lock.
       if (isWriteTool(name)) {
         const writeResult = await dispatchWriteTool(name, args || {}, {
           indexerMode: INDEXER_MODE,
@@ -1512,7 +1374,6 @@ function createServer() {
       }
 
       switch (name) {
-        // Smart search (agentic)
         case "smart_search":
           result = await smartSearch(args.query, {
             limit: validateLimit(args?.limit, 5, 100),
@@ -1520,7 +1381,6 @@ function createServer() {
           });
           break;
 
-        // Email tools
         case "mail_search":
           result = await mailSearch(args.query, {
             limit: validateLimit(args?.limit, 30),
@@ -1561,7 +1421,6 @@ function createServer() {
           result = mailLinks(args || {});
           break;
 
-        // Messages tools
         case "messages_search":
           result = await messagesSearch(args.query, {
             limit: validateLimit(args?.limit, 30),
@@ -1585,7 +1444,6 @@ function createServer() {
           result = await messagesConversation(args.contact, validateLimit(args?.limit, 50));
           break;
 
-        // Calendar tools
         case "calendar_search":
           result = await calendarSearch(args.query, {
             limit: validateLimit(args?.limit, 30),
@@ -1609,9 +1467,7 @@ function createServer() {
           });
           break;
 
-        // ============ NEW TOOLS - PHASE 1 ============
 
-        // Mail tools
         case "mail_senders":
           {
             const blocked = await requireIndex("emails");
@@ -1628,31 +1484,25 @@ function createServer() {
           break;
 
         case "rebuild_index":
-          // Check if indexing is already in progress in this session
           if (indexingInProgress) {
             result = "Indexing is already in progress. Please wait for it to complete before starting a rebuild.";
             break;
           }
 
-          // The HTTP server never takes indexer.lock (it could hold it while the
-          // indexer daemon restarts); rebuilds run from stdio or the indexer.
           if (HTTP_MODE) {
             result = "rebuild_index does not run over the HTTP server, which never takes indexer.lock. Run it from a stdio session (apple-tools-mcp) or with npm run build-index while the indexer daemon is stopped.";
             break;
           }
 
-          // Acquire lock to prevent parallel rebuilds across multiple MCP instances
           if (!acquireLock()) {
             result = "Indexing is already in progress in a different session. Please wait for it to complete before starting a rebuild.";
             break;
           }
 
-          // Start rebuild in background and return immediately
           indexingInProgress = true;
           sessionIndexComplete = false;
           const rebuildSources = args?.sources || ["emails", "messages", "calendar"];
 
-          // Fire and forget - don't await
           rebuildIndex(rebuildSources).then((rebuildResult) => {
             applyCycleEnd(true);
             console.error("Index rebuild completed:", JSON.stringify({
@@ -1681,23 +1531,19 @@ function createServer() {
           }
           break;
 
-        // Messages tools
         case "messages_contacts":
           result = formatMessageContactsResults(getMessageContacts(validateLimit(args?.limit, 50, 500)));
           break;
 
-        // Calendar tools
         case "calendar_upcoming":
           result = formatUpcomingEventsResults(requireCalendarRead(getUpcomingEvents(validateLimit(args?.limit, 30, 100))));
           break;
 
-        // ============ NEW TOOLS - PHASE 2 ============
 
         case "calendar_week":
           result = formatWeekEventsResults(getWeekEvents(validateWeekOffset(args?.week_offset)));
           break;
 
-        // ============ NEW TOOLS - PHASE 3 ============
 
         case "mail_thread":
           {
@@ -1714,7 +1560,6 @@ function createServer() {
           result = formatRecurringEventsResults(getRecurringEvents(validateLimit(args?.limit, 30, 100)));
           break;
 
-        // ============ CONTACTS TOOLS ============
 
         case "contacts_search":
           result = formatContactsSearchResults(searchContacts(args.query, validateLimit(args?.limit, 30)));
@@ -1745,31 +1590,13 @@ function createServer() {
 
 const server = createServer();
 
-// Start the server
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   stdioInFlight = trackInFlightRequests(transport);
   console.error(`Apple Tools MCP server running (v${PACKAGE_VERSION})`);
-  // Background indexing: indexer daemon when --mode=indexer; otherwise local
-  // fallback on this stdio process only if indexer.lock is free.
 }
 
-/**
- * Read-only-vs-write is unchanged from stdio mode — every tool the stdio
- * server exposes is exposed here too, including the write tools. What
- * changes is reachability (LAN / Tailscale instead of only this process's
- * parent) and, because of that, every request must carry a bearer token
- * (see lib/httpAuth.js) — stdio has no equivalent check because a locally
- * spawned child process is already trusted by whoever spawned it.
- *
- * A fresh Server + transport pair is created per request rather than
- * reusing the module-level `server`: the SDK's StreamableHTTPServerTransport
- * in stateless mode (sessionIdGenerator: undefined) is single-use — the
- * Protocol class throws "Already connected to a transport" on a second
- * connect() before the first has closed, which a shared instance would hit
- * under any concurrent access. This matches the SDK's own stateless example.
- */
 async function startHttpServer(host, port) {
   const { token } = loadOrCreateHttpAuthToken();
 
