@@ -1,7 +1,3 @@
-/**
- * Tests for timeout handling in embedding and indexing operations
- * Covers: embedBatch timeouts, fallback strategies, and zero-vector fallbacks
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
@@ -19,7 +15,6 @@ describe('Timeout Handling', () => {
   })
 
   describe('withTimeout utility', () => {
-    // Mirrors indexer.js / index.js: clear the timer on fulfill or reject
     const withTimeout = (promise, timeoutMs, operation = "Operation") => {
       let timer
       const timeoutPromise = new Promise((_, reject) => {
@@ -70,8 +65,7 @@ describe('Timeout Handling', () => {
 
   describe('embedBatch timeout handling', () => {
     it('should timeout after 30 seconds on hung embedder', async () => {
-      // Mock embedder that hangs indefinitely
-      const hangingEmbedder = vi.fn(() => new Promise(() => {})) // Never resolves
+      const hangingEmbedder = vi.fn(() => new Promise(() => {}))
 
       const withTimeout = (promise, timeoutMs) => {
         return Promise.race([
@@ -84,33 +78,28 @@ describe('Timeout Handling', () => {
 
       const texts = ['text1', 'text2', 'text3']
 
-      // Use a shorter timeout for testing (500ms instead of 30 seconds)
       await expect(
         withTimeout(hangingEmbedder(texts), 500)
       ).rejects.toThrow('timed out')
-    }, 2000) // Test timeout of 2 seconds
+    }, 2000)
 
     it('should fall back to single-item embedding on batch timeout', async () => {
       let callCount = 0
       const mockEmbedder = vi.fn((texts) => {
         callCount++
         if (Array.isArray(texts) && texts.length > 1) {
-          // Batch call - timeout
-          return new Promise(() => {}) // Hangs
+          return new Promise(() => {})
         } else {
-          // Single item - success
           return Promise.resolve({
             data: new Float32Array(EMBEDDING_DIM).fill(0.1)
           })
         }
       })
 
-      // Simulate the fallback logic from embedBatch
       const texts = ['text1', 'text2']
       let embeddings = []
 
       try {
-        // Try batch
         const batchPromise = mockEmbedder(texts)
         await Promise.race([
           batchPromise,
@@ -118,7 +107,6 @@ describe('Timeout Handling', () => {
         ])
       } catch (e) {
         if (e.message.includes('timeout')) {
-          // Fallback to single items
           for (const text of texts) {
             const result = await mockEmbedder([text])
             embeddings.push(Array.from(result.data))
@@ -131,7 +119,7 @@ describe('Timeout Handling', () => {
     })
 
     it('should return zero vector on individual embedding timeout', async () => {
-      const mockEmbed = vi.fn(() => new Promise(() => {})) // Hangs
+      const mockEmbed = vi.fn(() => new Promise(() => {}))
 
       let embedding
       try {
@@ -141,7 +129,6 @@ describe('Timeout Handling', () => {
         ])
       } catch (e) {
         if (e.message.includes('timeout')) {
-          // Return zero vector as fallback
           embedding = new Array(EMBEDDING_DIM).fill(0)
         }
       }
@@ -155,10 +142,8 @@ describe('Timeout Handling', () => {
       const mockEmbed = vi.fn((text) => {
         const index = callIndex++
         if (index === 1) {
-          // Second call times out
           return new Promise(() => {})
         }
-        // Other calls succeed
         return Promise.resolve(new Array(EMBEDDING_DIM).fill(0.1))
       })
 
@@ -173,15 +158,14 @@ describe('Timeout Handling', () => {
           ])
           embeddings.push(result)
         } catch (e) {
-          // Fallback to zero vector
           embeddings.push(new Array(EMBEDDING_DIM).fill(0))
         }
       }
 
       expect(embeddings).toHaveLength(3)
-      expect(embeddings[0].every(v => v === 0.1)).toBe(true) // Success
-      expect(embeddings[1].every(v => v === 0)).toBe(true)   // Timeout -> zero
-      expect(embeddings[2].every(v => v === 0.1)).toBe(true) // Success
+      expect(embeddings[0].every(v => v === 0.1)).toBe(true)
+      expect(embeddings[1].every(v => v === 0)).toBe(true)
+      expect(embeddings[2].every(v => v === 0.1)).toBe(true)
     })
   })
 
@@ -197,21 +181,21 @@ describe('Timeout Handling', () => {
 
     it('should provide clear error for batch embedding timeout', async () => {
       const hangingPromise = new Promise(() => {})
-      const SHORT_TIMEOUT = 100 // Use 100ms for testing instead of 30000ms
+      const SHORT_TIMEOUT = 100
 
       await expect(
         withTimeout(hangingPromise, SHORT_TIMEOUT, 'Batch embedding')
       ).rejects.toThrow(`Batch embedding timed out after ${SHORT_TIMEOUT}ms`)
-    }, 500) // Test timeout of 500ms
+    }, 500)
 
     it('should provide clear error for single embedding timeout', async () => {
       const hangingPromise = new Promise(() => {})
-      const SHORT_TIMEOUT = 100 // Use 100ms for testing instead of 10000ms
+      const SHORT_TIMEOUT = 100
 
       await expect(
         withTimeout(hangingPromise, SHORT_TIMEOUT, 'Single embedding')
       ).rejects.toThrow(`Single embedding timed out after ${SHORT_TIMEOUT}ms`)
-    }, 500) // Test timeout of 500ms
+    }, 500)
   })
 
   describe('zero vector fallback properties', () => {
@@ -225,11 +209,8 @@ describe('Timeout Handling', () => {
     it('should be valid for vector operations', () => {
       const zeroVector = new Array(EMBEDDING_DIM).fill(0)
 
-      // All values should be numbers
       expect(zeroVector.every(v => typeof v === 'number')).toBe(true)
-      // All values should be finite
       expect(zeroVector.every(v => Number.isFinite(v))).toBe(true)
-      // No NaN values
       expect(zeroVector.every(v => !Number.isNaN(v))).toBe(true)
     })
 
@@ -277,13 +258,10 @@ describe('Timeout Handling', () => {
       try {
         await withTimeout(new Promise(() => {}), 100)
       } catch (e) {
-        // Expected timeout
       }
 
-      // Cleanup
       global.setTimeout = originalSetTimeout
 
-      // Timer should have been created
       expect(timers.length).toBeGreaterThan(0)
     })
   })

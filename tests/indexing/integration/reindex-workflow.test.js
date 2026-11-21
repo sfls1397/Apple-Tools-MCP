@@ -1,15 +1,7 @@
-/**
- * Integration tests for rebuild_index tool workflow
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 import { cycleEndFlags, isSearchBlockedByIndexing } from '../../../lib/indexGate.js'
 
-/**
- * Create a lock file mock for testing lock behavior
- */
 function createLockFileMock() {
   let holder = null
 
@@ -40,9 +32,6 @@ function createLockFileMock() {
   }
 }
 
-/**
- * Create a LanceDB mock for testing database operations
- */
 function createLanceDBMock() {
   const tables = new Map()
 
@@ -76,11 +65,9 @@ describe('Rebuild Index Tool', () => {
       const lancedb = createLanceDBMock()
       const db = await lancedb.connect()
 
-      // Setup existing tables
       await db.createTable('emails', [{ filePath: 'old', vector: new Array(384).fill(0) }])
       await db.createTable('messages', [{ id: '1', vector: new Array(384).fill(0) }])
 
-      // Clear only emails
       await db.dropTable('emails')
 
       const tableNames = await db.tableNames()
@@ -91,7 +78,7 @@ describe('Rebuild Index Tool', () => {
 
     it('should rebuild all sources when none specified', async () => {
       const sources = ['emails', 'messages', 'calendar']
-      const defaultSources = sources // When no sources specified, use all
+      const defaultSources = sources
 
       expect(defaultSources).toEqual(['emails', 'messages', 'calendar'])
       expect(defaultSources).toHaveLength(3)
@@ -103,12 +90,10 @@ describe('Rebuild Index Tool', () => {
       const lancedb = createLanceDBMock()
       const db = await lancedb.connect()
 
-      // Setup all tables
       await db.createTable('emails', [{ filePath: 'test', vector: new Array(384).fill(0) }])
       await db.createTable('messages', [{ id: '1', vector: new Array(384).fill(0) }])
       await db.createTable('calendar', [{ id: 'event', vector: new Array(384).fill(0) }])
 
-      // Clear only requested sources
       for (const source of requestedSources) {
         await db.dropTable(source)
       }
@@ -123,7 +108,6 @@ describe('Rebuild Index Tool', () => {
 
   describe('full scan forcing', () => {
     it('should force full scan for email rebuild', () => {
-      // rebuildIndex calls indexEmails with forceFullScan = true
       const forceFullScan = true
 
       expect(forceFullScan).toBe(true)
@@ -133,7 +117,6 @@ describe('Rebuild Index Tool', () => {
       const meta = { lastEmailIndexTime: Date.now() - 3600000 }
       const forceFullScan = true
 
-      // When forceFullScan is true, lastEmailIndexTime should be treated as null
       const effectiveTime = forceFullScan ? null : meta.lastEmailIndexTime
 
       expect(effectiveTime).toBeNull()
@@ -150,13 +133,10 @@ describe('Rebuild Index Tool', () => {
 
     it('should prevent concurrent rebuilds', () => {
       const lockMock = createLockFileMock()
-      // First rebuild acquires lock
       lockMock.acquire(process.pid)
 
-      // Second rebuild attempt fails
       const _secondAttempt = lockMock.acquire(process.pid + 1)
 
-      // Should fail (lock held by different PID logic varies, but concept is tested)
       expect(lockMock.isLocked()).toBe(true)
     })
 
@@ -164,7 +144,6 @@ describe('Rebuild Index Tool', () => {
       const lockMock = createLockFileMock()
       lockMock.acquire(process.pid)
 
-      // Simulate rebuild completion
       await Promise.resolve()
       lockMock.release(process.pid)
 
@@ -222,11 +201,9 @@ describe('Rebuild Index Tool', () => {
       let responseReturned = false
       let _indexingStarted = false
 
-      // Simulate fire and forget
       const startRebuild = async () => {
         responseReturned = true
 
-        // Rebuild runs in background
         setTimeout(() => {
           _indexingStarted = true
         }, 10)
@@ -235,7 +212,6 @@ describe('Rebuild Index Tool', () => {
       await startRebuild()
 
       expect(responseReturned).toBe(true)
-      // Indexing may not have started yet (async)
     })
 
     it('should return "rebuild started" message immediately', () => {
@@ -255,7 +231,6 @@ describe('Rebuild Index Tool', () => {
       const lockMock = createLockFileMock()
       const results = []
 
-      // First request
       const request1 = async () => {
         if (lockMock.acquire(1)) {
           await Promise.resolve()
@@ -266,7 +241,6 @@ describe('Rebuild Index Tool', () => {
         }
       }
 
-      // Second concurrent request
       const request2 = async () => {
         if (lockMock.acquire(2)) {
           await Promise.resolve()
@@ -280,7 +254,6 @@ describe('Rebuild Index Tool', () => {
       await request1()
       await request2()
 
-      // Both should complete since they run sequentially in this test
       expect(results).toHaveLength(2)
     })
 

@@ -1,7 +1,3 @@
-/**
- * Negative tests for metadata file corruption handling
- * Tests graceful handling of malformed JSON, missing fields, and invalid values
- */
 
 import { describe, it, expect, beforeEach } from 'vitest'
 
@@ -16,7 +12,7 @@ describe('Metadata Corruption Handling', () => {
         return JSON.parse(content)
       } catch (e) {
         console.error('Failed to parse metadata:', e.message)
-        return {} // Return empty object on parse failure
+        return {}
       }
     }
 
@@ -42,7 +38,7 @@ describe('Metadata Corruption Handling', () => {
     })
 
     it('should handle invalid JSON syntax', () => {
-      const invalid = "{'key': 'value'}" // Single quotes not valid JSON
+      const invalid = "{'key': 'value'}"
       const result = parseMetadataWithFallback(invalid)
       expect(result).toEqual({})
     })
@@ -104,27 +100,22 @@ describe('Metadata Corruption Handling', () => {
 
   describe('invalid timestamp values', () => {
     const validateTimestamp = (value) => {
-      // Must be a number
       if (typeof value !== 'number') {
         return { valid: false, reason: 'not_a_number' }
       }
 
-      // Must not be NaN
       if (Number.isNaN(value)) {
         return { valid: false, reason: 'is_nan' }
       }
 
-      // Must be finite
       if (!Number.isFinite(value)) {
         return { valid: false, reason: 'not_finite' }
       }
 
-      // Must be non-negative
       if (value < 0) {
         return { valid: false, reason: 'negative' }
       }
 
-      // Must not be too far in the future (more than 1 day ahead)
       const oneDayFromNow = Date.now() + 24 * 60 * 60 * 1000
       if (value > oneDayFromNow) {
         return { valid: false, reason: 'future_timestamp' }
@@ -158,7 +149,7 @@ describe('Metadata Corruption Handling', () => {
     })
 
     it('should reject far future timestamp', () => {
-      const farFuture = Date.now() + 7 * 24 * 60 * 60 * 1000 // 1 week from now
+      const farFuture = Date.now() + 7 * 24 * 60 * 60 * 1000
       const result = validateTimestamp(farFuture)
       expect(result.valid).toBe(false)
       expect(result.reason).toBe('future_timestamp')
@@ -170,7 +161,7 @@ describe('Metadata Corruption Handling', () => {
     })
 
     it('should accept valid past timestamp', () => {
-      const pastTimestamp = Date.now() - 30 * 24 * 60 * 60 * 1000 // 30 days ago
+      const pastTimestamp = Date.now() - 30 * 24 * 60 * 60 * 1000
       const result = validateTimestamp(pastTimestamp)
       expect(result.valid).toBe(true)
     })
@@ -192,7 +183,6 @@ describe('Metadata Corruption Handling', () => {
 
         const parsed = JSON.parse(content)
 
-        // Validate critical fields
         if (parsed.lastMessageIndexTime !== undefined) {
           if (typeof parsed.lastMessageIndexTime !== 'number' ||
               Number.isNaN(parsed.lastMessageIndexTime)) {
@@ -216,13 +206,8 @@ describe('Metadata Corruption Handling', () => {
     it('should reset metadata when timestamp is NaN', () => {
       const result = loadMetadataWithReset(() => '{"lastMessageIndexTime": "not a number"}')
 
-      // JSON.parse succeeds but validation fails
-      // Actually "not a number" is a string, not NaN after parse
-      // Let me use a value that becomes NaN
       const resultNaN = loadMetadataWithReset(() => JSON.stringify({ lastMessageIndexTime: NaN }))
-      // JSON.stringify(NaN) produces "null", so let's test differently
 
-      // Test with object that has invalid timestamp type
       const resultString = loadMetadataWithReset(() => '{"lastMessageIndexTime": "invalid"}')
       expect(resultString.wasReset).toBe(true)
       expect(resultString.reason).toBe('invalid_timestamp')
@@ -249,14 +234,12 @@ describe('Metadata Corruption Handling', () => {
     it('should handle read-modify-write race condition', async () => {
       let fileContent = JSON.stringify({ counter: 0 })
 
-      // Simulate file system operations
       const readFile = () => fileContent
       const writeFile = (content) => { fileContent = content }
 
-      // Two concurrent updates
       const update1 = async () => {
         const meta = JSON.parse(readFile())
-        await new Promise(r => setTimeout(r, 10)) // Simulate delay
+        await new Promise(r => setTimeout(r, 10))
         meta.counter += 1
         writeFile(JSON.stringify(meta))
         return meta.counter
@@ -264,18 +247,15 @@ describe('Metadata Corruption Handling', () => {
 
       const update2 = async () => {
         const meta = JSON.parse(readFile())
-        await new Promise(r => setTimeout(r, 5)) // Shorter delay
+        await new Promise(r => setTimeout(r, 5))
         meta.counter += 1
         writeFile(JSON.stringify(meta))
         return meta.counter
       }
 
-      // Run concurrently - demonstrates race condition
       await Promise.all([update1(), update2()])
 
-      // Final counter might be 1 instead of 2 due to race
       const finalMeta = JSON.parse(fileContent)
-      // This test documents the race condition behavior
       expect(finalMeta.counter).toBeGreaterThanOrEqual(1)
     })
 
@@ -306,14 +286,13 @@ describe('Metadata Corruption Handling', () => {
         }
       }
 
-      // Two concurrent updates with locking
       await Promise.all([
         atomicUpdate(meta => ({ ...meta, counter: meta.counter + 1 })),
         atomicUpdate(meta => ({ ...meta, counter: meta.counter + 1 }))
       ])
 
       const finalMeta = JSON.parse(fileContent)
-      expect(finalMeta.counter).toBe(2) // Both updates applied correctly
+      expect(finalMeta.counter).toBe(2)
     })
   })
 
@@ -321,13 +300,11 @@ describe('Metadata Corruption Handling', () => {
     const migrateMetadata = (meta) => {
       const migrated = { ...meta }
 
-      // v1 to v2: rename indexTime to lastIndexTime
       if ('indexTime' in migrated && !('lastIndexTime' in migrated)) {
         migrated.lastIndexTime = migrated.indexTime
         delete migrated.indexTime
       }
 
-      // v2 to v3: split lastIndexTime into source-specific timestamps
       if ('lastIndexTime' in migrated && !('lastMessageIndexTime' in migrated)) {
         migrated.lastMessageIndexTime = migrated.lastIndexTime
         migrated.lastEmailIndexTime = migrated.lastIndexTime
@@ -335,7 +312,6 @@ describe('Metadata Corruption Handling', () => {
         delete migrated.lastIndexTime
       }
 
-      // Set version
       migrated.version = 3
 
       return migrated

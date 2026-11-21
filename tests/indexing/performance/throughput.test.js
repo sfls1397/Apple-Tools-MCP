@@ -1,19 +1,9 @@
-/**
- * Performance tests for indexing throughput
- * Tests items/second for batch processing operations
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Standard indexer constants
 const BATCH_SIZE = 32
 const EMBEDDING_DIM = 384
 
-/**
- * Generate test emails
- */
 function generateTestEmails(count) {
   return Array.from({ length: count }, (_, i) => ({
     path: `/test/${i + 1}.emlx`,
@@ -21,9 +11,6 @@ function generateTestEmails(count) {
   }))
 }
 
-/**
- * Generate test messages
- */
 function generateTestMessages(count) {
   return Array.from({ length: count }, (_, i) => ({
     id: i + 1,
@@ -32,9 +19,6 @@ function generateTestMessages(count) {
   }))
 }
 
-/**
- * Generate calendar events
- */
 function generateCalendarEvents(count) {
   const now = Date.now()
   return Array.from({ length: count }, (_, i) => ({
@@ -45,18 +29,12 @@ function generateCalendarEvents(count) {
   }))
 }
 
-/**
- * Generate search texts
- */
 function generateSearchTexts(count) {
   return Array.from({ length: count }, (_, i) =>
     `Search text ${i + 1} with content`
   )
 }
 
-/**
- * Measure execution time
- */
 async function measureTime(fn) {
   const start = performance.now()
   await fn()
@@ -64,16 +42,10 @@ async function measureTime(fn) {
   return { duration }
 }
 
-/**
- * Calculate throughput
- */
 function calculateThroughput(items, durationMs) {
-  return (items / durationMs) * 1000 // items per second
+  return (items / durationMs) * 1000
 }
 
-/**
- * Track throughput across batches
- */
 class ThroughputTracker {
   constructor() {
     this.startTime = 0
@@ -116,23 +88,21 @@ describe('Indexing Throughput', () => {
       const emails = generateTestEmails(count)
 
       const { duration } = await measureTime(async () => {
-        // Simulate email processing: parse + batch
         const searchTexts = emails.map(e => e.content.substring(0, 500))
 
         for (let i = 0; i < searchTexts.length; i += BATCH_SIZE) {
           const batch = searchTexts.slice(i, i + BATCH_SIZE)
-          await Promise.resolve(batch) // Simulate async work
+          await Promise.resolve(batch)
         }
       })
 
       const throughput = calculateThroughput(count, duration)
 
-      // Pure logic should achieve high throughput
       expect(throughput).toBeGreaterThan(50)
     })
 
     it('should maintain throughput with larger batches', async () => {
-      const count = 320 // 10 batches of 32
+      const count = 320
 
       const { duration } = await measureTime(async () => {
         const texts = generateSearchTexts(count)
@@ -203,28 +173,24 @@ describe('Indexing Throughput', () => {
       const events = generateCalendarEvents(calendarCount)
 
       const { duration } = await measureTime(async () => {
-        // Simulate indexAll: process all three sources
 
-        // Emails
         const emailTexts = emails.map(e => e.content.substring(0, 500))
         for (let i = 0; i < emailTexts.length; i += BATCH_SIZE) {
           await Promise.resolve(emailTexts.slice(i, i + BATCH_SIZE))
         }
 
-        // Messages
         const msgTexts = messages.map(m => m.text.substring(0, 500))
         for (let i = 0; i < msgTexts.length; i += BATCH_SIZE) {
           await Promise.resolve(msgTexts.slice(i, i + BATCH_SIZE))
         }
 
-        // Calendar
         const eventTexts = events.map(e => e.title)
         for (let i = 0; i < eventTexts.length; i += BATCH_SIZE) {
           await Promise.resolve(eventTexts.slice(i, i + BATCH_SIZE))
         }
       })
 
-      expect(duration).toBeLessThan(10000) // < 10 seconds
+      expect(duration).toBeLessThan(10000)
     })
   })
 })
@@ -268,12 +234,9 @@ describe('Throughput Tracker', () => {
 })
 
 describe('Throughput under load', () => {
-  // Skip: This test measures Promise.resolve() timing which is sub-microsecond
-  // and dominated by measurement noise rather than actual throughput consistency
   it.skip('should maintain consistent throughput over multiple batches', async () => {
     const batchThroughputs = []
 
-    // Warmup batch - not measured (eliminates V8 JIT cold-start overhead)
     const warmupTexts = generateSearchTexts(BATCH_SIZE)
     await Promise.resolve(warmupTexts)
 
@@ -289,7 +252,6 @@ describe('Throughput under load', () => {
     const avgThroughput = batchThroughputs.reduce((a, b) => a + b, 0) / batchThroughputs.length
     const minThroughput = Math.min(...batchThroughputs)
 
-    // Min should be at least 30% of average (accommodates timing jitter in fast operations)
     expect(minThroughput).toBeGreaterThan(avgThroughput * 0.3)
   })
 })

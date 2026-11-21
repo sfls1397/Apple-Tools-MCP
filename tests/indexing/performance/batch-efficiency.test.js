@@ -1,29 +1,16 @@
-/**
- * Performance tests for batch processing efficiency
- * Tests batching speedup and optimal batch size
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// Standard indexer constants
 const BATCH_SIZE = 32
 const BATCH_DELAY_MS = 100
 const EMBEDDING_DIM = 384
 
-/**
- * Generate search texts
- */
 function generateSearchTexts(count) {
   return Array.from({ length: count }, (_, i) =>
     `Search text ${i + 1} with content for batch processing`
   )
 }
 
-/**
- * Measure execution time
- */
 async function measureTime(fn) {
   const start = performance.now()
   await fn()
@@ -31,11 +18,8 @@ async function measureTime(fn) {
   return { duration }
 }
 
-/**
- * Calculate throughput
- */
 function calculateThroughput(items, durationMs) {
-  return (items / durationMs) * 1000 // items per second
+  return (items / durationMs) * 1000
 }
 
 describe('Batch Processing Efficiency', () => {
@@ -44,14 +28,12 @@ describe('Batch Processing Efficiency', () => {
       const count = 64
       const texts = generateSearchTexts(count)
 
-      // Sequential (one at a time)
       const { duration: seqDuration } = await measureTime(async () => {
         for (const text of texts) {
           await Promise.resolve([text])
         }
       })
 
-      // Batched (BATCH_SIZE at a time)
       const { duration: batchDuration } = await measureTime(async () => {
         for (let i = 0; i < texts.length; i += BATCH_SIZE) {
           const batch = texts.slice(i, i + BATCH_SIZE)
@@ -61,12 +43,11 @@ describe('Batch Processing Efficiency', () => {
 
       const speedup = seqDuration / batchDuration
 
-      // Batching should be faster or at least not slower
       expect(speedup).toBeGreaterThanOrEqual(0.5)
     })
 
     it('should reduce number of processing calls', async () => {
-      const count = 96 // 3 batches
+      const count = 96
       const texts = generateSearchTexts(count)
       let callCount = 0
 
@@ -75,8 +56,6 @@ describe('Batch Processing Efficiency', () => {
         return { data: new Float32Array(batch.length * EMBEDDING_DIM).fill(0.1) }
       }
 
-      // Sequential would be 96 calls
-      // Batched should be 3 calls
 
       for (let i = 0; i < texts.length; i += BATCH_SIZE) {
         const batch = texts.slice(i, i + BATCH_SIZE)
@@ -104,7 +83,6 @@ describe('Batch Processing Efficiency', () => {
         results.push({ size, duration, throughput })
       }
 
-      // All batch sizes should achieve reasonable throughput
       for (const result of results) {
         expect(result.throughput).toBeGreaterThan(0)
       }
@@ -127,7 +105,6 @@ describe('Batch Processing Efficiency', () => {
     it('should apply delay between batches', async () => {
       const batchTimes = []
 
-      // Simulate batch processing with delays using fake timers
       const processBatches = async (texts) => {
         for (let i = 0; i < texts.length; i += BATCH_SIZE) {
           const batch = texts.slice(i, i + BATCH_SIZE)
@@ -136,24 +113,20 @@ describe('Batch Processing Efficiency', () => {
           await Promise.resolve(batch)
           batchTimes.push({ index: batchIndex, time: Date.now() })
 
-          // Between batches (not after last)
           if (i + BATCH_SIZE < texts.length) {
-            // Schedule the delay
             const delayPromise = new Promise(r => setTimeout(r, BATCH_DELAY_MS))
-            // Advance fake timers to resolve the delay
             vi.advanceTimersByTime(BATCH_DELAY_MS)
             await delayPromise
           }
         }
       }
 
-      const texts = generateSearchTexts(64) // 2 batches
+      const texts = generateSearchTexts(64)
 
       await processBatches(texts)
 
-      // Verify BATCH_DELAY_MS value and that multiple batches were processed
       expect(BATCH_DELAY_MS).toBe(100)
-      expect(batchTimes.length).toBe(2) // 64 items / 32 batch size = 2 batches
+      expect(batchTimes.length).toBe(2)
     })
 
     it('should not delay after last batch', async () => {
@@ -163,7 +136,6 @@ describe('Batch Processing Efficiency', () => {
 
       await Promise.resolve(texts)
 
-      // No more batches, no delay needed
       expect(delayApplied).toBe(false)
     })
   })
@@ -184,7 +156,7 @@ describe('Batch Processing Efficiency', () => {
     })
 
     it('should handle non-divisible batch sizes', async () => {
-      const count = 100 // Not divisible by 32
+      const count = 100
       const texts = generateSearchTexts(count)
       const batches = []
 
@@ -192,9 +164,9 @@ describe('Batch Processing Efficiency', () => {
         batches.push(texts.slice(i, i + BATCH_SIZE))
       }
 
-      expect(batches.length).toBe(4) // 32 + 32 + 32 + 4
+      expect(batches.length).toBe(4)
       expect(batches[0].length).toBe(32)
-      expect(batches[3].length).toBe(4) // Remainder
+      expect(batches[3].length).toBe(4)
     })
   })
 
@@ -209,10 +181,8 @@ describe('Batch Processing Efficiency', () => {
         maxBatchSize = Math.max(maxBatchSize, batch.length)
 
         await Promise.resolve(batch)
-        // Batch can now be GC'd
       }
 
-      // Should never hold more than BATCH_SIZE items
       expect(maxBatchSize).toBeLessThanOrEqual(BATCH_SIZE)
     })
   })

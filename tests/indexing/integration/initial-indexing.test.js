@@ -1,14 +1,6 @@
-/**
- * Integration tests for initial indexing (first run) workflow
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-/**
- * Create a LanceDB mock for testing database operations
- */
 function createLanceDBMock() {
   const tables = new Map()
 
@@ -41,11 +33,9 @@ describe('Initial Indexing (First Run)', () => {
     it('should detect first run when no index exists', async () => {
       const lancedb = createLanceDBMock()
 
-      // No tables exist
       const tableNames = await lancedb.connect().then(db => db.tableNames())
       expect(tableNames).toHaveLength(0)
 
-      // checkIfFirstRun should return true
       const emailsReady = false
       const messagesReady = false
       const calendarReady = false
@@ -57,7 +47,6 @@ describe('Initial Indexing (First Run)', () => {
     it('should set isFirstEverRun flag correctly', () => {
       let isFirstEverRun = true
 
-      // Simulate checkIfFirstRun result
       const noIndexExists = true
       isFirstEverRun = noIndexExists
 
@@ -67,7 +56,6 @@ describe('Initial Indexing (First Run)', () => {
 
   describe('full scan behavior', () => {
     it('should perform full scan (not incremental) on first run', () => {
-      // When lastEmailIndexTime is null, should use full find command
       const meta = {}
       const lastEmailIndexTime = meta.lastEmailIndexTime || null
 
@@ -77,7 +65,6 @@ describe('Initial Indexing (First Run)', () => {
     })
 
     it('should use find command instead of mdfind', () => {
-      // Full scan uses 'find' command
       const fullScanCmd = 'find "/Users/test/Library/Mail" \\( -name "*.emlx" -o -name "*.partial.emlx" \\)'
 
       expect(fullScanCmd).toContain('find')
@@ -91,7 +78,6 @@ describe('Initial Indexing (First Run)', () => {
       const lancedb = createLanceDBMock()
       const db = await lancedb.connect()
 
-      // Create tables
       await db.createTable('emails', [{ filePath: 'test', vector: new Array(384).fill(0) }])
       await db.createTable('messages', [{ id: '1', vector: new Array(384).fill(0) }])
       await db.createTable('calendar', [{ id: 'event-1', vector: new Array(384).fill(0) }])
@@ -108,7 +94,6 @@ describe('Initial Indexing (First Run)', () => {
       const lancedb = createLanceDBMock()
       const db = await lancedb.connect()
 
-      // First createTable call with mode: overwrite
       const records = [{ filePath: 'test.emlx', vector: new Array(384).fill(0.1) }]
       await db.createTable('emails', records, { mode: 'overwrite' })
 
@@ -139,7 +124,6 @@ describe('Initial Indexing (First Run)', () => {
 
   describe('metadata creation', () => {
     it('should create index-meta.json after completion', () => {
-      // Simulate saveIndexMeta
       const meta = { lastEmailIndexTime: Date.now() }
       const serialized = JSON.stringify(meta, null, 2)
 
@@ -186,7 +170,6 @@ describe('Initial Indexing (First Run)', () => {
       const lancedb = createLanceDBMock()
       const db = await lancedb.connect()
 
-      // Create table
       await db.createTable('emails', [{ filePath: 'test', vector: new Array(384).fill(0) }])
 
       const tableNames = await db.tableNames()
