@@ -1,11 +1,3 @@
-/**
- * Real Data Accuracy Tests
- *
- * Validates that indexed data accurately reflects source data:
- * - Field mapping correctness
- * - Data transformation accuracy
- * - Embedding quality
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'fs'
@@ -27,7 +19,6 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
   'Real Data Accuracy',
   () => {
     beforeAll(async () => {
-      // Production index must already exist - tests only validate, don't build
       const ready = await isProductionIndexReady()
       if (!ready) {
         throw new Error(
@@ -46,7 +37,6 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
           expect(email.filePath).toMatch(/\.emlx$/)
           expect(email.filePath).toContain(MAIL_DIR)
 
-          // Verify file exists (sample a few)
           if (results.indexOf(email) < 3) {
             expect(fs.existsSync(email.filePath)).toBe(true)
           }
@@ -57,7 +47,6 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
         const results = await searchProductionIndex('from', 'emails', 10)
 
         for (const email of results) {
-          // from should be a string (may contain name + email or just email)
           expect(typeof email.from).toBe('string')
         }
       }, 30000)
@@ -79,7 +68,6 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
           expect(typeof email.dateTimestamp).toBe('number')
           expect(email.dateTimestamp).toBeGreaterThan(0)
 
-          // Should be reasonable (after year 2000, before year 2100)
           const year2000 = new Date('2000-01-01').getTime()
           const year2100 = new Date('2100-01-01').getTime()
           expect(email.dateTimestamp).toBeGreaterThan(year2000)
@@ -142,7 +130,6 @@ describe.skipIf(!sources.mail && !sources.messages && !sources.calendar || !sour
 
         for (const msg of results) {
           expect(msg.sender).toBeTruthy()
-          // Sender is either "Me" or a phone/email identifier
           expect(typeof msg.sender).toBe('string')
         }
       }, 30000)
@@ -217,11 +204,9 @@ describe.skipIf(!sources.embedder)('Embedding Accuracy', () => {
     const vec1 = await embed(text)
     const vec2 = await embed(text)
 
-    // Same text should produce identical vectors
     expect(vec1).toHaveLength(384)
     expect(vec2).toHaveLength(384)
 
-    // Compare first few elements (floating point comparison)
     for (let i = 0; i < 10; i++) {
       expect(Math.abs(vec1[i] - vec2[i])).toBeLessThan(1e-6)
     }
@@ -231,30 +216,25 @@ describe.skipIf(!sources.embedder)('Embedding Accuracy', () => {
     const text = 'Test email about project updates'
     const vector = await embed(text)
 
-    // Calculate magnitude
     let magnitude = 0
     for (const v of vector) {
       magnitude += v * v
     }
     magnitude = Math.sqrt(magnitude)
 
-    // Normalized vectors should have magnitude ~1
     expect(magnitude).toBeCloseTo(1, 3)
   }, 30000)
 
   it('should capture semantic similarity', async () => {
-    // Similar texts
     const text1 = 'Schedule a team meeting for next Tuesday'
     const text2 = 'Set up a group meeting for Tuesday next week'
 
-    // Unrelated text
     const text3 = 'Recipe for chocolate cake with frosting'
 
     const vec1 = await embed(text1)
     const vec2 = await embed(text2)
     const vec3 = await embed(text3)
 
-    // Calculate cosine similarities
     const cosineSim = (a, b) => {
       let dot = 0, norm1 = 0, norm2 = 0
       for (let i = 0; i < a.length; i++) {
@@ -268,7 +248,6 @@ describe.skipIf(!sources.embedder)('Embedding Accuracy', () => {
     const simSimilar = cosineSim(vec1, vec2)
     const simUnrelated = cosineSim(vec1, vec3)
 
-    // Similar texts should have higher similarity
     expect(simSimilar).toBeGreaterThan(simUnrelated)
     expect(simSimilar).toBeGreaterThan(0.7)
     expect(simUnrelated).toBeLessThan(0.5)
@@ -277,19 +256,17 @@ describe.skipIf(!sources.embedder)('Embedding Accuracy', () => {
 
 describe.skipIf(!sources.messages)('Message Database Accuracy', () => {
   it('should match message count with database', async () => {
-    // Get count from production index
     const lancedb = await import('@lancedb/lancedb')
     const db = await lancedb.connect(PRODUCTION_INDEX_DIR)
     const tables = await db.tableNames()
 
     if (!tables.includes('messages')) {
-      return // Skip if not indexed
+      return
     }
 
     const table = await db.openTable('messages')
     const indexedCount = await table.countRows()
 
-    // Get count from database (with text)
     try {
       const dbCount = execSync(
         `sqlite3 "${MESSAGES_DB}" "SELECT COUNT(*) FROM message WHERE text IS NOT NULL AND text != ''"`,
@@ -297,8 +274,6 @@ describe.skipIf(!sources.messages)('Message Database Accuracy', () => {
       )
       const actualCount = parseInt(dbCount.trim())
 
-      // Indexed count should be reasonable compared to actual
-      // (may differ due to filtering, limits, etc.)
       expect(indexedCount).toBeGreaterThan(0)
       console.log(`Messages: ${indexedCount} indexed / ${actualCount} in database`)
     } catch (e) {
@@ -315,17 +290,13 @@ describe.skipIf(!sources.mail)('Email Source Accuracy', () => {
 
     const email = results[0]
 
-    // Read source file
     if (fs.existsSync(email.filePath)) {
       const content = fs.readFileSync(email.filePath, 'utf-8')
 
-      // Subject from index should appear in source file
       if (email.subject) {
-        // Subject might be encoded, so just check it's reasonable
         expect(typeof email.subject).toBe('string')
       }
 
-      // From should appear in source
       if (email.from) {
         expect(typeof email.from).toBe('string')
       }

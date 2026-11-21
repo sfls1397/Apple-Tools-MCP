@@ -1,7 +1,3 @@
-/**
- * Tests for search result caching
- * Tests query result caching, cache invalidation on updates, and cache warming
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
@@ -29,7 +25,6 @@ describe('Result Cache', () => {
         set: (query, options, results) => {
           const key = generateKey(query, options)
           if (cache.size >= maxSize) {
-            // Remove oldest entry
             const oldestKey = cache.keys().next().value
             cache.delete(oldestKey)
           }
@@ -67,7 +62,6 @@ describe('Result Cache', () => {
 
       cache.set('  TEST Query  ', {}, mockResults)
 
-      // Should match with different casing/whitespace
       expect(cache.get('test query', {})).toEqual(mockResults)
       expect(cache.get('TEST QUERY', {})).toEqual(mockResults)
     })
@@ -83,7 +77,7 @@ describe('Result Cache', () => {
     })
 
     it('should expire entries after TTL', async () => {
-      const cache = createResultCache(100, 50) // 50ms TTL
+      const cache = createResultCache(100, 50)
 
       cache.set('query', {}, [{ id: '1' }])
       expect(cache.get('query', {})).not.toBeNull()
@@ -132,14 +126,13 @@ describe('Result Cache', () => {
   describe('cache invalidation on data changes', () => {
     const createCacheWithInvalidation = () => {
       const cache = new Map()
-      const sourceToQueries = new Map() // Track which queries touched which sources
+      const sourceToQueries = new Map()
 
       return {
         get: (query) => cache.get(query)?.results || null,
 
         set: (query, results, sources) => {
           cache.set(query, { results, sources })
-          // Track source -> query mapping
           for (const source of sources) {
             if (!sourceToQueries.has(source)) {
               sourceToQueries.set(source, new Set())
@@ -167,11 +160,10 @@ describe('Result Cache', () => {
       cache.set('message query', [{ id: '2' }], ['messages'])
       cache.set('cross query', [{ id: '3' }], ['emails', 'messages'])
 
-      // Invalidate emails source
       cache.invalidateSource('emails')
 
       expect(cache.get('email query')).toBeNull()
-      expect(cache.get('cross query')).toBeNull() // Also invalidated
+      expect(cache.get('cross query')).toBeNull()
       expect(cache.get('message query')).not.toBeNull()
     })
 
@@ -180,7 +172,6 @@ describe('Result Cache', () => {
 
       cache.set('smart search', [{ id: '1' }], ['emails', 'messages', 'calendar'])
 
-      // Invalidating any source should clear the query
       cache.invalidateSource('calendar')
       expect(cache.get('smart search')).toBeNull()
     })
@@ -301,15 +292,15 @@ describe('Result Cache', () => {
     })
 
     it('should mark data as stale after stale TTL', async () => {
-      const cache = createSWRCache(50, 200) // Stale at 50ms, expires at 200ms
+      const cache = createSWRCache(50, 200)
 
       cache.set('key', { value: 1 })
 
       await new Promise(resolve => setTimeout(resolve, 60))
 
       const result = cache.get('key')
-      expect(result.data).toEqual({ value: 1 }) // Data still returned
-      expect(result.stale).toBe(true) // But marked stale
+      expect(result.data).toEqual({ value: 1 })
+      expect(result.stale).toBe(true)
       expect(result.expired).toBe(false)
     })
 
@@ -364,7 +355,6 @@ describe('Result Cache', () => {
           .map(([query]) => query)
       }
 
-      // Simulate query history
       recordQuery('inbox')
       recordQuery('inbox')
       recordQuery('inbox')
@@ -379,16 +369,12 @@ describe('Result Cache', () => {
 
   describe('conditional caching', () => {
     const shouldCache = (query, results, options) => {
-      // Don't cache empty results
       if (!results || results.length === 0) return false
 
-      // Don't cache very short queries
       if (query.length < 3) return false
 
-      // Don't cache if explicitly disabled
       if (options.noCache) return false
 
-      // Don't cache time-sensitive queries
       if (query.includes('today') || query.includes('now')) return false
 
       return true
@@ -416,7 +402,6 @@ describe('Result Cache', () => {
   })
 
   describe('cache compression', () => {
-    // Simulated compression using JSON with reduced structure
     const compressResults = (results) => {
       return results.map(r => ({
         i: r.id,
@@ -501,9 +486,9 @@ describe('Result Cache', () => {
 
       cache.set('key1', 'value1')
       cache.set('key2', 'value2')
-      cache.get('key1') // Hit
-      cache.get('key1') // Hit
-      cache.get('key3') // Miss
+      cache.get('key1')
+      cache.get('key1')
+      cache.get('key3')
 
       const metrics = cache.getMetrics()
 
@@ -517,11 +502,11 @@ describe('Result Cache', () => {
       const cache = createMetricsCache()
 
       for (let i = 0; i < 5; i++) {
-        cache.set(`key${i}`, `value${i}`, 3) // Max size 3
+        cache.set(`key${i}`, `value${i}`, 3)
       }
 
       const metrics = cache.getMetrics()
-      expect(metrics.evictions).toBe(2) // 5 items, max 3 = 2 evictions
+      expect(metrics.evictions).toBe(2)
     })
   })
 
@@ -531,14 +516,12 @@ describe('Result Cache', () => {
 
       return {
         get: (key) => {
-          // Check local first
           if (localCache.has(key)) {
             return { source: 'local', data: localCache.get(key) }
           }
-          // Fall back to shared
           if (sharedStorage.has(key)) {
             const data = sharedStorage.get(key)
-            localCache.set(key, data) // Promote to local
+            localCache.set(key, data)
             return { source: 'shared', data }
           }
           return { source: 'miss', data: null }
@@ -583,11 +566,10 @@ describe('Result Cache', () => {
       const cache = createLocalCache(shared)
       expect(cache.localSize()).toBe(0)
 
-      cache.get('key1') // Should promote
+      cache.get('key1')
 
       expect(cache.localSize()).toBe(1)
 
-      // Second access should be local
       const result = cache.get('key1')
       expect(result.source).toBe('local')
     })

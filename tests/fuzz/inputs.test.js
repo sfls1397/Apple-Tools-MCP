@@ -1,12 +1,3 @@
-/**
- * Fuzz Testing - Random Input Generation
- *
- * Tests system behavior with:
- * - Random strings
- * - Boundary values
- * - Unicode/emoji
- * - Malformed data
- */
 
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
@@ -19,10 +10,8 @@ describe('Fuzz: Query Validation', () => {
       fc.property(fc.string(), (input) => {
         try {
           const result = validateSearchQuery(input)
-          // Should either return a string or throw
           return typeof result === 'string' || result === undefined
         } catch (e) {
-          // Throwing is acceptable for invalid input
           return e instanceof Error
         }
       }),
@@ -71,7 +60,6 @@ describe('Fuzz: Query Validation', () => {
     fc.assert(
       fc.property(fc.string({ minLength: 1000, maxLength: 5000 }), (input) => {
         const result = validateSearchQuery(input)
-        // Should truncate to max length (1000)
         return result.length <= 1000
       }),
       { numRuns: 50 }
@@ -106,7 +94,6 @@ describe('Fuzz: Numeric Parameter Validation', () => {
     fc.assert(
       fc.property(fc.integer(), (input) => {
         const result = validateLimit(input)
-        // Should always return a valid number between 1 and max
         return typeof result === 'number' && result >= 1 && result <= 1000
       }),
       { numRuns: 500 }
@@ -181,10 +168,8 @@ describe('Fuzz: Path Validation', () => {
       fc.property(fc.string(), (input) => {
         try {
           validateEmailPath(input, mailDir)
-          // If it doesn't throw, it should return a valid path
           return true
         } catch (e) {
-          // Throwing is expected for invalid paths
           return e instanceof Error
         }
       }),
@@ -200,8 +185,6 @@ describe('Fuzz: SQL Escaping', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
         const result = escapeSQL(input)
-        // Result should not contain unescaped single quotes
-        // (all single quotes should be doubled)
         const singleQuotes = (input.match(/'/g) || []).length
         const escapedQuotes = (result.match(/''/g) || []).length
         return escapedQuotes >= singleQuotes
@@ -227,7 +210,6 @@ describe('Fuzz: SQL Escaping', () => {
 
     for (const injection of injections) {
       const result = escapeSQL(injection)
-      // Should not contain unescaped dangerous patterns
       expect(result).not.toMatch(/^'.*[^']'[^']/)
     }
   })
@@ -240,7 +222,6 @@ describe('Fuzz: HTML Stripping', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
         const result = stripHtmlTags(input)
-        // Result should not contain < followed by letters (tags)
         return !/<[a-zA-Z]/.test(result)
       }),
       { numRuns: 500 }
@@ -266,7 +247,6 @@ describe('Fuzz: HTML Stripping', () => {
     for (const html of malformedHtml) {
       const result = stripHtmlTags(html)
       expect(typeof result).toBe('string')
-      // Should not contain script tags
       expect(result.toLowerCase()).not.toContain('<script')
     }
   })
@@ -274,7 +254,6 @@ describe('Fuzz: HTML Stripping', () => {
   it('should not hang on pathological inputs (ReDoS protection)', async () => {
     const { stripHtmlTags } = await import('../../lib/validators.js')
 
-    // These patterns could cause ReDoS in naive implementations
     const pathological = [
       '<' + 'a'.repeat(10000) + '>',
       '<div ' + 'x='.repeat(1000) + '>',
@@ -287,7 +266,6 @@ describe('Fuzz: HTML Stripping', () => {
       stripHtmlTags(input)
       const duration = performance.now() - start
 
-      // Should complete in under 100ms even for large inputs
       expect(duration).toBeLessThan(100)
     }
   })
@@ -298,25 +276,23 @@ describe('Fuzz: Date Parsing', () => {
     const { parseNaturalDate } = await import('../../search.js')
 
     const dateStrings = [
-      '2024-13-45', // invalid
-      '99/99/9999', // invalid
+      '2024-13-45',
+      '99/99/9999',
       'yesterday',
       'not a date',
       '2024-01-15T10:30:00Z',
       '15/01/2024',
-      'January 50, 2024', // invalid day
-      'Feb 30, 2024', // invalid day
-      '2024-02-29', // leap year
-      '2023-02-29' // not leap year - invalid
+      'January 50, 2024',
+      'Feb 30, 2024',
+      '2024-02-29',
+      '2023-02-29'
     ]
 
     for (const input of dateStrings) {
       try {
         const result = parseNaturalDate(input)
-        // Should return a number (timestamp) or null
         expect(result === null || typeof result === 'number').toBe(true)
       } catch (e) {
-        // Throwing is also acceptable
         expect(e).toBeInstanceOf(Error)
       }
     }

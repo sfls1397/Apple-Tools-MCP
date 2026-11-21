@@ -1,23 +1,12 @@
-/**
- * Accuracy tests for embedding consistency
- * Tests vector reproducibility and similarity properties
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Standard indexer constant
 const EMBEDDING_DIM = 384
 
-/**
- * Create a deterministic embedder for testing
- */
 function createTestEmbedder() {
   return async (texts, _options = {}) => {
     const data = new Float32Array(texts.length * EMBEDDING_DIM)
     for (let i = 0; i < texts.length; i++) {
-      // Generate deterministic vector from text
       let hash = 0
       for (let j = 0; j < texts[i].length; j++) {
         hash = ((hash << 5) - hash) + texts[i].charCodeAt(j)
@@ -31,9 +20,6 @@ function createTestEmbedder() {
   }
 }
 
-/**
- * Calculate cosine similarity between two vectors
- */
 function cosineSimilarity(vec1, vec2) {
   if (vec1.length !== vec2.length) {
     throw new Error(`Vector dimension mismatch: ${vec1.length} vs ${vec2.length}`)
@@ -55,9 +41,6 @@ function cosineSimilarity(vec1, vec2) {
   return dotProduct / magnitude
 }
 
-/**
- * Generate similar text pairs for embedding tests
- */
 function generateSimilarTextPairs(count) {
   const pairs = []
   const templates = [
@@ -80,9 +63,6 @@ function generateSimilarTextPairs(count) {
   return pairs
 }
 
-/**
- * Generate dissimilar text pairs for embedding tests
- */
 function generateDissimilarTextPairs(count) {
   const pairs = []
   const templates = [
@@ -143,7 +123,6 @@ describe('Embedding Consistency', () => {
         results.push(Array.from(result.data.slice(0, EMBEDDING_DIM)))
       }
 
-      // All results should be identical
       for (let i = 1; i < results.length; i++) {
         expect(results[i]).toEqual(results[0])
       }
@@ -162,10 +141,6 @@ describe('Embedding Consistency', () => {
 
       const similarity = cosineSimilarity(vec1, vec2)
 
-      // Similar texts should have similarity > 0.7
-      // Note: Mock returns deterministic vectors based on text hash,
-      // so similar texts may not show semantic similarity
-      // This test validates the concept
       expect(similarity).toBeGreaterThan(0)
       expect(similarity).toBeLessThanOrEqual(1)
     })
@@ -179,7 +154,6 @@ describe('Embedding Consistency', () => {
       const vec1 = Array.from(result.data.slice(0, EMBEDDING_DIM))
       const vec2 = Array.from(result.data.slice(EMBEDDING_DIM, EMBEDDING_DIM * 2))
 
-      // Both should produce valid vectors
       expect(vec1.length).toBe(EMBEDDING_DIM)
       expect(vec2.length).toBe(EMBEDDING_DIM)
     })
@@ -197,7 +171,6 @@ describe('Embedding Consistency', () => {
 
       const similarity = cosineSimilarity(vec1, vec2)
 
-      // Different texts should not have perfect similarity
       expect(similarity).toBeLessThan(1.0)
     })
 
@@ -210,12 +183,9 @@ describe('Embedding Consistency', () => {
         const vec1 = Array.from(result.data.slice(0, EMBEDDING_DIM))
         const vec2 = Array.from(result.data.slice(EMBEDDING_DIM, EMBEDDING_DIM * 2))
 
-        // Vectors should be different (not identical)
         const isIdentical = vec1.every((v, i) => v === vec2[i])
 
-        // If texts are different, vectors should be different
         if (pair.text1 !== pair.text2) {
-          // At least some elements should differ
           const hasDifferences = vec1.some((v, i) => Math.abs(v - vec2[i]) > 0.0001)
           expect(hasDifferences).toBe(true)
         }
@@ -228,7 +198,7 @@ describe('Embedding Consistency', () => {
       const texts = [
         'short',
         'a medium length text about various topics',
-        'a'.repeat(1000) // Long text
+        'a'.repeat(1000)
       ]
 
       for (const text of texts) {
@@ -269,21 +239,18 @@ describe('Embedding Consistency', () => {
     it('should produce same vectors whether batched or individual', async () => {
       const texts = ['text one', 'text two', 'text three']
 
-      // Batch embedding
       const batchResult = await testEmbedder(texts, { pooling: 'mean', normalize: true })
       const batchVectors = []
       for (let i = 0; i < texts.length; i++) {
         batchVectors.push(Array.from(batchResult.data.slice(i * EMBEDDING_DIM, (i + 1) * EMBEDDING_DIM)))
       }
 
-      // Individual embeddings
       const individualVectors = []
       for (const text of texts) {
         const result = await testEmbedder([text], { pooling: 'mean', normalize: true })
         individualVectors.push(Array.from(result.data.slice(0, EMBEDDING_DIM)))
       }
 
-      // Should be identical
       for (let i = 0; i < texts.length; i++) {
         expect(batchVectors[i]).toEqual(individualVectors[i])
       }
@@ -297,16 +264,12 @@ describe('Embedding Consistency', () => {
       const result = await testEmbedder([text], { pooling: 'mean', normalize: true })
       const vec = Array.from(result.data.slice(0, EMBEDDING_DIM))
 
-      // Calculate L2 norm
       const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0))
 
-      // Normalized vectors should have L2 norm ≈ 1
-      // Note: Mock may not actually normalize, so we just check it's reasonable
       expect(norm).toBeGreaterThan(0)
     })
 
     it('should enable cosine similarity calculation', () => {
-      // Normalized vectors allow cosine similarity = dot product
       const vec1 = new Array(EMBEDDING_DIM).fill(1 / Math.sqrt(EMBEDDING_DIM))
       const vec2 = new Array(EMBEDDING_DIM).fill(1 / Math.sqrt(EMBEDDING_DIM))
 
@@ -327,7 +290,6 @@ describe('Cosine Similarity Function', () => {
   })
 
   it('should return 0 for orthogonal vectors', () => {
-    // Create orthogonal vectors
     const vec1 = new Array(384).fill(0).map((_, i) => i % 2 === 0 ? 1 : 0)
     const vec2 = new Array(384).fill(0).map((_, i) => i % 2 === 1 ? 1 : 0)
 

@@ -1,11 +1,3 @@
-/**
- * Concurrency Testing
- *
- * Tests parallel execution scenarios:
- * - Concurrent database queries
- * - Race conditions
- * - Resource contention
- */
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { connect } from '@lancedb/lancedb'
@@ -42,7 +34,6 @@ describe.skipIf(!indexExists)('Concurrency: Parallel Queries', () => {
 
     console.log(`  → 10 parallel queries in ${duration.toFixed(0)}ms`)
 
-    // All should succeed
     expect(results.every(r => Array.isArray(r))).toBe(true)
     expect(results.every(r => r.length <= 50)).toBe(true)
   })
@@ -80,12 +71,10 @@ describe.skipIf(!indexExists)('Concurrency: Parallel Queries', () => {
     const tbl = await db.openTable('messages')
     const results = []
 
-    // Start multiple queries without waiting
     const p1 = tbl.query().limit(10).toArray()
     const p2 = tbl.query().limit(20).toArray()
     const p3 = tbl.query().limit(30).toArray()
 
-    // Wait in different order than started
     results.push(await p3)
     results.push(await p1)
     results.push(await p2)
@@ -116,14 +105,12 @@ describe.skipIf(!indexExists)('Concurrency: Parallel Queries', () => {
 
     console.log(`  → 50 parallel: ${succeeded} succeeded, ${failed} failed in ${duration.toFixed(0)}ms`)
 
-    // All should succeed (LanceDB handles concurrency)
     expect(succeeded).toBe(50)
   })
 })
 
 describe.skipIf(!indexExists)('Concurrency: Multiple Connections', () => {
   it('should handle multiple db connections', async () => {
-    // Open multiple connections
     const connections = await Promise.all([
       connect(DB_PATH),
       connect(DB_PATH),
@@ -135,7 +122,6 @@ describe.skipIf(!indexExists)('Concurrency: Multiple Connections', () => {
       return tables.length
     }))
 
-    // All should see the same tables
     expect(results[0]).toBe(results[1])
     expect(results[1]).toBe(results[2])
 
@@ -161,7 +147,6 @@ describe.skipIf(!indexExists)('Concurrency: Multiple Connections', () => {
       tbl2.query().limit(10).toArray()
     ])
 
-    // Both should return valid results
     expect(results1.length).toBeLessThanOrEqual(10)
     expect(results2.length).toBeLessThanOrEqual(10)
   })
@@ -276,14 +261,12 @@ describe.skipIf(!indexExists)('Concurrency: Table Operations', () => {
       return
     }
 
-    // Open same table multiple times concurrently
     const promises = Array(10).fill(null).map(() =>
       db.openTable(availableTables[0])
     )
 
     const openedTables = await Promise.all(promises)
 
-    // All should succeed
     expect(openedTables.length).toBe(10)
   })
 
@@ -293,7 +276,6 @@ describe.skipIf(!indexExists)('Concurrency: Table Operations', () => {
       return
     }
 
-    // Mix of different operations
     const operations = [
       db.openTable('emails').then(t => t.query().limit(5).toArray()),
       db.openTable('messages').then(t => t.query().limit(5).toArray()),

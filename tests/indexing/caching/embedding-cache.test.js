@@ -1,24 +1,13 @@
-/**
- * Tests for embedding cache functionality
- * Tests cache hits, misses, invalidation, and persistence
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Standard indexer constants
 const EMBEDDING_DIM = 384
 const BATCH_SIZE = 32
 
-/**
- * Create a deterministic embedder for testing
- */
 function createTestEmbedder() {
   return async (texts, _options = {}) => {
     const data = new Float32Array(texts.length * EMBEDDING_DIM)
     for (let i = 0; i < texts.length; i++) {
-      // Generate deterministic vector from text
       let hash = 0
       for (let j = 0; j < texts[i].length; j++) {
         hash = ((hash << 5) - hash) + texts[i].charCodeAt(j)
@@ -42,19 +31,17 @@ describe('Embedding Cache', () => {
 
   describe('cache key generation', () => {
     const generateCacheKey = (text, options = {}) => {
-      // Create a deterministic key from text and options
       const normalizedText = text.toLowerCase().trim()
       const optionsStr = JSON.stringify(options, Object.keys(options).sort())
       return `${normalizedText.length}:${hashString(normalizedText)}:${optionsStr}`
     }
 
-    // Simple hash function for testing
     const hashString = (str) => {
       let hash = 0
       for (let i = 0; i < str.length; i++) {
         const char = str.charCodeAt(i)
         hash = ((hash << 5) - hash) + char
-        hash = hash & hash // Convert to 32-bit integer
+        hash = hash & hash
       }
       return hash.toString(16)
     }
@@ -104,13 +91,11 @@ describe('Embedding Cache', () => {
         return vector
       }
 
-      // First call - cache miss
       const result1 = await cachedEmbed('Test text')
       expect(embedCallCount).toBe(1)
 
-      // Second call - cache hit
       const result2 = await cachedEmbed('Test text')
-      expect(embedCallCount).toBe(1) // Should not increment
+      expect(embedCallCount).toBe(1)
 
       expect(result1).toEqual(result2)
     })
@@ -121,7 +106,6 @@ describe('Embedding Cache', () => {
 
       const addToCache = (key, value) => {
         if (cache.size >= maxSize) {
-          // Remove oldest entry (first key)
           const firstKey = cache.keys().next().value
           cache.delete(firstKey)
         }
@@ -133,7 +117,6 @@ describe('Embedding Cache', () => {
       addToCache('key3', 'value3')
       expect(cache.size).toBe(3)
 
-      // Add one more - should evict oldest
       addToCache('key4', 'value4')
       expect(cache.size).toBe(3)
       expect(cache.has('key1')).toBe(false)
@@ -160,7 +143,6 @@ describe('Embedding Cache', () => {
 
       get(key) {
         if (!this.cache.has(key)) return undefined
-        // Move to end (most recently used)
         const value = this.cache.get(key)
         this.cache.delete(key)
         this.cache.set(key, value)
@@ -171,7 +153,6 @@ describe('Embedding Cache', () => {
         if (this.cache.has(key)) {
           this.cache.delete(key)
         } else if (this.cache.size >= this.maxSize) {
-          // Remove least recently used (first key)
           const firstKey = this.cache.keys().next().value
           this.cache.delete(firstKey)
         }
@@ -194,10 +175,8 @@ describe('Embedding Cache', () => {
       lru.set('b', 2)
       lru.set('c', 3)
 
-      // Access 'a' to make it recently used
       lru.get('a')
 
-      // Add new item - should evict 'b' (least recently used)
       lru.set('d', 4)
 
       expect(lru.has('a')).toBe(true)
@@ -212,10 +191,8 @@ describe('Embedding Cache', () => {
       lru.set('a', 1)
       lru.set('b', 2)
 
-      // Access 'a'
       lru.get('a')
 
-      // Add 'c' - should evict 'b'
       lru.set('c', 3)
 
       expect(lru.has('a')).toBe(true)
@@ -234,7 +211,6 @@ describe('Embedding Cache', () => {
         const missIndices = []
         const missTexts = []
 
-        // Check cache for each text
         for (let i = 0; i < texts.length; i++) {
           if (cache.has(texts[i])) {
             results[i] = cache.get(texts[i])
@@ -244,12 +220,10 @@ describe('Embedding Cache', () => {
           }
         }
 
-        // Embed only misses
         if (missTexts.length > 0) {
           batchedTexts = missTexts
           const embedResult = await testEmbedder(missTexts, { pooling: 'mean', normalize: true })
 
-          // Store in cache and results
           for (let i = 0; i < missTexts.length; i++) {
             const vector = Array.from(embedResult.data.slice(i * EMBEDDING_DIM, (i + 1) * EMBEDDING_DIM))
             cache.set(missTexts[i], vector)
@@ -260,19 +234,16 @@ describe('Embedding Cache', () => {
         return results
       }
 
-      // Pre-populate cache
       cache.set('text1', new Array(EMBEDDING_DIM).fill(0.1))
       cache.set('text2', new Array(EMBEDDING_DIM).fill(0.2))
 
-      // Request mix of cached and uncached
       const texts = ['text1', 'text3', 'text2', 'text4']
       const results = await batchEmbedWithCache(texts)
 
-      // Only text3 and text4 should be batched
       expect(batchedTexts).toEqual(['text3', 'text4'])
       expect(results).toHaveLength(4)
-      expect(results[0]).toEqual(new Array(EMBEDDING_DIM).fill(0.1)) // From cache
-      expect(results[2]).toEqual(new Array(EMBEDDING_DIM).fill(0.2)) // From cache
+      expect(results[0]).toEqual(new Array(EMBEDDING_DIM).fill(0.1))
+      expect(results[2]).toEqual(new Array(EMBEDDING_DIM).fill(0.2))
     })
   })
 
@@ -298,11 +269,9 @@ describe('Embedding Cache', () => {
         return entry.value
       }
 
-      // Set value
       setWithTTL('key1', [1, 2, 3])
       expect(getWithTTL('key1')).toEqual([1, 2, 3])
 
-      // Wait for expiration
       await new Promise(resolve => setTimeout(resolve, 60))
 
       expect(getWithTTL('key1')).toBeUndefined()
@@ -326,22 +295,18 @@ describe('Embedding Cache', () => {
           cache.delete(key)
           return undefined
         }
-        // Refresh TTL on access
         entry.expires = Date.now() + TTL_MS
         return entry.value
       }
 
       setWithSlidingTTL('key1', 'value1')
 
-      // Access before expiration, refreshing TTL
       await new Promise(resolve => setTimeout(resolve, 50))
       expect(getWithSlidingTTL('key1')).toBe('value1')
 
-      // Wait another 50ms - should still be valid due to refresh
       await new Promise(resolve => setTimeout(resolve, 50))
       expect(getWithSlidingTTL('key1')).toBe('value1')
 
-      // Wait full TTL - should expire
       await new Promise(resolve => setTimeout(resolve, 110))
       expect(getWithSlidingTTL('key1')).toBeUndefined()
     })
@@ -354,7 +319,6 @@ describe('Embedding Cache', () => {
       cache.set('email:2', 'vector2')
       cache.set('message:1', 'vector3')
 
-      // Invalidate specific entry
       cache.delete('email:1')
 
       expect(cache.has('email:1')).toBe(false)
@@ -388,7 +352,6 @@ describe('Embedding Cache', () => {
       cache.set('email:2', 'vector2')
       cache.set('message:1', 'vector3')
 
-      // Simulate reindex invalidation
       cache.clear()
 
       expect(cache.size).toBe(0)
@@ -421,7 +384,7 @@ describe('Embedding Cache', () => {
           const entries = JSON.parse(serialized)
           return new Map(entries)
         } catch {
-          return new Map() // Return empty cache on error
+          return new Map()
         }
       }
 
@@ -446,13 +409,12 @@ describe('Embedding Cache', () => {
         return undefined
       }
 
-      // Simulate lookups
       cache.set('key1', 'value1')
-      getWithStats('key1') // Hit
-      getWithStats('key1') // Hit
-      getWithStats('key2') // Miss
-      getWithStats('key3') // Miss
-      getWithStats('key1') // Hit
+      getWithStats('key1')
+      getWithStats('key1')
+      getWithStats('key2')
+      getWithStats('key3')
+      getWithStats('key1')
 
       expect(stats.hits).toBe(3)
       expect(stats.misses).toBe(2)
@@ -464,9 +426,9 @@ describe('Embedding Cache', () => {
     it('should track cache size in bytes', () => {
       const estimateSize = (value) => {
         if (Array.isArray(value)) {
-          return value.length * 4 // Float32 = 4 bytes
+          return value.length * 4
         }
-        return JSON.stringify(value).length * 2 // Approximate string size
+        return JSON.stringify(value).length * 2
       }
 
       const cache = new Map()
@@ -481,7 +443,7 @@ describe('Embedding Cache', () => {
       setWithSizeTracking('key1', new Array(384).fill(0.1))
       setWithSizeTracking('key2', new Array(384).fill(0.2))
 
-      expect(totalBytes).toBe(384 * 4 * 2) // 2 vectors × 384 floats × 4 bytes
+      expect(totalBytes).toBe(384 * 4 * 2)
     })
   })
 
@@ -508,11 +470,11 @@ describe('Embedding Cache', () => {
 
       expect(isDuplicate('Hello World')).toBe(false)
       expect(isDuplicate('Different text')).toBe(false)
-      expect(isDuplicate('Hello World')).toBe(true) // Duplicate
+      expect(isDuplicate('Hello World')).toBe(true)
     })
 
     it('should skip embedding for duplicates', async () => {
-      const contentHashes = new Map() // hash -> embedding
+      const contentHashes = new Map()
       let embedCount = 0
 
       const embedWithDedup = async (content) => {
@@ -529,9 +491,9 @@ describe('Embedding Cache', () => {
 
       await embedWithDedup('Same content')
       await embedWithDedup('Different content')
-      await embedWithDedup('Same content') // Should be deduped
+      await embedWithDedup('Same content')
 
-      expect(embedCount).toBe(2) // Only 2 unique contents
+      expect(embedCount).toBe(2)
     })
   })
 
@@ -566,9 +528,8 @@ describe('Embedding Cache', () => {
       const vectorAsArray = [0.1, 0.2, 0.3, 0.4, 0.5]
       const vectorAsFloat32 = new Float32Array(vectorAsArray)
 
-      // Float32Array uses less memory than regular array of numbers
       expect(vectorAsFloat32.BYTES_PER_ELEMENT).toBe(4)
-      expect(vectorAsFloat32.byteLength).toBe(20) // 5 elements × 4 bytes
+      expect(vectorAsFloat32.byteLength).toBe(20)
     })
 
     it('should handle Float32Array in cache', () => {
