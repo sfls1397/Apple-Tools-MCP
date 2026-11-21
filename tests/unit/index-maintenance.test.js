@@ -1,7 +1,3 @@
-/**
- * 3.3.0 indexer memory fixes: capped LanceDB session, indexed-ID cache kept
- * between passes, duplicate-copy tracker, and periodic compaction.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
@@ -269,7 +265,6 @@ describe('real LanceDB: capped session, version-checked IDs, compaction', () => 
       let table = await db.createTable('messages', [row(0)])
       const cache = createIndexedIdCache({ getTable: async () => table })
 
-      // Simulate the daemon: read IDs, add one row, fold it in; 20 passes.
       let fullReads = 0
       const origQuery = table.query.bind(table)
       table.query = () => { fullReads++; return origQuery() }
@@ -300,7 +295,6 @@ describe('real LanceDB: capped session, version-checked IDs, compaction', () => 
       const filesAfter = fs.readdirSync(dataDir).length
       expect(filesAfter).toBeLessThan(filesBefore)
 
-      // Compaction is a new version: the cache notices and re-reads once.
       cache.invalidate()
       expect((await cache.getIdSets('messages', ['id'])).id.size).toBe(21)
       table.close?.()

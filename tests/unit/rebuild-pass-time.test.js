@@ -1,11 +1,3 @@
-/**
- * rebuild_index (rebuildIndex) records lastIndexPassTime like indexAll does,
- * but only for a clean rebuild of all three sources: a partial rebuild leaves
- * the other sources as old as they were, and a source whose read was skipped
- * (no Full Disk Access, no store) leaves its table empty, so that rebuild is
- * not clean either (fake HOME with empty Mail/Messages/Calendar stores, mocked
- * embedder, no data).
- */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { spawnSync } from 'child_process'
@@ -26,7 +18,6 @@ let metaFile
 let indexer
 let origError
 
-// Empty stores with the tables the indexer reads: readable, nothing to index.
 const MESSAGES_SCHEMA = `
 CREATE TABLE message (ROWID INTEGER PRIMARY KEY, date INTEGER, is_from_me INTEGER, handle_id INTEGER, text TEXT, attributedBody BLOB);
 CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);

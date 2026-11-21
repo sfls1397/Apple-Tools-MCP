@@ -1,8 +1,3 @@
-/**
- * Nothing sent or drafted as the account owner carries a dash used as
- * punctuation: em dash, en dash, or a hyphen with a space on each side.
- * Hyphens inside names and identifiers stay.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const osascript = vi.hoisted(() => vi.fn(() => ''))

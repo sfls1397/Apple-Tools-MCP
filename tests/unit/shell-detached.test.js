@@ -1,8 +1,3 @@
-/**
- * safeSpawnDetached must return at once and leave the child running for its
- * own lifetime — the 3.0.3 wake used a blocking spawn whose 5s timeout killed
- * `caffeinate -t 15` about 4s in.
- */
 
 import { describe, it, expect } from 'vitest'
 import { safeSpawnDetached } from '../../lib/shell.js'

@@ -1,9 +1,3 @@
-/**
- * Index-session search gating: lost-lock vs still-indexing vs rebuild failure.
- *
- * Imports the same helpers index.js uses so these tests fail if the gate
- * semantics regress.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
@@ -11,7 +5,6 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { isSearchBlockedByIndexing, cycleEndFlags, indexUnavailableMessage, indexQueryGate, BUILDING_INITIAL_INDEX_MESSAGE, INDEXING_NEW_DATA_MESSAGE, staleIndexNote, STALE_INDEX_FLOOR_MS } from '../../lib/indexGate.js'
 
-/** Tools PR #1 gated on sessionIndexComplete; lost-lock must not strand them. */
 const INDEX_BACKED_TOOLS = [
   'mail_search',
   'mail_recent',
@@ -32,18 +25,15 @@ describe('isSearchBlockedByIndexing', () => {
   })
 
   it('does not block after this process finishes indexing', () => {
-    // Progress-timeout path: cycle marked complete while lock is still held.
     expect(isSearchBlockedByIndexing(true, true)).toBe(false)
     expect(isSearchBlockedByIndexing(true, false)).toBe(false)
   })
 
   it('treats lost lock as distinct from still indexing (A)', () => {
-    // Secondary instance: never won the lock, sessionIndexComplete stays false.
     expect(isSearchBlockedByIndexing(false, false)).toBe(false)
   })
 
   it('allows search once the primary finished even if this process never indexed', () => {
-    // Lost lock, then an index exists / primary completed — still no local cycle.
     expect(isSearchBlockedByIndexing(false, false)).toBe(false)
   })
 })
@@ -69,7 +59,6 @@ describe('multi-instance / lost-lock search gate (A)', () => {
 
   it('secondary that lost the lock is not stuck on still-indexing forever', () => {
     const secondary = { sessionIndexComplete: false, ownsIndexLock: false, indexReady: false }
-    // Recoverable "not ready" — not the permanent still-indexing gate.
     expect(toolResponse(secondary)).toBe('index not available')
   })
 
@@ -120,12 +109,10 @@ describe('rebuild_index failure must unblock searches (B)', () => {
     let indexingInProgress = false
     let ownsIndexLock = true
 
-    // rebuild_index start
     indexingInProgress = true
     sessionIndexComplete = false
     expect(isSearchBlockedByIndexing(sessionIndexComplete, ownsIndexLock)).toBe(true)
 
-    // catch — previously left sessionIndexComplete false forever
     const flags = cycleEndFlags(false)
     indexingInProgress = flags.indexingInProgress
     sessionIndexComplete = flags.sessionIndexComplete
@@ -304,7 +291,6 @@ describe('staleIndexNote (index-backed replies say when the shared index stopped
     expect(note).toContain('Full Disk Access')
     expect(note).not.toMatch(/\u2014|\u2013| - /)
     expect(reads).toBe(0)
-    // A finished pass wins: a skipped marker never overrides a fresh index.
     expect(staleIndexNote({ lastPassTime: now - 60 * 1000, lastSkippedPassTime: now, now, intervalMs: FIVE_MIN })).toBe(null)
   })
 

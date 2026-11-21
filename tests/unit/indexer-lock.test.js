@@ -1,7 +1,3 @@
-/**
- * Runtime tests for indexer.lock: live-PID hold, dead-PID takeover,
- * wx takeover mutex, heartbeat, and multi-contender stale-lock races.
- */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
@@ -491,9 +487,6 @@ describe('createIndexerLock runtime', () => {
   })
 
   it('multi-contender stale takeover: at most one ownsLock (rename-aside regression)', () => {
-    // Rename-aside failed this pattern (~2/200 with 8 waiters): moving the live
-    // path aside let a peer wx-create, then restore/unlink displaced that lock
-    // while both kept ownsLock. Pump on mutex/lock wx and lock unlink.
     const waiterPids = [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007]
     const isAlive = (p) => p !== 99999999 && waiterPids.includes(p)
     const rounds = 200
@@ -504,7 +497,6 @@ describe('createIndexerLock runtime', () => {
       try {
         fs.unlinkSync(mutexPath)
       } catch {
-        // no leftover mutex
       }
 
       const waiters = []
@@ -578,10 +570,6 @@ describe('createIndexerLock runtime', () => {
   })
 
   it('multi-contender crash-orphaned takeover mutex: at most one ownsLock', () => {
-    // Compare-then-unlink of indexer.lock.takeover let two waiters steal a
-    // crash-orphaned mutex and both keep ownsLock. Pump on mutex/fence/lock wx
-    // and on mutex/lock unlink. Dead mutex must stay; a live fence must not be
-    // deleted by a peer.
     const waiterPids = [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007]
     const deadLockPid = 99999999
     const deadMutexPid = 88888888
@@ -596,7 +584,6 @@ describe('createIndexerLock runtime', () => {
       try {
         fs.unlinkSync(fencePath)
       } catch {
-        // no leftover fence
       }
 
       const waiters = []

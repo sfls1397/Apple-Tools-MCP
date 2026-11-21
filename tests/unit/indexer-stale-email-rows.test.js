@@ -1,15 +1,3 @@
-/**
- * Stale email rows (fake HOME, mocked embedder, real LanceDB): Mail renames a
- * mailbox's UUID folder and renumbers its files (a move to a new Mac), a
- * .partial.emlx finishes downloading, and one message is deleted.
- * - moved messages are re-pathed by Message-ID and keep their embedding
- *   (no new embed calls), with no duplicate rows
- * - the deleted message's row is removed
- * - a relocated file older than the incremental lookback is still indexed
- * - every indexed path exists afterwards (what mail_read needs)
- * - quiet passes after that take the early exit with no ID reads
- * - an empty Mail scan never empties the index
- */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
@@ -62,7 +50,6 @@ describe('stale email rows after Mail moves its folders', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atm-stale-email-'))
     for (const k of ['HOME', 'APPLE_TOOLS_INDEX_DIR', 'APPLE_TOOLS_META_FILE', 'APPLE_TOOLS_INDEX_DAYS_BACK']) saved[k] = process.env[k]
     process.env.HOME = tmp
-    // Production default (no DAYS_BACK cap), so the incremental lookback applies
     process.env.APPLE_TOOLS_INDEX_DAYS_BACK = '0'
     process.env.APPLE_TOOLS_INDEX_DIR = path.join(tmp, 'index')
     process.env.APPLE_TOOLS_META_FILE = path.join(tmp, 'index-meta.json')
@@ -97,8 +84,6 @@ describe('stale email rows after Mail moves its folders', () => {
   it('re-paths moved mail without re-embedding, drops deleted mail, and indexes old relocated files', async () => {
     const before = new Map((await rows()).map(r => [r.messageId, Array.from(r.vector)]))
 
-    // Move: new mailbox UUID, new file numbers, partial now complete,
-    // <three> deleted, and a relocated message that was never indexed.
     fs.rmSync(path.join(acct, 'INBOX.mbox', 'OLD-UUID'), { recursive: true })
     fs.rmSync(path.join(acct, 'Sent Messages.mbox', 'OLD-UUID'), { recursive: true })
     const inbox = path.join(acct, 'INBOX.mbox', 'NEW-UUID', 'Data', '9', 'Messages')
@@ -107,20 +92,19 @@ describe('stale email rows after Mail moves its folders', () => {
       [path.join(inbox, '901.emlx'), { messageId: '<one@example.com>', subject: 'First fixture' }],
       [path.join(inbox, '902.emlx'), { messageId: '<two@example.com>', subject: 'Second fixture' }],
       [path.join(sent, '904.emlx'), { messageId: '<four@example.com>', subject: 'Fourth fixture' }],
-      // An IMAP copy of <one> in Junk: the INBOX copy must win
       [path.join(acct, 'Junk.mbox', 'NEW-UUID', 'Data', 'Messages', '905.emlx'), { messageId: '<one@example.com>', subject: 'First fixture' }],
       [path.join(inbox, '906.emlx'), { messageId: '<six@example.com>', subject: 'Sixth fixture never indexed' }]
     ]
     for (const [file, msg] of moved) {
       writeEmlx(file, msg)
-      ageFile(file, 30) // older than the incremental lookback
+      ageFile(file, 30)
     }
 
     embedCalls.texts = 0
     const result = await indexer.indexEmails()
     expect(result.repathed).toBe(3)
     expect(result.removed).toBe(1)
-    expect(result.added).toBe(1) // only <six> needed an embedding
+    expect(result.added).toBe(1)
     expect(embedCalls.texts).toBe(1)
 
     const after = await rows()
@@ -135,7 +119,6 @@ describe('stale email rows after Mail moves its folders', () => {
     for (const id of ['<one@example.com>', '<two@example.com>', '<four@example.com>']) {
       expect(Array.from(byId.get(id).vector)).toEqual(before.get(id))
     }
-    // What mail_read needs: every hit's file exists
     for (const r of after) expect(fs.existsSync(r.filePath)).toBe(true)
   })
 
@@ -156,7 +139,6 @@ describe('stale email rows after Mail moves its folders', () => {
   })
 
   it('a path with a backslash or quote is re-pathed, and an unreadable mailbox keeps its rows', async () => {
-    // A mailbox whose folder name has a backslash and a quote
     const odd = path.join(acct, "Odd\\Box's.mbox", 'OLD-UUID', 'Data', 'Messages')
     writeEmlx(path.join(odd, '701.emlx'), { messageId: '<seven@example.com>', subject: 'Seventh fixture' })
     let result = await indexer.indexEmails()
@@ -169,7 +151,6 @@ describe('stale email rows after Mail moves its folders', () => {
     expect(result.removed).toBe(0)
     expect((await rows()).find(r => r.messageId === '<seven@example.com>').filePath).toBe(moved)
 
-    // EACCES on one mailbox: its files still exist, so they are not stale
     const sentDir = path.join(acct, 'Sent Messages.mbox')
     fs.chmodSync(sentDir, 0o000)
     try {
@@ -182,7 +163,6 @@ describe('stale email rows after Mail moves its folders', () => {
   })
 
   it('an empty Mail scan never empties the index', async () => {
-    // Every .emlx gone but the folder readable (e.g. Mail mid-rebuild)
     fs.rmSync(path.join(tmp, 'Library', 'Mail', 'V10'), { recursive: true })
     fs.mkdirSync(path.join(tmp, 'Library', 'Mail', 'V10'))
     const result = await indexer.indexEmails()
@@ -192,9 +172,6 @@ describe('stale email rows after Mail moves its folders', () => {
 })
 
 describe('stale email rows that share one Message-ID', () => {
-  // Two stale rows can carry the same Message-ID (an index from before the
-  // Message-ID dedupe, or an IMAP copy). One live file must take exactly one
-  // of them; the other is removed, never re-pathed onto the same file.
   let dupTmp
   let dupAcct
   const dupSaved = {}
@@ -226,22 +203,20 @@ describe('stale email rows that share one Message-ID', () => {
 
   it('re-paths one stale duplicate to the live file and removes the other', async () => {
     expect(await indexer.indexEmails()).toMatchObject({ added: 2 })
-    // A second row for <dup> at another old path, as an older index could hold.
     const table = await indexer.getOpenTable('emails')
     const [row] = await table.query().where("`messageId` = '<dup@example.com>'").toArray()
     const copyPath = path.join(dupAcct, 'Archive.mbox', 'OLD-UUID', 'Data', 'Messages', '301.emlx')
     await table.add([{ ...row, filePath: copyPath, mailbox: 'Archive', vector: Array.from(row.vector) }])
     expect((await rows()).filter(r => r.messageId === '<dup@example.com>')).toHaveLength(2)
 
-    // Mail moves the folder: both <dup> rows are stale and one live file has that ID.
     fs.rmSync(path.join(dupAcct, 'INBOX.mbox', 'OLD-UUID'), { recursive: true })
     const live = path.join(dupAcct, 'INBOX.mbox', 'NEW-UUID', 'Data', 'Messages', '901.emlx')
     writeEmlx(live, { messageId: '<dup@example.com>', subject: 'Duplicate fixture' })
     writeEmlx(path.join(dupAcct, 'INBOX.mbox', 'NEW-UUID', 'Data', 'Messages', '902.emlx'), { messageId: '<other@example.com>', subject: 'Other fixture' })
 
     const result = await indexer.indexEmails()
-    expect(result.repathed).toBe(2) // <dup> once, <other> once
-    expect(result.removed).toBe(1) // the second <dup> row
+    expect(result.repathed).toBe(2)
+    expect(result.removed).toBe(1)
     const after = await rows()
     const dups = after.filter(r => r.messageId === '<dup@example.com>')
     expect(dups).toHaveLength(1)

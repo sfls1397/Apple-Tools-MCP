@@ -1,10 +1,3 @@
-/**
- * Unit tests for mail_links (decoded links in one message).
- *
- * Messages are synthetic RFC822 text wrapped the way Mail stores .emlx
- * files; the locate test builds a throwaway Mail folder tree. Nothing here
- * reads real Mail data.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
@@ -30,7 +23,6 @@ function emlx(rfc822) {
   return Buffer.concat([Buffer.from(`${body.length}\n`), body, Buffer.from('<?xml version="1.0"?><plist><dict/></plist>\n')])
 }
 
-/** Quoted-printable with a soft break in the middle of the href, as mailers send it. */
 const QP_MESSAGE = [
   'From: Example <noreply@example.com>',
   'Subject: Your Sign-in Link',

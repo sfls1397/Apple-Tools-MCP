@@ -1,8 +1,3 @@
-/**
- * reapOrphanedIndexWorker: only the indexer.lock holder, only when its daemon
- * is gone (PPID 1), same user, and an index worker's command line. TERM
- * first; KILL only after re-checking the same process is still there.
- */
 
 import { describe, it, expect } from 'vitest'
 import { isOrphanedIndexWorker, readProcessInfo, reapOrphanedIndexWorker } from '../../lib/orphanWorker.js'

@@ -1,12 +1,3 @@
-/**
- * End-to-end indexEmails() passes against a temporary Mail folder and index
- * (fake HOME, mocked embedder, real LanceDB):
- * - an IMAP copy skipped as a duplicate Message-ID does not come back on the
- *   next pass, so a quiet pass takes the early exit
- * - quiet passes read no ID columns at all (cache kept between passes)
- * - the summary counts only rows actually added, not skipped copies
- * - indexAll() compacts once after a writing pass, then waits a day
- */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
@@ -59,7 +50,6 @@ describe('indexEmails passes (fake Mail folder)', () => {
     const acct = path.join(tmp, 'Library', 'Mail', 'V10', 'ACCT')
     writeEmlx(path.join(acct, 'INBOX.mbox', 'Messages', '1.emlx'), { messageId: '<one@example.com>', subject: 'First fixture' })
     writeEmlx(path.join(acct, 'INBOX.mbox', 'Messages', '2.emlx'), { messageId: '<two@example.com>', subject: 'Second fixture' })
-    // Same Message-ID as 1.emlx in another folder (IMAP copy)
     writeEmlx(path.join(acct, 'Archive.mbox', 'Messages', '3.emlx'), { messageId: '<one@example.com>', subject: 'First fixture' })
 
     origError = console.error

@@ -122,9 +122,6 @@ it('a restarted daemon reaps a blocked worker its killed parent left holding the
     `)
     return file
   }
-  // First worker: event loop blocked for good, so neither its TERM handler
-  // nor the IPC disconnect can ever run. Second worker: stopped once it holds
-  // the lock, so the test proves the takeover without indexing anything.
   const blocked = preload('block-worker.mjs', 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);')
   const stopped = preload('stop-worker.mjs', "process.kill(process.pid, 'SIGSTOP');")
   const env = {

@@ -1,13 +1,3 @@
-/**
- * BA AC: MCP query tools must succeed against an existing on-disk vector-index
- * while the indexer daemon holds the lock (not gated only on this process’s
- * first-index cycle). Source:
- * https://app.notion.com/p/3dc6f1b360ee81e7956ed6199c5cf9a5
- *
- * Root cause: initDB() cached the first LanceDB connect even when tableNames
- * was empty, so isIndexReady() stayed false and mail_recent / messages_recent
- * returned indexUnavailableMessage.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'

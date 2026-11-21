@@ -1,7 +1,3 @@
-/**
- * Runtime tests for indexer daemon vs MCP stdio paths.
- * Packaging/version stays as file checks; daemon behavior uses the real helpers.
- */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'events'
@@ -37,7 +33,6 @@ describe('package version consistency', () => {
     expect(indexSrc).toContain('const wasRunning = Boolean(indexTimer || progressCheckTimer)')
     expect(indexSrc).not.toContain('maybeNotifyIndexerRunning')
     expect(indexSrc).not.toContain('display notification')
-    // The advertised version still comes from package.json, never a literal.
     expect(indexSrc).not.toMatch(/version:\s*["']2\.0\.[0-9]["']/)
   })
 
@@ -133,8 +128,6 @@ describe('MCP stdio vs indexer daemon runtime', () => {
   })
 
   it('the HTTP server never takes indexer.lock, even when it is free', () => {
-    // After an install the HTTP server could win the lock while the indexer daemon
-    // restarted, leaving the daemon waiting for it (3.3.5 deploy and earlier ones).
     let asked = 0
     const http = mcpIndexingStartup(() => { asked += 1; return true }, { httpMode: true })
     expect(http).toEqual({

@@ -1,15 +1,3 @@
-/**
- * npm 12 publish strips / rewrites bin entries whose path is not already
- * unix-normalized. Live v2.0.2 evidence:
- *
- *   npm warn publish "bin[apple-tools-mcp]" script name index.js was invalid and removed
- *   npm warn publish "bin[apple-tools-indexer]" script name index.js was invalid and removed
- *
- * That warning fires when `secureAndUnixifyPath(binTarget) !== binTarget`
- * (typically a leading `./`, or using `index.js` as the script name).
- * Two CLIs cannot use npm's string-form `bin`, so we ship dedicated
- * `bin/*.js` wrappers — the EdgeCore pattern, object form without `./`.
- */
 
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawnSync } from 'child_process'
@@ -29,7 +17,6 @@ const CLI_BINS = {
   'apple-tools-http-proxy': 'bin/apple-tools-http-proxy.js'
 }
 
-/** Mirror of npm's `@npmcli/package-json` `unixifyPath` + `secureAndUnixifyPath`. */
 function unixifyPath(ref) {
   return String(ref).replace(/\\|:/g, '/')
 }
@@ -39,10 +26,6 @@ function secureAndUnixifyPath(ref) {
   return secured.startsWith('./') ? '' : secured
 }
 
-/**
- * Mirror of npm 12 `normalizePackageBin` — the step that emits
- * `"bin[name]" script name … was invalid and removed` and can drop keys.
- */
 function normalizePackageBin(binField, name) {
   const changes = []
   let bin = binField
