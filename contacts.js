@@ -1,43 +1,24 @@
-/**
- * Contact Resolution Service
- *
- * Provides unified contact lookup across email addresses, phone numbers, and names.
- * Uses macOS AddressBook database to resolve identifiers to full contact records.
- */
 
 import fs from "fs";
 import path from "path";
 import { safeSqlite3, safeSqlite3Json } from "./lib/shell.js";
 
-// Database location - iCloud synced contacts are in Sources subdirectory
 const ADDRESSBOOK_DIR = path.join(process.env.HOME, "Library", "Application Support", "AddressBook");
 const SOURCES_DIR = path.join(ADDRESSBOOK_DIR, "Sources");
 
-// In-memory lookup maps for fast resolution
 let contactsLoaded = false;
-let contacts = [];  // Array of all contact records
-const emailToContact = new Map();  // email (lowercase) -> contact
-const phoneToContact = new Map();  // normalized phone -> contact
-const nameToContact = new Map();   // "firstname lastname" (lowercase) -> contact[]
+let contacts = [];
+const emailToContact = new Map();
+const phoneToContact = new Map();
+const nameToContact = new Map();
 
-// Cache settings
-const CACHE_TTL = 5 * 60 * 1000;  // 5 minutes
+const CACHE_TTL = 5 * 60 * 1000;
 let lastLoadTime = 0;
 
-// Memory bounds - prevent excessive memory usage with very large contact databases
-const MAX_CONTACTS = 50000;  // Maximum contacts to load
-const MAX_EMAILS_PER_CONTACT = 10;  // Maximum email addresses per contact
-const MAX_PHONES_PER_CONTACT = 10;  // Maximum phone numbers per contact
+const MAX_CONTACTS = 50000;
+const MAX_EMAILS_PER_CONTACT = 10;
+const MAX_PHONES_PER_CONTACT = 10;
 
-/**
- * True when a failure looks like macOS refusing the file itself.
- *
- * Contacts *reads* go straight at the AddressBook sqlite file, so they depend
- * on Full Disk Access for the process macOS holds responsible - not on the
- * AddressBook entitlement that gates Contacts.app / CNContactStore *writes*.
- * Reporting the difference keeps a plain FDA problem from being mistaken for
- * the host entitlement gap.
- */
 export function isAddressBookPermissionError(message) {
   const text = String(message || "").toLowerCase();
   return text.includes("eperm") ||
@@ -51,13 +32,9 @@ export const ADDRESSBOOK_FDA_HINT =
   "(the app that launched it over stdio, or node itself when launchd starts the indexer daemon). " +
   "This is a Full Disk Access / attribution issue, not the AddressBook entitlement that gates Contacts writes.";
 
-/**
- * Find the contacts database file (handles iCloud sync location)
- */
 function findContactsDatabase() {
   let permissionDenied = false;
 
-  // First check Sources directory for iCloud-synced contacts
   let sources = [];
   try {
     if (fs.existsSync(SOURCES_DIR)) {
@@ -72,7 +49,6 @@ function findContactsDatabase() {
   for (const source of sources) {
     const dbPath = path.join(SOURCES_DIR, source, "AddressBook-v22.abcddb");
     if (!fs.existsSync(dbPath)) continue;
-    // Check if it has actual data (not empty)
     try {
       const result = safeSqlite3(dbPath, "SELECT COUNT(*) FROM ZABCDRECORD", { json: false, timeout: 5000 });
       const count = parseInt(result.trim());
@@ -83,11 +59,9 @@ function findContactsDatabase() {
       if (isAddressBookPermissionError(e.message)) {
         permissionDenied = true;
       }
-      // Continue to next source
     }
   }
 
-  // Fallback to main AddressBook database
   const mainDb = path.join(ADDRESSBOOK_DIR, "AddressBook-v22.abcddb");
   if (fs.existsSync(mainDb)) {
     return mainDb;
@@ -100,31 +74,20 @@ function findContactsDatabase() {
   return null;
 }
 
-/**
- * Normalize phone number for consistent matching
- * Strips all non-digit characters except leading +
- */
 export function normalizePhone(phone) {
   if (!phone) return "";
-  // Keep leading + for international, then only digits
   const hasPlus = phone.startsWith("+");
   const digits = phone.replace(/\D/g, "");
-  // For US numbers, normalize to 10 digits (remove leading 1)
   const wasUSNumber = digits.length === 11 && digits.startsWith("1");
   const normalized = wasUSNumber
     ? digits.slice(1)
     : digits;
-  // Only keep + if it wasn't a US number (didn't remove leading 1)
   return (hasPlus && !wasUSNumber) ? `+${normalized}` : normalized;
 }
 
-/**
- * Load all contacts from the AddressBook database
- */
 export function loadContacts() {
   const now = Date.now();
 
-  // Return cached if still valid
   if (contactsLoaded && (now - lastLoadTime) < CACHE_TTL) {
     return contacts;
   }
@@ -136,9 +99,6 @@ export function loadContacts() {
   }
 
   try {
-    // Query all contacts with their basic info (with limit for memory safety).
-    // ZUNIQUEID is the Contacts.app person id the write tools address contacts
-    // by; a schema without it must still load contacts for search.
     const buildContactQuery = (includeUniqueId) => `
       SELECT
         Z_PK as id,
@@ -166,7 +126,6 @@ export function loadContacts() {
       console.error(`Warning: Contact limit reached (${MAX_CONTACTS}). Some contacts may not be searchable.`);
     }
 
-    // Query all email addresses
     const emailQuery = `
       SELECT
         ZOWNER as contactId,
@@ -178,7 +137,6 @@ export function loadContacts() {
 
     const emails = safeSqlite3Json(dbPath, emailQuery, { timeout: 10000 });
 
-    // Query all phone numbers
     const phoneQuery = `
       SELECT
         ZOWNER as contactId,
@@ -190,14 +148,12 @@ export function loadContacts() {
 
     const phones = safeSqlite3Json(dbPath, phoneQuery, { timeout: 10000 });
 
-    // Group emails and phones by contact ID (with per-contact limits)
     const emailsByContact = new Map();
     for (const e of emails) {
       if (!emailsByContact.has(e.contactId)) {
         emailsByContact.set(e.contactId, []);
       }
       const contactEmails = emailsByContact.get(e.contactId);
-      // Limit emails per contact to prevent memory issues
       if (contactEmails.length < MAX_EMAILS_PER_CONTACT) {
         contactEmails.push({
           email: e.email,
@@ -212,7 +168,6 @@ export function loadContacts() {
         phonesByContact.set(p.contactId, []);
       }
       const contactPhones = phonesByContact.get(p.contactId);
-      // Limit phones per contact to prevent memory issues
       if (contactPhones.length < MAX_PHONES_PER_CONTACT) {
         contactPhones.push({
           phone: p.phone,
@@ -222,7 +177,6 @@ export function loadContacts() {
       }
     }
 
-    // Build complete contact records and lookup maps
     contacts = [];
     emailToContact.clear();
     phoneToContact.clear();
@@ -245,20 +199,17 @@ export function loadContacts() {
 
       contacts.push(contact);
 
-      // Build email lookup
       for (const e of contact.emails) {
         const emailLower = e.email.toLowerCase();
         emailToContact.set(emailLower, contact);
       }
 
-      // Build phone lookup (using normalized phone)
       for (const p of contact.phones) {
         if (p.normalized) {
           phoneToContact.set(p.normalized, contact);
         }
       }
 
-      // Build name lookup
       const fullName = `${contact.firstName} ${contact.lastName}`.trim().toLowerCase();
       if (fullName) {
         if (!nameToContact.has(fullName)) {
@@ -267,7 +218,6 @@ export function loadContacts() {
         nameToContact.get(fullName).push(contact);
       }
 
-      // Also index by first name only for fuzzy matching
       if (contact.firstName) {
         const firstLower = contact.firstName.toLowerCase();
         if (!nameToContact.has(firstLower)) {
@@ -276,7 +226,6 @@ export function loadContacts() {
         nameToContact.get(firstLower).push(contact);
       }
 
-      // Index by nickname
       if (contact.nickname) {
         const nickLower = contact.nickname.toLowerCase();
         if (!nameToContact.has(nickLower)) {
@@ -301,9 +250,6 @@ export function loadContacts() {
   }
 }
 
-/**
- * Format display name from contact record
- */
 function formatDisplayName(contact) {
   const parts = [];
   if (contact.firstName) parts.push(contact.firstName);
@@ -314,47 +260,30 @@ function formatDisplayName(contact) {
   return parts.join(" ");
 }
 
-/**
- * Resolve an email address to a contact record
- * @param {string} email - Email address to look up
- * @returns {object|null} Contact record or null if not found
- */
 export function resolveEmail(email) {
   if (!email) return null;
-  loadContacts();  // Ensure contacts are loaded
+  loadContacts();
   return emailToContact.get(email.toLowerCase()) || null;
 }
 
-/**
- * Resolve a phone number to a contact record
- * @param {string} phone - Phone number to look up (any format)
- * @returns {object|null} Contact record or null if not found
- */
 export function resolvePhone(phone) {
   if (!phone) return null;
-  loadContacts();  // Ensure contacts are loaded
+  loadContacts();
   const normalized = normalizePhone(phone);
   return phoneToContact.get(normalized) || null;
 }
 
-/**
- * Resolve a name to matching contact records (fuzzy match)
- * @param {string} name - Name to search for
- * @returns {object[]} Array of matching contacts (may be empty)
- */
 export function resolveByName(name) {
   if (!name) return [];
-  loadContacts();  // Ensure contacts are loaded
+  loadContacts();
 
   const nameLower = name.toLowerCase().trim();
 
-  // Exact match first
   const exact = nameToContact.get(nameLower);
   if (exact && exact.length > 0) {
     return exact;
   }
 
-  // Partial match - search all contacts
   const matches = [];
   for (const contact of contacts) {
     const fullName = `${contact.firstName} ${contact.lastName}`.toLowerCase();
@@ -373,23 +302,12 @@ export function resolveByName(name) {
   return matches;
 }
 
-/**
- * Resolve a name to contacts by exact full name, first name, or nickname
- * (case-insensitive). No partial matching.
- * @param {string} name - Name to look up
- * @returns {object[]} Matching contacts (may be empty)
- */
 export function resolveByExactName(name) {
   if (!name) return [];
-  loadContacts();  // Ensure contacts are loaded
+  loadContacts();
   return nameToContact.get(name.toLowerCase().trim()) || [];
 }
 
-/**
- * Get all identifiers (emails and phones) for a contact
- * @param {number} contactId - Contact ID
- * @returns {object} { emails: string[], phones: string[] }
- */
 export function getContactIdentifiers(contactId) {
   loadContacts();
   const contact = contacts.find(c => c.id === contactId);
@@ -402,12 +320,6 @@ export function getContactIdentifiers(contactId) {
   };
 }
 
-/**
- * Search contacts by query (name, email, phone, or organization)
- * @param {string} query - Search query
- * @param {number} limit - Maximum results
- * @returns {object[]} Matching contacts
- */
 export function searchContacts(query, limit = 30) {
   loadContacts();
 
@@ -419,7 +331,6 @@ export function searchContacts(query, limit = 30) {
   const matches = [];
 
   for (const contact of contacts) {
-    // Check all searchable fields
     const searchText = [
       contact.firstName,
       contact.lastName,
@@ -440,23 +351,15 @@ export function searchContacts(query, limit = 30) {
   return matches;
 }
 
-/**
- * Look up a contact by any identifier (email, phone, or name)
- * @param {string} identifier - Email, phone, or name
- * @returns {object|null} Contact record or null
- */
 export function lookupContact(identifier) {
   if (!identifier) return null;
 
-  // Try email first (most specific)
   let contact = resolveEmail(identifier);
   if (contact) return contact;
 
-  // Try phone
   contact = resolvePhone(identifier);
   if (contact) return contact;
 
-  // Try name (return first match)
   const nameMatches = resolveByName(identifier);
   if (nameMatches.length > 0) {
     return nameMatches[0];
@@ -465,11 +368,6 @@ export function lookupContact(identifier) {
   return null;
 }
 
-/**
- * Format contact for display
- * @param {object} contact - Contact record
- * @returns {string} Formatted contact string
- */
 export function formatContact(contact) {
   if (!contact) return "Unknown";
 
@@ -480,10 +378,6 @@ export function formatContact(contact) {
   return result;
 }
 
-/**
- * Get contact stats
- * @returns {object} Stats about loaded contacts
- */
 export function getContactStats() {
   loadContacts();
   return {

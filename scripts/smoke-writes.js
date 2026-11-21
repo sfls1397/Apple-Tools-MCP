@@ -1,43 +1,4 @@
 #!/usr/bin/env node
-/**
- * Write-tool smoke test for QA prove-out on a Node host (Mac Mini / LaunchAgent).
- *
- * Covers the Automation / privacy classes that gate this package's writes:
- * - Mail compose (Automation → Mail.app). dry_run never talks to Mail, so
- *   this step runs a real `make new outgoing message` (then discards it).
- *   A hang or timeout is TCC / Automation denied, not "Mail.app missing".
- * - Messages account/service lookup (Automation → Messages.app). Nothing
- *   is sent. A deny fails --apply the same way Mail does.
- * - Contacts CRUD (AddressBook class, via Contacts.app). The write path
- *   launches Contacts.app before CRUD; keep Contacts, Mail, and Messages
- *   running on the host. Calendar does not need to stay open (EventKit).
- * - Calendar CRUD (calendars class, via Calendar.app)
- *
- * Mail, Messages, Contacts, and Calendar must all pass on the Node host —
- * that is the ship gate. A missing grant for any one of those four apps
- * fails --apply. Contacts and Calendar CRUD are expected to fail under a
- * host app that holds neither entitlement - that is a documented host
- * limitation, not a package failure. Mail and Messages are separate Apple
- * Events targets: a Contacts/Calendar grant does not include them.
- *
- * Default is a dry run: no contact or event is created, edited, or deleted.
- * It is not a no-op, though: it reads contacts from the AddressBook database
- * and calls calendar_list_calendars, which is a live Calendar.app query and
- * therefore a real TCC touch that can prompt or be denied. A dry run treats
- * that listing as advisory, so a denial does not report a failure for a run
- * that changed nothing.
- *
- * Pass --apply to perform real create -> edit -> delete round trips.
- *
- * Usage:
- *   node scripts/smoke-writes.js                       # dry run, no changes
- *   node scripts/smoke-writes.js --apply               # real CRUD, cleans up
- *   node scripts/smoke-writes.js --apply --keep        # leaves the test items
- *   node scripts/smoke-writes.js --apply --calendar=Work
- *
- * Test items are clearly named and removed again unless --keep is set.
- * No credentials, tokens, or personal data are involved.
- */
 
 import { loadContacts, getContactStats } from "../contacts.js";
 import { probeSocket, defaultSocketPath } from "../lib/writeBridge.js";
@@ -56,20 +17,6 @@ export function parseSmokeArgs(argv = []) {
   };
 }
 
-/**
- * Ship-gate precondition.
- *
- * The smoke test must exercise the same path production MCP clients use, so
- * a real run needs either the write bridge (writes execute inside the
- * launchd-started daemon, where node is the responsible process) or an
- * explicit acknowledgement that this process itself is the responsible one
- * - which is only true when a parent like Terminal.app or launchd started
- * it. Running in-process under a foreign parent (an embedded agent shell,
- * for example) produces an AppleScript denial that says nothing about
- * whether the package works.
- *
- * @returns {{ proceed: boolean, path: "daemon"|"local", reason: string }}
- */
 export function resolveSmokePath({ apply, bridgeUp, allowLocal, indexerMode }) {
   if (bridgeUp) {
     return { proceed: true, path: "daemon", reason: "write bridge is listening; writes execute in the indexer daemon" };
@@ -96,9 +43,6 @@ export function resolveSmokePath({ apply, bridgeUp, allowLocal, indexerMode }) {
   };
 }
 
-/**
- * Pull the "event_id: <id>" value out of a write tool success message.
- */
 export function extractEventId(message) {
   const match = String(message || "").match(/event_id:\s*([A-Za-z0-9._:@+-]+)/);
   return match ? match[1] : null;
@@ -115,11 +59,6 @@ export function createdViaEventKit(message) {
   return /via:\s*EventKit\b/i.test(text) && Boolean(extractEventKitId(text));
 }
 
-/**
- * Prefer an On My Mac calendar so Calendar.app delete is reliable if EventKit
- * remove still misses. EventKit add/remove is the primary path on iCloud
- * (writeOnly can delete events it created). An explicit --calendar= wins.
- */
 export function pickSmokeCalendar(calendars, explicitName) {
   if (explicitName) {
     return { name: explicitName, reason: `--calendar=${explicitName}` };
@@ -135,25 +74,10 @@ export function pickSmokeCalendar(calendars, explicitName) {
   return { name: "Calendar", reason: "fallback name Calendar" };
 }
 
-/**
- * Listing calendars is a live Calendar.app call even during a dry run, so a
- * refusal there says something about this host - but it is not a failure of
- * a run that created nothing. Only --apply, which must actually write,
- * treats it as fatal.
- *
- * @returns {"error"|"warning"}
- */
 export function calendarListSeverity(apply) {
   return apply ? "error" : "warning";
 }
 
-/**
- * Mail compose is a live Apple Events call (dry_run of mail_send never
- * touches Mail). On --apply a deny fails the ship gate. On a dry run it is
- * advisory, like calendar_list_calendars, so a refused prompt is WARN.
- *
- * @returns {"error"|"warning"}
- */
 export function mailProbeSeverity(apply) {
   return apply ? "error" : "warning";
 }
@@ -162,16 +86,6 @@ export function messagesProbeSeverity(apply) {
   return mailProbeSeverity(apply);
 }
 
-/**
- * How smoke exercises Mail Apple Events.
- *
- * The compose-and-discard helper is smoke-script-only — not an MCP write
- * tool. On --apply with the write bridge up, also run public mail_draft so
- * launchd-owned node is fail-closed for Mail (same make new outgoing message
- * verb; nothing is sent).
- *
- * @returns {{ useLocalHelper: boolean, useMailDraft: boolean, reason: string }}
- */
 export function planMailSmokeTouch({ apply, daemonPath }) {
   if (apply && daemonPath) {
     return {
@@ -187,12 +101,6 @@ export function planMailSmokeTouch({ apply, daemonPath }) {
   };
 }
 
-/**
- * How smoke exercises Messages Apple Events.
- * Smoke-script-only helper; this gate never sends and is not an MCP tool.
- *
- * @returns {{ useLocalHelper: boolean, reason: string }}
- */
 export function planMessagesSmokeTouch() {
   return {
     useLocalHelper: true,
@@ -208,10 +116,6 @@ export function mailDraftSmokeArgs(stamp) {
   };
 }
 
-/**
- * A start/end pair well in the future, so a smoke event never collides with
- * anything real on the calendar.
- */
 export function smokeEventWindow(now = new Date()) {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 400, 3, 0, 0, 0);
   const pad = (v) => String(v).padStart(2, "0");
@@ -220,9 +124,6 @@ export function smokeEventWindow(now = new Date()) {
   return { start: fmt(start, 3), end: fmt(start, 4) };
 }
 
-/**
- * Pull the "contact_id: <id>" value out of a write tool success message.
- */
 export function extractContactId(message) {
   const match = String(message || "").match(/contact_id:\s*([A-Za-z0-9._:-]+)/);
   return match ? match[1] : null;
@@ -282,11 +183,8 @@ async function main() {
     );
   }
 
-  // Every write goes through the production dispatcher, so the smoke test
-  // proves the path clients actually use rather than a private shortcut.
   const run = (tool, args) => dispatchWriteTool(tool, args, { indexerMode, socketPath });
 
-  // Read side first: proves Full Disk Access independently of the write path.
   console.log("\n--- Contacts read (sqlite + Full Disk Access) ---");
   const contacts = loadContacts();
   if (contacts.length === 0) {
@@ -302,8 +200,6 @@ async function main() {
   const common = apply ? { confirm: true } : { dry_run: true };
   const results = [];
 
-  // Mail first so first-run Allow includes Mail in the same pass as Contacts/Calendar.
-  // Helpers are smoke-script-only — not MCP write tools. mail_send dry_run never talks to Mail.
   console.log("\n--- Mail Automation (Mail.app compose / Apple Events) ---");
   if (!apply) {
     console.log("  (live make new outgoing message even on a dry run; mail_send dry_run never touches Mail)");
@@ -373,7 +269,6 @@ async function main() {
     }
   }
 
-  // ---- Calendar: the other entitlement-gated write path ----
   console.log("\n--- Calendar CRUD (Calendar.app / calendars privacy class) ---");
   if (!apply) {
     console.log("  (live Calendar.app query even on a dry run)");
@@ -476,7 +371,6 @@ async function main() {
   }
 }
 
-// Only run when invoked directly, so the helpers stay unit-testable.
 if (process.argv[1] && process.argv[1].endsWith("smoke-writes.js")) {
   main().catch((e) => {
     console.error(`Smoke test error: ${e.message}`);

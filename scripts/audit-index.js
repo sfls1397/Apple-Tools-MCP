@@ -1,18 +1,8 @@
 #!/usr/bin/env node
 
-/**
- * CLI Script for Auditing Index
- *
- * Usage:
- *   node scripts/audit-index.js
- *   node scripts/audit-index.js --sources emails,messages
- *   node scripts/audit-index.js --max-items 50
- *   node scripts/audit-index.js --sources calendar --max-items 0
- */
 
 import { auditAll, formatAuditReport } from '../lib/audit.js';
 
-// Parse command-line arguments
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
@@ -68,7 +58,6 @@ Examples:
 `);
 }
 
-// Main execution
 async function main() {
   try {
     const options = parseArgs();
@@ -81,7 +70,6 @@ async function main() {
     const results = await auditAll(options);
     const report = formatAuditReport(results);
 
-    // Print report to stdout
     console.log(report);
 
   } catch (error) {

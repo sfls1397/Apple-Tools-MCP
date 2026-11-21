@@ -1,21 +1,4 @@
 #!/usr/bin/env node
-/**
- * Read-only smoke test: every mail_search hit must be readable by mail_read.
- *
- * Runs a few semantic searches against the live index and, for each hit,
- * checks what mail_read needs: the File path passes validateEmailPath, the
- * file exists, and its headers parse. A hit whose file is gone means the
- * index holds stale paths (for example after a move to a new Mac); the
- * indexer re-paths those on its next pass.
- *
- * Writes nothing, sends nothing, needs no indexer lock.
- *
- * Usage:
- *   node scripts/smoke-mail-read.js                 # default queries, 10 hits each
- *   node scripts/smoke-mail-read.js --limit=30 "receipt" "meeting"
- *
- * Exit 0 when every hit is readable, 1 when any is not, 2 when there were no hits.
- */
 
 import fs from "fs";
 import path from "path";

@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/**
- * Print-only reminder after npm install / upgrade.
- *
- * Must not run GUI / TCC probes unattended: a LaunchAgent or headless
- * npm cannot click Allow. The operator runs `apple-tools-mcp permissions`
- * on the host UI.
- */
 
 export function postinstallReminderText() {
   return [
