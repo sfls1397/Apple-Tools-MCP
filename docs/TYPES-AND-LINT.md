@@ -86,15 +86,24 @@ One job per part, in this order, on a mid tier model (Peter: it does not need a 
 
 | Part | Files | Lines |
 |---|---|---|
-| 1 | `.githooks`, `.cursor`, `.security`, `bin`, `scripts` | 235 |
-| 2 | `index.js`, `indexer.js`, `search.js`, `contacts.js` | 855 |
-| 3 | `lib` files up to and including `lib/mailFind.js` (alphabetical) | 1,132 |
-| 4 | `lib` files after `lib/mailFind.js` | 1,126 |
-| 5 | `tests/indexing`: `integration`, `resource`, `helpers`, `edge-cases`, `unit` | 962 |
-| 6 | `tests/indexing`: `accuracy`, `performance`, `negative`, `caching`, `security`, `contacts` | 648 |
-| 7 | `tests/perf` and `tests/unit` | 958 |
-| 8 | the other `tests` folders (`integration`, `recovery`, `timezone`, `fuzz`, `chaos`, `contract`, `stress`, `concurrency`, `performance`, `snapshots`, `helpers`, `fixtures`) | 588 |
+| 1 | `.cursor`, `.githooks`, `.security`, `bin`, `scripts`, `contacts.js` | 353 |
+| 2 | `index.js` | 183 |
+| 3 | `indexer.js` | 361 |
+| 4 | `search.js` to `lib/appleScript.js` | 362 |
+| 5 | `lib/audit.js` to `lib/contactsWrite.js` | 439 |
+| 6 | `lib/eventKitSession.js` to `lib/keychainWrite.js` | 410 |
+| 7 | `lib/lancedbTables.js` to `lib/mailWrite.js` | 435 |
+| 8 | `lib/messageContact.js` to `lib/urlQuery.js` | 390 |
+| 9 | `lib/validators.js` to `lib/writeTools.js` | 415 |
+| 10 | `tests/chaos/fault-injection.test.js` to `tests/indexing/contacts/contact-resolution.test.js` | 448 |
+| 11 | `tests/indexing/contacts/real-contacts.test.js` to `tests/indexing/integration/incremental-indexing.test.js` | 442 |
+| 12 | `tests/indexing/integration/initial-indexing.test.js` to `tests/indexing/performance/throughput.test.js` | 418 |
+| 13 | `tests/indexing/resource/concurrent-access.test.js` to `tests/indexing/unit/metadata-handling.test.js` | 438 |
+| 14 | `tests/indexing/unit/orchestration.test.js` to `tests/perf/helpers/benchmark.js` | 429 |
+| 15 | `tests/perf/helpers/data-generators.js` to `tests/recovery/resilience.test.js` | 448 |
+| 16 | `tests/snapshots/results.test.js` to `tests/unit/url-query.test.js` | 430 |
+| 17 | `tests/unit/validators.test.js` to `tests/unit/write-tools.test.js` | 103 |
 
 Where each kind's "why" goes: a Peter citation goes to the rule or doc that owns the behavior, or in the name of the test that guards it; a history comment (a PR, a date, an incident) is already in Git, and a guard it explains gets a test named for the failure it prevents; narration goes nowhere, and unclear code gets a better name; a docstring is treated as narration, unless the program reads it; a divider goes nowhere.
 
-Each part's job: search tests and readers for the part's file names (`readFileSync` and equivalents) and for comment text a test anchors on; list the Peter citations; move each why, then delete the comments with no behavior change (a rename is the only code change); run `python3 .security/lint.py prune --resolved-only` and `counts`; prove no behavior changed with identical syntax trees for every changed file (JavaScript with espree or the TypeScript compiler ignoring comments and positions, Python with `ast.dump`, shell with `shfmt -mn`) plus the recorded gate; list each moved citation in the PR.
+Each part's job (`.security/comment_tool.py` lists, strips and compares; the reasons that stay live in `docs/code-notes.md`, the guarding test's name, or the doc that owns the behavior): search tests and readers for the part's file names (`readFileSync` and equivalents) and for comment text a test anchors on; list the Peter citations; move each why, then delete the comments with no behavior change (a rename is the only code change); run `python3 .security/lint.py prune --resolved-only` and `counts`; prove no behavior changed with identical syntax trees for every changed file (JavaScript with espree or the TypeScript compiler ignoring comments and positions, Python with `ast.dump`, shell with `shfmt -mn`) plus the recorded gate; list each moved citation in the PR.

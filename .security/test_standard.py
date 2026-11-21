@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Security regression probes use only disposable repositories and synthetic data."""
 import contextlib
 import importlib.util
 import io
@@ -26,8 +25,6 @@ merge = module('verified_merge', 'merge-pr.py')
 
 
 def scratch_worktree_repo(temp):
-    """A repo whose main commit is clean, plus another job's leftovers sharing its refs: a debug worktree on a detached
-    commit and a local branch, both authored on example.invalid. Returns (root, clean main sha, debug sha)."""
     root = temp / 'repo'
     (root / '.githooks').mkdir(parents=True)
     (root / '.security').mkdir()
@@ -75,8 +72,6 @@ class Standard(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
-    # Ported from Toolbox PR 554 (Nov 12): history scans read only what is checked, never rev-list --all or
-    # --log-opts=--all, so another job's scratch worktree or branch with a test identity can't fail a push or gate.
     def test_history_ignores_another_jobs_scratch_worktree(self):
         with tempfile.TemporaryDirectory() as temp:
             root, pushed, foreign = scratch_worktree_repo(Path(temp))
@@ -86,11 +81,9 @@ class Standard(unittest.TestCase):
             self.assertIn('Git history metadata PASS', clean.stdout)
             tip = subprocess.run([sys.executable, str(gate), 'history', pushed], cwd=root, capture_output=True, text=True)
             self.assertEqual(tip.returncode, 0, tip.stdout + tip.stderr)
-            # The same commit still blocks when it is the one being checked.
             bad = subprocess.run([sys.executable, str(gate), 'history', foreign], cwd=root, capture_output=True, text=True)
             self.assertEqual(bad.returncode, 1)
             self.assertIn('Git metadata BLOCKED: ' + foreign[:12], bad.stdout)
-            # An option can never come in as a revision.
             option = subprocess.run([sys.executable, str(gate), 'history', '--all'], cwd=root, capture_output=True, text=True)
             self.assertEqual(option.returncode, 1)
 
@@ -123,7 +116,6 @@ class Standard(unittest.TestCase):
                             'refs/heads/dbg %s refs/heads/dbg %s\n' % (foreign, zero)])
             self.assertEqual(blocked.returncode, 1)
             self.assertIn('Git metadata BLOCKED: ' + foreign[:12], blocked.stdout)
-            # A delete pushes no commits, so neither history scan runs; the file scan still does.
             deleted = push(['(delete) %s refs/heads/old %s\n' % (zero, pushed)])
             self.assertEqual(deleted.returncode, 0, deleted.stdout + deleted.stderr)
             self.assertEqual(len((temp / 'gitleaks.log').read_text().splitlines()), 1)
@@ -182,7 +174,6 @@ class Standard(unittest.TestCase):
                 runner.steps(tree)
 
     def test_pr_head_lag_after_a_push_is_waited_out(self):
-        # PR 62: right after a push GitHub's PR head still showed the old commit and the gate refused (Toolbox 245897ac).
         runner = module('local_gate_head', 'local-gate.py')
         local, old = 'a' * 40, 'b' * 40
 
@@ -198,7 +189,6 @@ class Standard(unittest.TestCase):
                 self.sleeps += 1
 
         def check(heads, remote, state='OPEN'):
-            """Run check_pr against GitHub answering these heads in turn and origin's branch at remote."""
             views, clock = iter(heads), Clock()
             calls = {'view': 0, 'ls-remote': 0}
 
@@ -220,22 +210,17 @@ class Standard(unittest.TestCase):
                 except runner.GateError as error:
                     return str(error), calls, clock
 
-        # Already the PR head: no origin read, no wait.
         result, calls, clock = check([local], local)
         self.assertEqual((result, calls, clock.sleeps), (local, {'view': 1, 'ls-remote': 0}, 0))
-        # Pushed, and GitHub catches up on the third recheck.
         result, calls, clock = check([old, old, old, local], local)
         self.assertEqual((result, calls['view'], clock.sleeps), (local, 4, 3))
-        # Pushed, and GitHub never catches up: refuse after the wait, saying so.
         result, calls, clock = check([old] * 100, local)
         self.assertIn("PR head has not caught up with the pushed branch after %ds" % runner.HEAD_WAIT, result)
         self.assertEqual(clock.sleeps, runner.HEAD_WAIT)
-        # Not pushed (origin holds another commit) or origin unreadable: refuse at once, as before.
         for remote in [old, None]:
             result, calls, clock = check([old] * 100, remote)
             self.assertEqual(result, 'Check out the PR head first; the local commit is not the PR head')
             self.assertEqual((calls['view'], clock.sleeps), (1, 0))
-        # A closed PR never waits.
         result, calls, clock = check([old] * 100, local, state='CLOSED')
         self.assertEqual((result, calls['ls-remote'], clock.sleeps), ('PR must be open, ready, and target main', 0, 0))
 

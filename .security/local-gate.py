@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Local pre-PR/pre-deploy gate, recorded on GitHub as the merge requirement.
-
-Runs every repository gate on the exact commit in a clean temporary worktree:
-hooks and pinned scanners, Git metadata and Gitleaks over the head's full history, production npm
-audit (high), offline Semgrep with ShellCheck/Clang, the enforcement probes and
-this repository's tests from .security/local-gate.json. The result is recorded
-on that commit as the `local-gate` commit status and, for a PR, a PR comment.
-merge-pr.py requires the recorded PASS on the exact PR head. Step output stays
-on this machine; GitHub receives only step names, results and timings.
-
-  python3 .security/local-gate.py PR_NUMBER   # from the reviewed PR checkout
-  python3 .security/local-gate.py deploy      # pre-deploy run on the checked-out commit
-"""
 import datetime
 import hashlib
 import json
@@ -26,7 +13,6 @@ import tempfile
 import time
 
 CONTEXT = 'local-gate'
-# Seconds to wait for GitHub's PR head to catch up with a branch that was just pushed (PR 62's gate refused too soon).
 HEAD_WAIT = 15
 ROOT = Path(__file__).resolve().parent.parent
 PINS = {'gitleaks': ('.cursor/install-gitleaks.sh', ['gitleaks', 'version']),
@@ -38,8 +24,6 @@ PINS = {'gitleaks': ('.cursor/install-gitleaks.sh', ['gitleaks', 'version']),
         'typescript': ('.lint/package.json:typescript', ['python3', '.security/lint.py', 'version', 'typescript']),
         'pyright': ('.lint/package.json:pyright', ['python3', '.security/lint.py', 'version', 'pyright'])}
 STANDARD = [
-    # Both history scans read the gated head's own history (HEAD in the gate's worktree), never --all: the worktree shares
-    # this repo's refs, so --all read other jobs' branches and scratch worktrees (Toolbox PR 554, Nov 12).
     ('Git metadata (raw author/committer, messages)', ['python3', '.security/metadata.py', 'history', 'HEAD']),
     ('Gitleaks full history', ['gitleaks', 'git', '--log-opts=HEAD', '--config', '.gitleaks.toml',
                                '--redact=100', '--no-banner', '.']),
@@ -165,7 +149,6 @@ def record(repo, sha, number, results, hashes):
 
 
 def pushed_tip(branch):
-    """The commit the origin branch points at now, or None when it can't be read."""
     try:
         line = out(['git', 'ls-remote', 'origin', 'refs/heads/' + branch])
     except GateError:
@@ -174,9 +157,6 @@ def pushed_tip(branch):
 
 
 def check_pr(number, local):
-    """The open PR to main whose head is the local commit. Right after a push (a force-push too), GitHub's PR
-    head can lag the branch by a few seconds: when the origin branch already holds the local commit, recheck
-    the PR head for up to HEAD_WAIT seconds before refusing (ported from Toolbox commit 245897ac)."""
     view = ['pr', 'view', number, '--json', 'headRefOid,headRefName,baseRefName,state,isDraft']
     pr = gh(view)
     if pr['state'] != 'OPEN' or pr['isDraft'] or pr['baseRefName'] != 'main':
