@@ -1,7 +1,3 @@
-/**
- * Negative/Failure Path Performance Tests
- * Tests: error handling speed, invalid inputs, missing data, resource exhaustion
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -42,14 +38,13 @@ describe('Negative Performance Tests', () => {
           try {
             await errorFn()
           } catch (e) {
-            // Error handled
           }
         },
         { name: 'Error handling', iterations: 100, warmup: 10 }
       )
 
       reporter.addResult(result)
-      expect(result.mean).toBeLessThan(1) // Error handling should be < 1ms
+      expect(result.mean).toBeLessThan(1)
     })
 
     it('should not leak memory during repeated errors', async () => {
@@ -59,7 +54,6 @@ describe('Negative Performance Tests', () => {
         try {
           throw new Error(`Error ${i}`)
         } catch (e) {
-          // Handle error
         }
       }
 
@@ -78,7 +72,6 @@ describe('Negative Performance Tests', () => {
           try {
             await rejectingFn()
           } catch (e) {
-            // Handled
           }
         },
         { name: 'Async rejection handling', iterations: 100, warmup: 10 }
@@ -93,10 +86,10 @@ describe('Negative Performance Tests', () => {
         async () => {
           try {
             const error = new Error('Error with stack')
-            error.stack // Access stack trace
+            error.stack
             throw error
           } catch (e) {
-            const stack = e.stack // Use stack trace
+            const _stack = e.stack
           }
         },
         { name: 'Error with stack trace', iterations: 100, warmup: 10 }
@@ -120,7 +113,6 @@ describe('Negative Performance Tests', () => {
               }
               await mocks.embedder.embedder([query])
             } catch (e) {
-              // Handled
             }
           }
         },
@@ -132,11 +124,10 @@ describe('Negative Performance Tests', () => {
     })
 
     it('should handle very long queries without hanging', async () => {
-      const veryLongQuery = 'word '.repeat(10000) // ~50KB query
+      const veryLongQuery = 'word '.repeat(10000)
 
       const result = await benchmark(
         async () => {
-          // Truncate to reasonable length
           const truncated = veryLongQuery.substring(0, 1000)
           await mocks.embedder.embedder([truncated])
         },
@@ -180,7 +171,6 @@ describe('Negative Performance Tests', () => {
         async () => {
           for (const limit of invalidLimits) {
             const sanitized = Math.max(1, Math.min(isFinite(limit) ? limit : 100, 1000))
-            // Use sanitized limit
           }
         },
         { name: 'Invalid limit handling', iterations: 100, warmup: 20 }
@@ -193,7 +183,7 @@ describe('Negative Performance Tests', () => {
     it('should handle invalid date inputs', async () => {
       const invalidDates = [
         'not a date',
-        '2024-13-45', // Invalid month/day
+        '2024-13-45',
         '99999-01-01',
         '',
         null,
@@ -211,7 +201,6 @@ describe('Negative Performance Tests', () => {
                 throw new Error('Invalid date')
               }
             } catch (e) {
-              // Use default date
             }
           }
         },
@@ -236,7 +225,6 @@ describe('Negative Performance Tests', () => {
             try {
               mocks.fs.readFileSync(`/missing/path/${i}.emlx`)
             } catch (e) {
-              // File not found - handled
             }
           }
         },
@@ -249,18 +237,17 @@ describe('Negative Performance Tests', () => {
 
     it('should handle corrupted email content', async () => {
       const corruptedContents = [
-        '', // Empty
+        '',
         'garbage data without headers',
-        'From: \nTo: \nSubject: \n\n', // Missing values
-        '\x00\x01\x02\x03\x04\x05', // Binary garbage
-        'From: test@test.com\n'.repeat(1000), // Malformed
+        'From: \nTo: \nSubject: \n\n',
+        '\x00\x01\x02\x03\x04\x05',
+        'From: test@test.com\n'.repeat(1000),
       ]
 
       const result = await benchmark(
         async () => {
           for (const content of corruptedContents) {
             try {
-              // Attempt to parse
               const lines = content.split('\n')
               const headers = {}
               for (const line of lines) {
@@ -269,7 +256,6 @@ describe('Negative Performance Tests', () => {
                 headers[key?.trim()?.toLowerCase()] = value?.trim() || ''
               }
             } catch (e) {
-              // Parse error handled
             }
           }
         },
@@ -290,7 +276,6 @@ describe('Negative Performance Tests', () => {
           try {
             mocks.sqlite.safeSqlite3Json('test.db', 'SELECT * FROM test')
           } catch (e) {
-            // Database error handled
           }
         },
         { name: 'SQLite error handling', iterations: 100, warmup: 20 }
@@ -307,7 +292,6 @@ describe('Negative Performance Tests', () => {
         async () => {
           const results = mocks.sqlite.safeSqlite3Json('test.db', 'SELECT * FROM test')
           if (results.length === 0) {
-            // Handle empty results
             return { message: 'No results found', results: [] }
           }
         },
@@ -327,7 +311,6 @@ describe('Negative Performance Tests', () => {
           try {
             await db.openTable('nonexistent')
           } catch (e) {
-            // Table not found - create or skip
           }
         },
         { name: 'Missing table handling', iterations: 100, warmup: 20 }
@@ -345,10 +328,8 @@ describe('Negative Performance Tests', () => {
 
       const result = await benchmark(
         async () => {
-          // Create and discard large objects
           for (let i = 0; i < 10; i++) {
             const arr = new Array(10000).fill({ data: 'x'.repeat(100) })
-            // Let it be garbage collected
           }
         },
         { name: 'Memory pressure handling', iterations: 10, warmup: 2, collectMemory: true }
@@ -399,7 +380,6 @@ describe('Negative Performance Tests', () => {
         async () => {
           const acquired = await acquireLock('test')
           if (acquired) {
-            // Do work
             await wait(1)
             releaseLock('test')
           }
@@ -431,7 +411,6 @@ describe('Negative Performance Tests', () => {
               100
             )
           } catch (e) {
-            // Timeout handled
           }
         },
         { name: 'Timeout handling (success)', iterations: 20, warmup: 5 }
@@ -457,13 +436,11 @@ describe('Negative Performance Tests', () => {
         async () => {
           const controller = { aborted: false }
 
-          // Abort after 10ms
           setTimeout(() => { controller.aborted = true }, 10)
 
           try {
             await abortableOperation(controller)
           } catch (e) {
-            // Aborted as expected
           }
         },
         { name: 'Abort handling', iterations: 10, warmup: 2 }
@@ -477,7 +454,6 @@ describe('Negative Performance Tests', () => {
   describe('Graceful Degradation', () => {
     it('should degrade gracefully with partial data', async () => {
       const emails = generateEmails(100)
-      // Remove some fields to simulate partial data
       emails.forEach((e, i) => {
         if (i % 3 === 0) delete e.subject
         if (i % 4 === 0) delete e.body
@@ -630,7 +606,6 @@ describe('Negative Performance Tests', () => {
           try {
             throw new Error('Operation failed')
           } catch (e) {
-            // Error handled
           } finally {
             releaseResource(resource)
           }
@@ -641,7 +616,6 @@ describe('Negative Performance Tests', () => {
       reporter.addResult(result)
       expect(result.mean).toBeLessThan(1)
 
-      // All resources should be released
       expect(resources.every(r => !r.active)).toBe(true)
     })
   })

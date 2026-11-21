@@ -1,12 +1,3 @@
-/**
- * Recovery / Resilience Testing
- *
- * Tests system ability to recover from failures:
- * - Graceful degradation
- * - Partial failures
- * - State recovery
- * - Retry mechanisms
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import path from 'path'
@@ -17,7 +8,6 @@ const indexExists = fs.existsSync(DB_PATH)
 
 describe('Recovery: Graceful Degradation', () => {
   it('should continue when one data source fails', async () => {
-    // Simulate a multi-source search where one fails
     const searchEmail = () => Promise.resolve([{ text: 'email result' }])
     const searchMessages = () => Promise.reject(new Error('Messages unavailable'))
     const searchCalendar = () => Promise.resolve([{ text: 'calendar result' }])
@@ -28,11 +18,9 @@ describe('Recovery: Graceful Degradation', () => {
       searchCalendar()
     ])
 
-    // Should have 2 successful, 1 failed
     const successful = results.filter(r => r.status === 'fulfilled')
     expect(successful.length).toBe(2)
 
-    // Can still return partial results
     const partialResults = successful.flatMap(r => r.value)
     expect(partialResults.length).toBe(2)
   })
@@ -51,7 +39,6 @@ describe('Recovery: Graceful Degradation', () => {
       return 'fallback result'
     }
 
-    // With fallback pattern
     let result
     try {
       result = await primary()
@@ -73,7 +60,6 @@ describe('Recovery: Graceful Degradation', () => {
       try {
         return await fetchLive()
       } catch (e) {
-        // Return stale cache if available
         if (cache && cache.timestamp > Date.now() - 3600000) {
           return cache.data
         }
@@ -152,9 +138,8 @@ describe('Recovery: Retry Mechanisms', () => {
           return await fn()
         } catch (e) {
           if (i === maxRetries - 1) throw e
-          const delay = Math.pow(2, i) * 100 // 100, 200, 400, 800...
+          const delay = Math.pow(2, i) * 100
           delays.push(delay)
-          // In real code: await new Promise(r => setTimeout(r, delay))
         }
       }
     }
@@ -210,7 +195,7 @@ describe('Recovery: Partial Results', () => {
       }
     }
 
-    expect(results.length).toBe(3) // Odd numbers succeed
+    expect(results.length).toBe(3)
     expect(failedIds).toEqual([2, 4, 6])
   })
 })
@@ -232,7 +217,6 @@ describe('Recovery: State Consistency', () => {
 
         return true
       } catch (e) {
-        // Rollback
         state.count = oldState.count
         state.items = oldState.items
         throw e
@@ -245,7 +229,6 @@ describe('Recovery: State Consistency', () => {
     try {
       await transactionalAdd('fail')
     } catch (e) {
-      // Expected
     }
 
     await transactionalAdd('item3')
@@ -270,14 +253,13 @@ describe('Recovery: State Consistency', () => {
     try {
       await processBatch(ids)
     } catch (e) {
-      // Continue from where we left off
       const remainingIds = ids.filter(id => !processedIds.has(id) && id !== 5)
       for (const id of remainingIds) {
         processedIds.add(id)
       }
     }
 
-    expect(processedIds.size).toBe(7) // All except 5
+    expect(processedIds.size).toBe(7)
     expect(processedIds.has(5)).toBe(false)
   })
 })
@@ -342,15 +324,12 @@ describe.skipIf(!indexExists)('Recovery: Database Reconnection', () => {
   it('should reconnect after connection loss', async () => {
     const { connect } = await import('@lancedb/lancedb')
 
-    // First connection
     let db = await connect(DB_PATH)
     const tables1 = await db.tableNames()
 
-    // Simulate reconnection
     db = await connect(DB_PATH)
     const tables2 = await db.tableNames()
 
-    // Both should return same results
     expect(tables1).toEqual(tables2)
   })
 
@@ -362,14 +341,11 @@ describe.skipIf(!indexExists)('Recovery: Database Reconnection', () => {
 
     if (tables.length === 0) return
 
-    // Open table, then "simulate" reconnection
     const tbl1 = await db.openTable(tables[0])
 
-    // Create new connection (simulating recovery)
     const db2 = await connect(DB_PATH)
     const tbl2 = await db2.openTable(tables[0])
 
-    // Both should work
     const results1 = await tbl1.query().limit(5).toArray()
     const results2 = await tbl2.query().limit(5).toArray()
 
@@ -391,7 +367,6 @@ describe('Recovery: Validation Recovery', () => {
       const days = validateDaysBack(input)
       const week = validateWeekOffset(input)
 
-      // All should return valid numbers
       expect(typeof limit).toBe('number')
       expect(typeof days).toBe('number')
       expect(typeof week).toBe('number')
@@ -414,13 +389,10 @@ describe('Recovery: Validation Recovery', () => {
     for (const input of dangerous) {
       const sanitized = escapeSQL(stripHtmlTags(validateSearchQuery(input)))
 
-      // stripHtmlTags should remove script tags
       expect(sanitized).not.toMatch(/<script/i)
 
-      // escapeSQL should escape single quotes making SQL injection ineffective
-      // The original "'; DROP TABLE" becomes "''; DROP TABLE" which is safe
       if (input.includes("'")) {
-        expect(sanitized).toContain("''") // Quote should be escaped
+        expect(sanitized).toContain("''")
       }
     }
   })
@@ -432,16 +404,13 @@ describe('Recovery: Memory Cleanup', () => {
 
     const initialMem = process.memoryUsage().heapUsed
 
-    // Generate many errors
     for (let i = 0; i < 10000; i++) {
       try {
         validateSearchQuery(null)
       } catch (e) {
-        // Expected
       }
     }
 
-    // Force GC if available
     if (global.gc) global.gc()
 
     const finalMem = process.memoryUsage().heapUsed
@@ -449,7 +418,6 @@ describe('Recovery: Memory Cleanup', () => {
 
     console.log(`  → Memory growth after 10k errors: ${growth.toFixed(1)}MB`)
 
-    // Should not grow significantly
     expect(growth).toBeLessThan(20)
   })
 
@@ -476,17 +444,13 @@ describe('Recovery: Memory Cleanup', () => {
       }
     }
 
-    // Successful operation
     await operationWithCleanup(false)
 
-    // Failed operation
     try {
       await operationWithCleanup(true)
     } catch (e) {
-      // Expected
     }
 
-    // Both resources should be released
     expect(resources.every(r => r.released)).toBe(true)
   })
 })

@@ -1,7 +1,3 @@
-/**
- * Stress tests for system limits
- * Tests: high load, sustained operations, edge conditions
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -53,7 +49,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       console.log(`\nIndexed 10,000 emails in ${(duration / 1000).toFixed(2)}s`)
       console.log(`Throughput: ${(10000 / (duration / 1000)).toFixed(1)} emails/sec`)
 
-      expect(duration).toBeLessThan(30000) // Under 30s
+      expect(duration).toBeLessThan(30000)
     })
 
     it('should handle 5,000 messages in index', async () => {
@@ -100,7 +96,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       for (const query of queries) {
         const start = performance.now()
         await mocks.embedder.embedder([query])
-        await new Promise(r => setTimeout(r, 5)) // Simulate search
+        await new Promise(r => setTimeout(r, 5))
         histogram.record(performance.now() - start)
       }
 
@@ -120,7 +116,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
         latencies.push(performance.now() - start)
       }
 
-      // Check for performance degradation
       const first100 = latencies.slice(0, 100)
       const last100 = latencies.slice(-100)
 
@@ -131,7 +126,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       console.log(`Last 100 avg: ${avgLast.toFixed(2)}ms`)
       console.log(`Degradation: ${((avgLast / avgFirst - 1) * 100).toFixed(1)}%`)
 
-      // Should not degrade significantly
       expect(avgLast).toBeLessThan(avgFirst * 2)
     })
   })
@@ -184,7 +178,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
 
       const startTime = performance.now()
 
-      // Format all results
       const formatted = results.map(r => ({
         from: r.from,
         subject: r.subject,
@@ -220,7 +213,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       const largeEmails = generateEmails(10, { bodySize: 'large' })
 
       for (const email of largeEmails) {
-        email.body = 'word '.repeat(10000) // ~50KB body
+        email.body = 'word '.repeat(10000)
       }
 
       const startTime = performance.now()
@@ -244,7 +237,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
 
       for (let i = 0; i < operations; i++) {
         await mocks.embedder.embedder([`stress query ${i}`])
-        generateEmails(50) // Create temporary data
+        generateEmails(50)
 
         if (i % 20 === 0) {
           memSamples.push(getMemoryUsage().heapUsed)
@@ -270,9 +263,8 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       for (let i = 0; i < 50; i++) {
         const start = performance.now()
 
-        // Simulate occasional slowdown
         if (i >= 20 && i < 30) {
-          await wait(50) // Slow period
+          await wait(50)
         }
 
         await mocks.embedder.embedder([`query ${i}`])
@@ -291,7 +283,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       console.log(`During slowdown: ${avgDuring.toFixed(2)}ms`)
       console.log(`After recovery: ${avgAfter.toFixed(2)}ms`)
 
-      // Should recover to normal performance (within 1ms for very fast operations, or 1.5x for slower)
       const recoveryThreshold = Math.max(avgBefore * 2, 1)
       expect(avgAfter).toBeLessThan(recoveryThreshold)
     })
@@ -327,7 +318,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
         await mocks.embedder.embedder([query || 'fallback'])
       }
 
-      expect(true).toBe(true) // No crashes
+      expect(true).toBe(true)
     })
 
     it('should handle mixed data types', async () => {
@@ -354,7 +345,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
 
   describe('Throughput Limits', () => {
     it('should measure maximum throughput', async () => {
-      const testDuration = 5000 // 5 seconds
+      const testDuration = 5000
       const startTime = performance.now()
       let operations = 0
 
@@ -369,7 +360,7 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       console.log(`\nMax throughput: ${throughput.toFixed(1)} ops/sec`)
       console.log(`Total operations: ${operations}`)
 
-      expect(throughput).toBeGreaterThan(100) // At least 100 ops/sec
+      expect(throughput).toBeGreaterThan(100)
     })
   })
 
@@ -381,7 +372,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
         memory: { peak: 0, final: 0 }
       }
 
-      // Indexing stress
       const emails = generateEmails(1000)
       const messages = generateMessages(500)
       const events = generateCalendarEvents(200)
@@ -401,7 +391,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       }
       results.indexing.events = events.length
 
-      // Search stress
       const queries = generateSearchQueries(100)
       const latencies = []
 
@@ -414,7 +403,6 @@ describe('Stress Tests', { timeout: 120000 }, () => {
       results.searching.queries = queries.length
       results.searching.avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length
 
-      // Memory
       results.memory.final = getMemoryUsage().heapUsed
 
       console.log('\n=== STRESS TEST SUMMARY ===')

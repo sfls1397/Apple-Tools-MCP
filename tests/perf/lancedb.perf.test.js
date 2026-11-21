@@ -1,7 +1,3 @@
-/**
- * LanceDB performance tests
- * Tests: index creation, query optimization, compaction, vector operations
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -259,7 +255,7 @@ describe('LanceDB Performance', () => {
         vector: new Float32Array(384).fill(Math.random()),
         text: `Record ${i}`,
         source: i % 2 === 0 ? 'email' : 'message',
-        date: Date.now() - (i * 86400000) // Days ago
+        date: Date.now() - (i * 86400000)
       }))
       const table = await db.createTable('complex_filter', records)
 
@@ -472,7 +468,6 @@ describe('LanceDB Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Chain multiple operations
           await table.search(queryVector)
             .filter("source = 'email'")
             .select(['id', 'text'])

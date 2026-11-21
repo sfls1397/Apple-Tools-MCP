@@ -1,7 +1,3 @@
-/**
- * Performance tests for MCP server operations
- * Tests: server startup, request handling, protocol overhead
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -31,13 +27,11 @@ describe('MCP Server Performance', () => {
     it('should initialize server quickly', async () => {
       const result = await benchmark(
         async () => {
-          // Simulate server initialization
           const config = {
             name: 'apple-tools-mcp',
             version: '1.0.0'
           }
 
-          // Setup handlers
           const handlers = new Map()
           handlers.set('tools/list', async () => ({ tools: [] }))
           handlers.set('tools/call', async () => ({ result: {} }))
@@ -105,10 +99,8 @@ describe('MCP Server Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate list_tools request
           const request = { method: 'tools/list', params: {} }
 
-          // Process and respond
           const response = {
             tools: tools.map(t => ({
               name: t.name,
@@ -129,7 +121,6 @@ describe('MCP Server Performance', () => {
     it('should handle call_tool request efficiently', async () => {
       const result = await benchmark(
         async () => {
-          // Simulate call_tool request
           const request = {
             method: 'tools/call',
             params: {
@@ -138,13 +129,10 @@ describe('MCP Server Performance', () => {
             }
           }
 
-          // Parse request
           const { name, arguments: args } = request.params
 
-          // Execute tool (mocked)
           await mocks.embedder.embedder([args.query])
 
-          // Format response
           const response = {
             content: [{
               type: 'text',
@@ -209,11 +197,9 @@ describe('MCP Server Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate request/response cycle
           const request = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }
           const response = { jsonrpc: '2.0', id: 1, result: { tools: [] } }
 
-          // Encode/decode
           const requestStr = JSON.stringify(request)
           const parsed = JSON.parse(requestStr)
           const responseStr = JSON.stringify(response)
@@ -236,12 +222,10 @@ describe('MCP Server Performance', () => {
       const result = await benchmark(
         async () => {
           for (const msg of messages) {
-            // Parse header
             const headerEnd = msg.indexOf('\r\n\r\n')
             const header = msg.substring(0, headerEnd)
             const contentLength = parseInt(header.split(': ')[1])
 
-            // Extract body
             const body = msg.substring(headerEnd + 4)
             JSON.parse(body)
           }
@@ -306,9 +290,8 @@ describe('MCP Server Performance', () => {
         async () => {
           for (let i = 0; i < 20; i++) {
             try {
-              await erroringFn(i % 5 === 0) // 20% error rate
+              await erroringFn(i % 5 === 0)
             } catch (e) {
-              // Handle error
               const errorResponse = {
                 error: { code: -1, message: e.message }
               }
@@ -327,7 +310,6 @@ describe('MCP Server Performance', () => {
     it('should not leak memory during request handling', async () => {
       const memBefore = getMemoryUsage()
 
-      // Simulate many requests
       for (let i = 0; i < 1000; i++) {
         await mocks.embedder.embedder([`query${i}`])
       }
@@ -339,8 +321,7 @@ describe('MCP Server Performance', () => {
       console.log(`Memory after: ${memAfter.heapUsed}MB`)
       console.log(`Growth: ${growth.toFixed(2)}MB`)
 
-      // Allow some growth but not excessive
-      expect(growth).toBeLessThan(50) // Less than 50MB growth
+      expect(growth).toBeLessThan(50)
     })
   })
 
@@ -348,19 +329,15 @@ describe('MCP Server Performance', () => {
     it('should complete cold start quickly', async () => {
       const result = await benchmark(
         async () => {
-          // Simulate cold start
           const config = { name: 'apple-tools-mcp', version: '1.0.0' }
           const tools = new Map()
 
-          // Register tools
           for (let i = 0; i < 21; i++) {
             tools.set(`tool_${i}`, { name: `tool_${i}` })
           }
 
-          // Initialize transport
           const transport = createMCPTransportMock()
 
-          // Ready to serve
           return { config, tools, transport }
         },
         { name: 'Cold start', iterations: 10, warmup: 2 }

@@ -1,7 +1,3 @@
-/**
- * End-to-end tests for hung process detection and recovery
- * Covers: Complete hung process lifecycle, lock cleanup, recovery
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs'
@@ -9,8 +5,8 @@ import path from 'path'
 import os from 'os'
 
 const LOCK_FILE = path.join(os.homedir(), '.apple-tools-mcp', 'indexer.lock')
-const LOCK_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes
-const MAX_NO_PROGRESS_MS = 10 * 60 * 1000 // 10 minutes
+const LOCK_TIMEOUT_MS = 30 * 60 * 1000
+const MAX_NO_PROGRESS_MS = 10 * 60 * 1000
 
 describe('Hung Process Recovery', () => {
   let mockLockFile
@@ -19,12 +15,10 @@ describe('Hung Process Recovery', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
 
-    // Use a test-specific lock file path
     mockLockFile = path.join(os.tmpdir(), `test-lock-${Date.now()}.lock`)
   })
 
   afterEach(() => {
-    // Cleanup test lock file
     if (fs.existsSync(mockLockFile)) {
       fs.unlinkSync(mockLockFile)
     }
@@ -41,24 +35,19 @@ describe('Hung Process Recovery', () => {
         lockAcquired: false
       }
 
-      // Start indexing
       indexingState.inProgress = true
       indexingState.lastProgressTime = Date.now()
       indexingState.lockAcquired = true
 
-      // Simulate progress for 5 minutes
       for (let i = 0; i < 5; i++) {
-        vi.advanceTimersByTime(60000) // 1 minute
-        indexingState.lastProgressTime = Date.now() // Progress updates
+        vi.advanceTimersByTime(60000)
+        indexingState.lastProgressTime = Date.now()
       }
 
-      // Then hang (no more progress)
-      vi.advanceTimersByTime(11 * 60 * 1000) // 11 minutes
+      vi.advanceTimersByTime(11 * 60 * 1000)
 
-      // Detect hung state
       const timeSinceProgress = Date.now() - indexingState.lastProgressTime
       if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
-        // Cleanup
         indexingState.inProgress = false
         indexingState.lockAcquired = false
       }
@@ -76,7 +65,6 @@ describe('Hung Process Recovery', () => {
 
       let lastProgressTime = Date.now()
 
-      // Simulate hung detection
       vi.advanceTimersByTime(11 * 60 * 1000)
 
       const timeSinceProgress = Date.now() - lastProgressTime
@@ -90,13 +78,11 @@ describe('Hung Process Recovery', () => {
     it('should allow new process to start after hung cleanup', () => {
       let processStates = []
 
-      // First process - hangs
       let process1 = { id: 1, state: 'running', lastProgress: Date.now() }
       processStates.push(process1)
 
       vi.advanceTimersByTime(11 * 60 * 1000)
 
-      // Detect hung and cleanup
       const timeSinceProgress = Date.now() - process1.lastProgress
       if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
         process1.state = 'terminated'
@@ -104,7 +90,6 @@ describe('Hung Process Recovery', () => {
 
       expect(process1.state).toBe('terminated')
 
-      // Second process can now start
       let process2 = { id: 2, state: 'running', lastProgress: Date.now() }
       processStates.push(process2)
 
@@ -117,7 +102,7 @@ describe('Hung Process Recovery', () => {
     it('should detect lock file older than 30 minutes', () => {
       const lockData = {
         pid: 99999,
-        timestamp: Date.now() - (35 * 60 * 1000) // 35 minutes ago
+        timestamp: Date.now() - (35 * 60 * 1000)
       }
 
       const lockAge = Date.now() - lockData.timestamp
@@ -128,7 +113,7 @@ describe('Hung Process Recovery', () => {
     it('should remove stale lock and proceed', () => {
       const lockData = {
         pid: 99999,
-        timestamp: Date.now() - (35 * 60 * 1000) // 35 minutes ago
+        timestamp: Date.now() - (35 * 60 * 1000)
       }
 
       const lockAge = Date.now() - lockData.timestamp
@@ -147,14 +132,14 @@ describe('Hung Process Recovery', () => {
     it('should NOT remove recent lock file', () => {
       const lockData = {
         pid: 99999,
-        timestamp: Date.now() - (5 * 60 * 1000) // 5 minutes ago
+        timestamp: Date.now() - (5 * 60 * 1000)
       }
 
       const lockAge = Date.now() - lockData.timestamp
       let lockRemoved = false
 
       if (lockAge <= LOCK_TIMEOUT_MS) {
-        lockRemoved = false // Keep the lock
+        lockRemoved = false
       }
 
       expect(lockRemoved).toBe(false)
@@ -162,21 +147,19 @@ describe('Hung Process Recovery', () => {
 
     it('should verify process death before removing lock', () => {
       const lockData = {
-        pid: 99999, // Non-existent PID
+        pid: 99999,
         timestamp: Date.now() - (5 * 60 * 1000)
       }
 
       let processExists = false
       let lockRemoved = false
 
-      // Simulate checking if process exists
       try {
-        // process.kill(lockData.pid, 0) would throw for non-existent process
         throw new Error('ESRCH')
       } catch (e) {
         if (e.message === 'ESRCH') {
           processExists = false
-          lockRemoved = true // Process dead, remove stale lock
+          lockRemoved = true
         }
       }
 
@@ -190,21 +173,17 @@ describe('Hung Process Recovery', () => {
       const batchResults = []
       let continueIndexing = true
 
-      // Batch 1 - success
       batchResults.push({ success: true, embeddings: 32 })
 
-      // Batch 2 - timeout
       try {
         throw new Error('Batch embedding timed out')
       } catch (e) {
         if (e.message.includes('timed out')) {
-          // Fallback to single items
           batchResults.push({ success: true, embeddings: 32, fallback: true })
           continueIndexing = true
         }
       }
 
-      // Batch 3 - success
       if (continueIndexing) {
         batchResults.push({ success: true, embeddings: 32 })
       }
@@ -220,22 +199,17 @@ describe('Hung Process Recovery', () => {
         { name: 'calendar', completed: false }
       ]
 
-      // Emails - completes successfully
       phases[0].completed = true
 
-      // Messages - hangs and recovers
       try {
-        // Simulate hang detection
         const timeSinceProgress = 11 * 60 * 1000
         if (timeSinceProgress > MAX_NO_PROGRESS_MS) {
           throw new Error('No progress')
         }
       } catch (e) {
-        // Mark as complete even on error so queries can proceed
         phases[1].completed = true
       }
 
-      // Calendar - runs successfully after recovery
       phases[2].completed = true
 
       expect(phases.every(p => p.completed)).toBe(true)
@@ -246,7 +220,6 @@ describe('Hung Process Recovery', () => {
     it('should prevent second process if first is healthy', () => {
       const processes = []
 
-      // First process
       const process1 = {
         pid: 1000,
         started: Date.now(),
@@ -255,7 +228,6 @@ describe('Hung Process Recovery', () => {
       }
       processes.push(process1)
 
-      // Second process tries to start
       const canStartSecond = !process1.hasLock ||
         (Date.now() - process1.lastProgress > MAX_NO_PROGRESS_MS)
 
@@ -266,16 +238,14 @@ describe('Hung Process Recovery', () => {
     it('should allow second process if first is hung', () => {
       const processes = []
 
-      // First process - hung
       const process1 = {
         pid: 1000,
         started: Date.now() - (20 * 60 * 1000),
-        lastProgress: Date.now() - (15 * 60 * 1000), // 15 min ago
-        hasLock: false // Lock released due to hung detection
+        lastProgress: Date.now() - (15 * 60 * 1000),
+        hasLock: false
       }
       processes.push(process1)
 
-      // Second process can start
       const canStartSecond = !process1.hasLock
 
       if (canStartSecond) {

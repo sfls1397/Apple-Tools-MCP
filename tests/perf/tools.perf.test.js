@@ -1,7 +1,3 @@
-/**
- * Performance tests for MCP tool operations
- * Tests: individual tools, tool dispatch, concurrent tool calls
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
@@ -37,7 +33,6 @@ describe('Tool Performance', () => {
     it('mail_search should complete within 100ms', async () => {
       const result = await benchmark(
         async () => {
-          // Simulate mail_search tool
           await mocks.embedder.embedder(['search query'])
           const results = generateEmails(20)
           return results
@@ -54,7 +49,6 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate mail_recent - no embedding needed
           return emails.slice(0, 20)
         },
         { name: 'mail_recent', iterations: 20, warmup: 5 }
@@ -69,7 +63,6 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate reading email file
           return emailContent
         },
         { name: 'mail_read', iterations: 50, warmup: 10 }
@@ -84,7 +77,6 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate thread retrieval
           await mocks.embedder.embedder(['thread subject'])
           return emails
         },
@@ -100,7 +92,6 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Aggregate senders
           const senders = new Map()
           for (const email of emails) {
             const count = senders.get(email.from) || 0
@@ -152,7 +143,6 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Filter by contact
           return messages.filter(m =>
             m.sender === targetContact || m.chatIdentifier === targetContact
           ).slice(0, 50)
@@ -169,7 +159,6 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Aggregate unique contacts
           const contacts = new Map()
           for (const msg of messages) {
             if (!contacts.has(msg.chatIdentifier)) {
@@ -247,15 +236,11 @@ describe('Tool Performance', () => {
 
       const result = await benchmark(
         async () => {
-          // Simulate free time calculation
-          const workStart = 9 * 60 // 9 AM in minutes
-          const workEnd = 17 * 60 // 5 PM in minutes
           const slots = []
 
-          // Find gaps between events
           for (let i = 0; i < events.length - 1; i++) {
             const gap = events[i + 1].startTimestamp - events[i].endTimestamp
-            if (gap > 30 * 60 * 1000) { // 30+ minute gap
+            if (gap > 30 * 60 * 1000) {
               slots.push({
                 start: events[i].endTimestamp,
                 end: events[i + 1].startTimestamp,
@@ -338,11 +323,10 @@ describe('Tool Performance', () => {
         async () => {
           const person = contacts[0]
 
-          // Search across all sources
           const [personEmails, personMessages, personEvents] = await Promise.all([
             Promise.resolve(emails.filter(e => e.from.includes(person.email))),
             Promise.resolve(messages.filter(m => m.chatIdentifier.includes(person.phone))),
-            Promise.resolve(events) // Calendar doesn't have direct person link
+            Promise.resolve(events)
           ])
 
           return {
@@ -364,17 +348,14 @@ describe('Tool Performance', () => {
     it('smart_search should complete within 150ms', async () => {
       const result = await benchmark(
         async () => {
-          // Smart search queries all sources
           await mocks.embedder.embedder(['smart search query'])
 
-          // Parallel source searches
           const [emailResults, messageResults, calendarResults] = await Promise.all([
             Promise.resolve(generateEmails(10)),
             Promise.resolve(generateMessages(10)),
             Promise.resolve(generateCalendarEvents(5))
           ])
 
-          // Merge and rank
           return {
             emails: emailResults,
             messages: messageResults,
@@ -411,7 +392,7 @@ describe('Tool Performance', () => {
       )
 
       reporter.addResult(result)
-      expect(result.mean).toBeLessThan(10) // Dispatch should be very fast
+      expect(result.mean).toBeLessThan(10)
     })
   })
 
