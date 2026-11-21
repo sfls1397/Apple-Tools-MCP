@@ -1,26 +1,19 @@
-/**
- * Unit tests for batch delete functionality
- * Tests OR condition generation, chunking, and SQL escaping
- */
 
 import { describe, it, expect } from 'vitest'
 
 const BATCH_DELETE_SIZE = 100
 
 describe('Batch Delete', () => {
-  // Validate ID for LanceDB (matches indexer.js logic)
   const validateLanceDBId = (id) => {
     if (typeof id !== 'string') return null
     if (id.length === 0 || id.length > 1000) return null
 
-    // Only allow safe characters
     const safePattern = /^[a-zA-Z0-9._@<>:\-\/\s]+$/
     if (!safePattern.test(id)) return null
 
     return id
   }
 
-  // Escape SQL string (matches indexer.js logic)
   const escapeSQL = (str) => {
     if (typeof str !== 'string') return ''
     return str.replace(/'/g, "''")
@@ -151,7 +144,6 @@ describe('Batch Delete', () => {
         return { deleted: 0, skipped: true }
       }
 
-      // Would normally call table.delete()
       return { deleted: staleIds.length, skipped: false }
     }
 
@@ -207,7 +199,7 @@ describe('Batch Delete', () => {
         'valid-id-123',
         "invalid'; DROP --",
         'another-valid-456',
-        '' // Empty string - invalid
+        ''
       ]
 
       const { valid, invalid } = filterValidIds(mixedIds)
@@ -218,12 +210,12 @@ describe('Batch Delete', () => {
 
     it('should handle mixed valid/invalid IDs with correct logging', () => {
       const ids = [
-        '12345-1699123456000', // Valid calendar ID
-        'abc@mail.com', // Valid email format
-        "'; DROP TABLE", // Invalid - contains semicolon
-        '<valid-message-id>', // Valid
-        null, // Invalid - not string
-        undefined, // Invalid - not string
+        '12345-1699123456000',
+        'abc@mail.com',
+        "'; DROP TABLE",
+        '<valid-message-id>',
+        null,
+        undefined,
       ]
 
       const logs = []
@@ -244,7 +236,6 @@ describe('Batch Delete', () => {
   })
 
   describe('full batch delete workflow', () => {
-    // Simulate the complete batch delete as in indexer.js
     const executeBatchDeleteWorkflow = async (table, staleIds) => {
       const results = {
         totalStale: staleIds.length,
@@ -259,7 +250,6 @@ describe('Batch Delete', () => {
         return results
       }
 
-      // Validate all IDs first
       const validIds = []
       for (const staleId of staleIds) {
         const validatedId = validateLanceDBId(staleId)
@@ -271,7 +261,6 @@ describe('Batch Delete', () => {
       }
       results.validated = validIds.length
 
-      // Batch delete in chunks of 100
       for (let i = 0; i < validIds.length; i += BATCH_DELETE_SIZE) {
         const batch = validIds.slice(i, i + BATCH_DELETE_SIZE)
         if (batch.length > 0) {
@@ -338,32 +327,25 @@ describe('Batch Delete', () => {
       const staleIds = Array.from({ length: 250 }, (_, i) => `stale-${i}`)
       const results = await executeBatchDeleteWorkflow(mockTable, staleIds)
 
-      expect(results.deletedBatches).toBe(2) // Batches 1 and 3 succeed
-      expect(results.failedBatches).toBe(1) // Batch 2 fails
-      expect(results.totalDeleted).toBe(150) // 100 + 50 from successful batches
+      expect(results.deletedBatches).toBe(2)
+      expect(results.failedBatches).toBe(1)
+      expect(results.totalDeleted).toBe(150)
     })
   })
 
   describe('OR condition query size limits', () => {
     it('should not exceed reasonable query size', () => {
-      // Build OR condition for 100 items
       const ids = Array.from({ length: 100 }, (_, i) => `calendar-event-${i}-1699123456000`)
       const condition = ids.map(id => `id = '${id}'`).join(' OR ')
 
-      // Each condition is roughly "id = 'calendar-event-XX-1699123456000' OR "
-      // ~45 chars per condition, 100 conditions = ~4500 chars
-      // This should be well under any reasonable SQL query limit
       expect(condition.length).toBeLessThan(10000)
     })
 
     it('should handle maximum length IDs at batch size', () => {
-      // IDs at max allowed length (1000 chars)
       const maxLengthId = 'a'.repeat(1000)
       const ids = Array.from({ length: 100 }, () => maxLengthId)
       const condition = ids.map(id => `id = '${id}'`).join(' OR ')
 
-      // 100 * (1000 + "id = ''" + " OR ") = ~100,700 chars
-      // This is getting large but should still work
       expect(condition.length).toBeLessThan(110000)
     })
   })

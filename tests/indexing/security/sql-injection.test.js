@@ -1,13 +1,8 @@
-/**
- * Security tests for SQL injection prevention
- * Tests escapeSQL, validateLanceDBId, and query parameterization
- */
 
 import { describe, it, expect } from 'vitest'
 
 describe('SQL Injection Prevention', () => {
   describe('escapeSQL function', () => {
-    // Simulated escapeSQL implementation
     const escapeSQL = (str) => {
       if (typeof str !== 'string') return ''
       return str.replace(/'/g, "''")
@@ -50,18 +45,12 @@ describe('SQL Injection Prevention', () => {
       const malicious = "'; DROP TABLE users; --"
       const escaped = escapeSQL(malicious)
 
-      // The single quote is doubled, preventing injection
       expect(escaped).toBe("''; DROP TABLE users; --")
-      // The key is that the first quote is escaped (doubled)
-      // so when used in a query like WHERE x = '...', it becomes:
-      // WHERE x = '''; DROP TABLE users; --'
-      // which is a valid string literal, not injection
       expect(escaped.startsWith("''")).toBe(true)
     })
 
     it('should handle Unicode single quote variants', () => {
-      // Note: These are different characters, may or may not need escaping
-      const variants = ["'", "\u2018", "\u2019"] // ASCII, left single, right single
+      const variants = ["'", "\u2018", "\u2019"]
 
       const escaped = escapeSQL(variants[0])
       expect(escaped).toBe("''")
@@ -69,10 +58,8 @@ describe('SQL Injection Prevention', () => {
   })
 
   describe('validateLanceDBId function', () => {
-    // Simulated validateLanceDBId - only allows safe characters
     const validateLanceDBId = (id) => {
       if (typeof id !== 'string') return false
-      // Only alphanumeric, hyphen, underscore, and dot
       return /^[a-zA-Z0-9_.-]+$/.test(id)
     }
 
@@ -96,7 +83,7 @@ describe('SQL Injection Prevention', () => {
     it('should reject special characters', () => {
       expect(validateLanceDBId("id'injection")).toBe(false)
       expect(validateLanceDBId('id;drop')).toBe(false)
-      expect(validateLanceDBId('id--comment')).toBe(true) // Double hyphen is OK
+      expect(validateLanceDBId('id--comment')).toBe(true)
       expect(validateLanceDBId('id/*comment*/')).toBe(false)
     })
 
@@ -121,10 +108,8 @@ describe('SQL Injection Prevention', () => {
   })
 
   describe('calendar delete ID validation', () => {
-    // Calendar IDs should be in format: "title-timestamp"
     const validateCalendarId = (id) => {
       if (typeof id !== 'string') return false
-      // More permissive for titles, but no SQL-dangerous chars
       return !/[';\\"]/.test(id) && id.length > 0
     }
 
@@ -156,26 +141,21 @@ describe('SQL Injection Prevention', () => {
 
   describe('query parameter safety', () => {
     it('should not use string interpolation for queries', () => {
-      // Bad pattern (DON'T DO THIS):
       const badQuery = (id) => `DELETE FROM events WHERE id = '${id}'`
 
-      // Good pattern (parameterized):
       const goodQuery = () => 'DELETE FROM events WHERE id = ?'
 
       const maliciousId = "'; DROP TABLE events; --"
 
-      // Bad pattern is vulnerable
       const unsafeQuery = badQuery(maliciousId)
       expect(unsafeQuery).toContain('DROP TABLE')
 
-      // Good pattern is safe (placeholder not replaced)
       const safeQuery = goodQuery()
       expect(safeQuery).not.toContain(maliciousId)
       expect(safeQuery).toContain('?')
     })
 
     it('should use parameter binding syntax', () => {
-      // SQLite parameter styles
       const positionalParams = 'SELECT * FROM events WHERE id = ?'
       const namedParams = 'SELECT * FROM events WHERE id = :id'
       const numberedParams = 'SELECT * FROM events WHERE id = ?1'
@@ -189,7 +169,6 @@ describe('SQL Injection Prevention', () => {
   describe('LIKE wildcard escaping', () => {
     const escapeLikePattern = (str) => {
       if (typeof str !== 'string') return ''
-      // Escape % and _ which are LIKE wildcards
       return str
         .replace(/%/g, '\\%')
         .replace(/_/g, '\\_')
@@ -229,7 +208,6 @@ describe('SQL Injection Prevention', () => {
     })
 
     it('should prevent wildcard injection', () => {
-      // Attacker tries to match all records
       const malicious = '%'
       const escaped = escapeLikePattern(malicious)
 
@@ -308,7 +286,6 @@ describe('SQL Injection Prevention', () => {
   describe('table/column name validation', () => {
     const validateIdentifier = (name) => {
       if (typeof name !== 'string') return false
-      // SQLite identifier rules: alphanumeric + underscore, not starting with digit
       return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)
     }
 

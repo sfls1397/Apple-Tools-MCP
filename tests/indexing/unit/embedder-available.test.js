@@ -1,7 +1,3 @@
-/**
- * Real Transformers.js/sharp idx tests must skip on Linux (and any host without
- * the platform sharp native). This package is darwin-only.
- */
 
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'

@@ -1,19 +1,9 @@
-/**
- * Resource tests for memory usage
- * Tests peak heap usage and memory bounds
- *
- * Pure logic tests - no mocking required.
- */
 
 import { describe, it, expect } from 'vitest'
 
-// Standard indexer constants
 const BATCH_SIZE = 32
 const EMBEDDING_DIM = 384
 
-/**
- * Generate test data
- */
 function generateTestData(count, options = {}) {
   const { bodySize = 100 } = options
   return Array.from({ length: count }, (_, i) => ({
@@ -23,9 +13,6 @@ function generateTestData(count, options = {}) {
   }))
 }
 
-/**
- * Generate calendar event data
- */
 function generateCalendarData(count) {
   const now = Date.now()
   return Array.from({ length: count }, (_, i) => ({
@@ -36,9 +23,6 @@ function generateCalendarData(count) {
   }))
 }
 
-/**
- * Measure current memory usage
- */
 function measureMemory() {
   if (typeof process !== 'undefined' && process.memoryUsage) {
     const usage = process.memoryUsage()
@@ -52,18 +36,12 @@ function measureMemory() {
   return { heapUsed: 0, heapTotal: 0, external: 0, rss: 0 }
 }
 
-/**
- * Assert memory is within bounds
- */
 function assertMemory(current, threshold, context) {
   if (current > threshold) {
     throw new Error(`Memory exceeded: ${current.toFixed(2)}MB > ${threshold}MB (${context})`)
   }
 }
 
-/**
- * Track performance metrics
- */
 class PerformanceTracker {
   constructor(name) {
     this.name = name
@@ -112,7 +90,6 @@ describe('Memory Usage', () => {
       for (let i = 0; i < items.length; i += BATCH_SIZE) {
         await Promise.resolve()
 
-        // Sample every 5 batches
         if (i % (BATCH_SIZE * 5) === 0) {
           tracker.sample(`batch ${Math.floor(i / BATCH_SIZE)}`)
         }
@@ -121,7 +98,6 @@ describe('Memory Usage', () => {
       tracker.stop()
       const peakHeap = tracker.getPeakMemory()
 
-      // Peak heap should be under 300MB
       expect(peakHeap).toBeLessThan(300)
     })
 
@@ -156,19 +132,16 @@ describe('Memory Usage', () => {
 
       const tracker = new PerformanceTracker('Combined Indexing Memory').start()
 
-      // Index emails
       for (let i = 0; i < emails.length; i += BATCH_SIZE) {
         await Promise.resolve()
       }
       tracker.sample('emails done')
 
-      // Index messages
       for (let i = 0; i < messages.length; i += BATCH_SIZE) {
         await Promise.resolve()
       }
       tracker.sample('messages done')
 
-      // Index events
       for (let i = 0; i < events.length; i += BATCH_SIZE) {
         await Promise.resolve()
       }
@@ -183,7 +156,7 @@ describe('Memory Usage', () => {
 
   describe('memory growth per batch', () => {
     it('should not grow memory significantly per batch', async () => {
-      const count = 640 // 20 batches
+      const count = 640
       const items = generateTestData(count)
 
       const memorySnapshots = []
@@ -197,10 +170,8 @@ describe('Memory Usage', () => {
         memorySnapshots.push(currentMemory.heapUsed)
       }
 
-      // Calculate growth between first and last
       const totalGrowth = memorySnapshots[memorySnapshots.length - 1] - memorySnapshots[0]
 
-      // Should not grow more than 50MB total for pure logic operations
       expect(totalGrowth).toBeLessThan(50)
     })
 
@@ -225,11 +196,9 @@ describe('Memory Usage', () => {
   describe('embedding vector memory', () => {
     it('should calculate correct memory for embedding vectors', () => {
       const count = 1000
-      // Each vector is 384 floats * 4 bytes = 1536 bytes
       const bytesPerVector = EMBEDDING_DIM * 4
-      const totalVectorMemory = (count * bytesPerVector) / (1024 * 1024) // MB
+      const totalVectorMemory = (count * bytesPerVector) / (1024 * 1024)
 
-      // 1000 vectors * 384 dims * 4 bytes = ~1.46MB
       expect(totalVectorMemory).toBeLessThan(2)
     })
 
@@ -268,11 +237,9 @@ describe('Memory Usage', () => {
 
         maxInFlightBatches = Math.max(maxInFlightBatches, currentBatches.length)
 
-        // Simulate disposal
         currentBatches = []
       }
 
-      // Should only ever have 1 batch in flight at a time
       expect(maxInFlightBatches).toBe(1)
     })
   })
@@ -280,7 +247,6 @@ describe('Memory Usage', () => {
   describe('large text handling', () => {
     it('should handle large bodies without excessive memory', async () => {
       const count = 50
-      // Generate items with large bodies (10KB each)
       const items = generateTestData(count, { bodySize: 10000 })
 
       const beforeMemory = measureMemory()
@@ -292,7 +258,6 @@ describe('Memory Usage', () => {
       const afterMemory = measureMemory()
       const growth = afterMemory.heapUsed - beforeMemory.heapUsed
 
-      // Even with large texts, growth should be reasonable
       expect(growth).toBeLessThan(200)
     })
   })
