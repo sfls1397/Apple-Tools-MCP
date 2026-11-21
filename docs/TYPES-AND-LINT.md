@@ -31,7 +31,7 @@ Each finding is keyed by its tool, rule, file and a hash of its line's text, so 
 | tsc | 0 |
 | Imports | 0 |
 | Suppression | 0 |
-| Comments | 6,504 lines in 177 files (JavaScript and shell 6,476, Python docstrings 28) |
+| Comments | 0 (6,504 lines in 177 files before the 17 cleanup parts) |
 
 The list only shrinks:
 
@@ -78,7 +78,7 @@ Edit `.lint/package.json` and regenerate the lockfile, or the Ruff version and c
 
 ## Comments in today's code, and the cleanup parts
 
-Measured on main at 84cebd2 with this check: 6,504 comment lines in 177 files (`tests` 3,156, `lib` 2,258, repository root 855, `scripts` 143, `.security` 63, `bin` 20, `.cursor` 5, `.githooks` 4). Two lines name Peter (`tests/unit/http-auth.test.js:104`, `tests/unit/write-tools.test.js:1799`); no lesson ID sits in a comment; about 28 name a PR or a date. Each of those reasons must live where it belongs before its comment is deleted.
+The cleanup is complete: all 17 parts merged and the comment count is 0, with no comment entry left in the baseline. The measurements below are from before it, on main at 84cebd2 with this check: 6,504 comment lines in 177 files (`tests` 3,156, `lib` 2,258, repository root 855, `scripts` 143, `.security` 63, `bin` 20, `.cursor` 5, `.githooks` 4). Two lines name Peter (`tests/unit/http-auth.test.js:104`, `tests/unit/write-tools.test.js:1799`); no lesson ID sits in a comment; about 28 name a PR or a date. Each of those reasons must live where it belongs before its comment is deleted.
 
 The most: `indexer.js` 361, `lib/mailWrite.js` 286, `lib/validators.js` 198, `search.js` 193, `lib/audit.js` 186, `index.js` 183, `lib/appleScript.js` 169.
 
