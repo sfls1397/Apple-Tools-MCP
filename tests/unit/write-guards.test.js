@@ -1,10 +1,3 @@
-/**
- * Unit tests for lib/writeGuards.js
- *
- * BA AC: deletes and multi-recipient sends are dry-run / confirm safe, no
- * silent mass delete, responses name what would happen without dumping
- * message bodies into error paths.
- */
 
 import { describe, it, expect } from 'vitest'
 import {

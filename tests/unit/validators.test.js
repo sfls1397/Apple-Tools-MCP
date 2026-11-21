@@ -1,7 +1,3 @@
-/**
- * Unit tests for lib/validators.js
- * CRITICAL: Security validation tests including attack vector coverage
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import path from 'path'
@@ -29,7 +25,6 @@ import {
   stripSubjectPrefixes
 } from '../../lib/validators.js'
 
-// ============ PATH VALIDATION TESTS ============
 
 describe('validateFilePath', () => {
   const allowedDir = '/Users/test/Library/Mail'
@@ -67,15 +62,10 @@ describe('validateFilePath', () => {
     })
 
     it('should reject encoded path traversal %2e%2e%2f', () => {
-      // Note: path.resolve handles this, but the path won't be in allowed dir
       const malicious = '/Users/test/Library/Mail/%2e%2e/%2e%2e/etc/passwd'
-      // This stays within Mail dir because %2e is literal, not decoded
-      // The real protection is that the resolved path must start with allowedDir
     })
 
     it('should reject multiple ../ sequences', () => {
-      // Note: ....// resolves to a literal directory name, not traversal
-      // Real traversal attempts use actual ../
       expect(() =>
         validateFilePath('/Users/test/Library/Mail/../../../etc/passwd', allowedDir)
       ).toThrow('Access denied: path outside allowed directory')
@@ -155,7 +145,6 @@ describe('validateEmailPath', () => {
   })
 })
 
-// ============ NUMERIC VALIDATION TESTS ============
 
 describe('validateLimit', () => {
   it('should return valid integer within bounds', () => {
@@ -177,8 +166,8 @@ describe('validateLimit', () => {
   })
 
   it('should cap at maximum value', () => {
-    expect(validateLimit(5000)).toBe(1000) // default max
-    expect(validateLimit(200, 30, 100)).toBe(100) // custom max
+    expect(validateLimit(5000)).toBe(1000)
+    expect(validateLimit(200, 30, 100)).toBe(100)
   })
 
   it('should use custom default value', () => {
@@ -188,7 +177,7 @@ describe('validateLimit', () => {
 
   it('should handle integer overflow attempts', () => {
     expect(validateLimit(Number.MAX_SAFE_INTEGER)).toBe(1000)
-    expect(validateLimit(Infinity)).toBe(30) // NaN from parseInt
+    expect(validateLimit(Infinity)).toBe(30)
   })
 })
 
@@ -227,7 +216,6 @@ describe('validateWeekOffset', () => {
   })
 })
 
-// ============ STRING ESCAPING TESTS ============
 
 describe('escapeAppleScript', () => {
   describe('valid escaping', () => {
@@ -256,16 +244,13 @@ describe('escapeAppleScript', () => {
     it('should escape command injection attempt with do shell script', () => {
       const malicious = '" & do shell script "rm -rf /"'
       const escaped = escapeAppleScript(malicious)
-      // Quotes are escaped with backslash, making injection impossible
       expect(escaped).toBe('\\" & do shell script \\"rm -rf /\\"')
-      // The " is escaped to \" which is safe
       expect(escaped.startsWith('\\"')).toBe(true)
     })
 
     it('should escape tell app injection', () => {
       const malicious = '"; tell app "Terminal" to do script "'
       const escaped = escapeAppleScript(malicious)
-      // Quotes are escaped, preventing script termination
       expect(escaped).toBe('\\"; tell app \\"Terminal\\" to do script \\"')
     })
 
@@ -405,7 +390,7 @@ describe('escapeSQL', () => {
     it('should escape DELETE injection', () => {
       const malicious = "1; DELETE FROM emails"
       const escaped = escapeSQL(malicious)
-      expect(escaped).toBe("1; DELETE FROM emails") // No quotes, so unchanged
+      expect(escaped).toBe("1; DELETE FROM emails")
     })
 
     it('should escape admin comment injection', () => {
@@ -468,7 +453,6 @@ describe('validateLanceDBId', () => {
   })
 })
 
-// ============ SEARCH QUERY VALIDATION TESTS ============
 
 describe('validateSearchQuery', () => {
   describe('valid queries', () => {
@@ -540,7 +524,6 @@ describe('validateContact', () => {
   })
 })
 
-// ============ DATE VALIDATION TESTS ============
 
 describe('validateDate', () => {
   describe('valid dates', () => {
@@ -551,7 +534,7 @@ describe('validateDate', () => {
     })
 
     it('should accept timestamps', () => {
-      const result = validateDate(1705276800000) // 2024-01-15
+      const result = validateDate(1705276800000)
       expect(result).toBeInstanceOf(Date)
     })
 
@@ -563,19 +546,14 @@ describe('validateDate', () => {
 
   describe('date range validation', () => {
     it('should reject dates before 1990', () => {
-      // Note: '1989-12-31' may parse to 1989 in UTC which is < 1990
       expect(validateDate('1989-06-15')).toBeNull()
     })
 
     it('should reject dates after 2100', () => {
-      // The check is year > 2100, so 2101 should be rejected
-      // But Date parsing can vary - 2101-01-01 gives year 2101
-      // which fails the > 2100 check
       expect(validateDate('2150-01-01')).toBeNull()
     })
 
     it('should accept dates at boundaries', () => {
-      // Use dates clearly within range to avoid timezone edge cases
       expect(validateDate('1995-06-15')).toBeInstanceOf(Date)
       expect(validateDate('2050-06-15')).toBeInstanceOf(Date)
     })
@@ -589,7 +567,7 @@ describe('validateDate', () => {
 
     it('should return null for invalid date string', () => {
       expect(validateDate('not-a-date')).toBeNull()
-      expect(validateDate('2024-13-45')).toBeNull() // Invalid month/day
+      expect(validateDate('2024-13-45')).toBeNull()
     })
 
     it('should return null for empty string', () => {
@@ -598,7 +576,6 @@ describe('validateDate', () => {
   })
 })
 
-// ============ ENVIRONMENT VALIDATION TESTS ============
 
 describe('getValidatedHome', () => {
   const originalHome = process.env.HOME
@@ -608,7 +585,6 @@ describe('getValidatedHome', () => {
   })
 
   it('should return valid HOME directory', () => {
-    // This test uses the actual HOME directory
     const home = getValidatedHome()
     expect(home).toBe(originalHome)
     expect(path.isAbsolute(home)).toBe(true)
@@ -630,7 +606,6 @@ describe('getValidatedHome', () => {
   })
 })
 
-// ============ REGEX SAFETY TESTS ============
 
 describe('escapeRegex', () => {
   it('should escape special regex characters', () => {
@@ -668,14 +643,13 @@ describe('safeMatch', () => {
   it('should truncate long inputs', () => {
     const longInput = 'A'.repeat(20000)
     const result = safeMatch(longInput, /A+/)
-    // Should still work but input is truncated
     expect(result).not.toBeNull()
   })
 
   it('should use custom max length', () => {
     const input = 'A'.repeat(100) + 'B'
     const result = safeMatch(input, /B/, 50)
-    expect(result).toBeNull() // B is after truncation point
+    expect(result).toBeNull()
   })
 
   it('should return null for invalid input', () => {
@@ -734,7 +708,7 @@ describe('stripHtmlTags', () => {
       const malicious = '<'.repeat(1000) + '>'
       stripHtmlTags(malicious)
       const elapsed = Date.now() - start
-      expect(elapsed).toBeLessThan(100) // Should complete quickly
+      expect(elapsed).toBeLessThan(100)
     })
 
     it('should handle repeated div tags quickly', () => {
@@ -756,7 +730,6 @@ describe('stripHtmlTags', () => {
     it('should truncate very long inputs', () => {
       const longHtml = '<p>A</p>'.repeat(50000)
       const result = stripHtmlTags(longHtml)
-      // Should be truncated and processed
       expect(result.length).toBeLessThan(longHtml.length)
     })
   })
@@ -784,7 +757,6 @@ describe('stripHtmlTags', () => {
     })
 
     it('should handle HTML entities in text', () => {
-      // Note: This function doesn't decode entities, just strips tags
       expect(stripHtmlTags('<p>&amp; &lt;</p>')).toBe('&amp; &lt;')
     })
   })

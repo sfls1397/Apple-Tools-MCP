@@ -1,12 +1,3 @@
-/**
- * Bridged-write logging and the declined-then-local-fallback message.
- *
- * Overnight on the Mini (2026-10-01) a Network-Tools alert email took 10
- * minutes to get out: the indexer daemon declined mail_send, the HTTP
- * process fell back to running it locally (where GUI scripting can never
- * work), and the only log line said "Write bridge unavailable … (no
- * response)". The daemon's own reason was never logged anywhere.
- */
 
 import { describe, it, expect } from 'vitest'
 import { classifyWriteFailure, dispatchWriteTool, loggedBridgeHandler } from '../../lib/writeTools.js'
