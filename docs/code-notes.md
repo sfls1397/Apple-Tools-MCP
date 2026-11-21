@@ -183,7 +183,7 @@ Usage: `node scripts/audit-index.js [--sources emails,messages] [--max-items 50]
 ## `lib/eventKitSession.js`
 
 - A long-lived EventKit JXA worker, kept by the indexer daemon as one `osascript` process. A writeOnly grant (`EKAuthorizationStatus` 4) can create an `EKEvent` and read identifiers off that in-memory object, but cannot re-query through `eventWithIdentifier` or `calendarItemsWithExternalIdentifier`: Mini commit 2cdf44d failed an add on a post-save lookup even though create had returned ids. So `create` caches the `EKEvent` objects, `update` and `remove` use the cache to call `saveEvent` and `removeEvent` without a fetch, and `create` never calls `findEventByIds`.
-- Protocol: stdin and stdout carry one JSON object per line. Nothing is interpolated into a shell (`spawn` with `shell: false`). Cleanup of the command and response files and the child is best effort: a failed `unlink`, `kill` or `quit` is ignored on purpose, because shutdown must not throw.
+- Protocol: the parent writes one JSON command to `cmd.json` and polls `rsp.json` for the JSON reply (the worker reads and writes the same files); the child's stdin and stdout are ignored. `spawn` runs with `shell: false`, so nothing is interpolated into a shell. Cleanup of the command and response files and the child is best effort: a failed `unlink`, `kill` or `quit` is ignored.
 
 ## `lib/httpAuth.js` and `lib/httpTransport.js`
 
