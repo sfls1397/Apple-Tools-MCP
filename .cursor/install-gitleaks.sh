@@ -24,8 +24,8 @@ checksums="gitleaks_${version}_checksums.txt"
 release="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "$temporary"' EXIT
-curl --fail --silent --show-error --location --retry 3 "$release/$archive" -o "$temporary/$archive"
-curl --fail --silent --show-error --location --retry 3 "$release/$checksums" -o "$temporary/$checksums"
+curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 --max-time 300 "$release/$archive" -o "$temporary/$archive"
+curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 --max-time 300 "$release/$checksums" -o "$temporary/$checksums"
 awk -v archive="$archive" '$2 == archive && NF == 2 { print }' "$temporary/$checksums" > "$temporary/selected-checksum"
 [[ "$(wc -l < "$temporary/selected-checksum")" -eq 1 ]] || {
   echo 'Expected exactly one release checksum for the Gitleaks archive.' >&2

@@ -11,11 +11,12 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-SETUP = ['.security/lint.py', '.cursor/install-lint.sh', '.lint/ruff.toml', '.lint/eslint.config.mjs', '.lint/tsconfig.json',
+SETUP = ['.security/lint.py', '.security/comment_tool.py', '.security/script-tree.mjs', '.cursor/install-lint.sh', '.lint/ruff.toml', '.lint/eslint.config.mjs', '.lint/tsconfig.json',
          '.lint/vitest-globals.d.ts', '.lint/reader.mjs', '.lint/package.json', '.lint/package-lock.json', 'pyrightconfig.json', 'package.json']
 FILES = {
     'lib/add.js': 'export function add(a, b) {\n  return a + b;\n}\n',
     'lib/legacy.js': 'const unused = 1;\n// an old note\nexport const kept = 1;\n',
+    'lib/held.js': 'const dead = 1; // a trailing note\nexport const alive = 1;\n',
     'tests/helper.js': 'export const helper = 1;\n',
     'scripts/old.js': 'export const value = 1;\n',
     '.security/old.py': 'import os\n\n\ndef ok():\n    return 1\n',
@@ -79,6 +80,9 @@ class LintStep(unittest.TestCase):
         if base:
             env['LOCAL_GATE_BASE'] = base
         return subprocess.run([sys.executable, '.security/lint.py', mode], cwd=self.dir, env=env, capture_output=True, text=True)
+
+    def comment_tool(self, *args):
+        return subprocess.run([sys.executable, '.security/comment_tool.py'] + list(args), cwd=self.dir, capture_output=True, text=True)
 
     def blocked(self, files, expect):
         self.commit('change', files)
@@ -165,6 +169,38 @@ class LintStep(unittest.TestCase):
         self.commit('allowed', files)
         result = self.lint('gate', self.base)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_strip_cuts_a_trailing_comment_at_the_right_column_after_wide_characters(self):
+        files = {'lib/wide.js': 'export const a = "\U0001F600 x"; // says what it does\nexport const b = "\u00e9"; /* note */ export const c = 1; // tail\n',
+                 '.githooks/wide': '#!/bin/sh\necho "\U0001F600\u00e9" # says what it does\necho ok\n'}
+        self.commit('wide', files)
+        result = self.comment_tool('strip', 'lib/wide.js', '.githooks/wide')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.dir / 'lib/wide.js').read_text(), 'export const a = "\U0001F600 x";\nexport const b = "\u00e9"; export const c = 1;\n')
+        self.assertEqual((self.dir / '.githooks/wide').read_text(), '#!/bin/sh\necho "\U0001F600\u00e9"\necho ok\n')
+        same = self.comment_tool('same-tree', '--base', 'HEAD', 'lib/wide.js', '.githooks/wide')
+        self.assertEqual(same.returncode, 0, same.stdout + same.stderr)
+        self.assertIn('same lib/wide.js', same.stdout)
+        self.assertIn('same .githooks/wide', same.stdout)
+
+    def test_strip_warns_when_a_held_finding_sat_on_a_line_with_a_trailing_comment(self):
+        result = self.comment_tool('strip', 'lib/held.js')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.dir / 'lib/held.js').read_text(), 'const dead = 1;\nexport const alive = 1;\n')
+        self.assertIn('WARNING: 1 lint findings are now outside the baseline', result.stdout)
+
+    def test_strip_stays_quiet_when_nothing_held_loses_its_comment(self):
+        self.commit('note', {'lib/clean.js': 'export const fine = 1; // says what it does\n'})
+        result = self.comment_tool('strip', 'lib/clean.js')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('WARNING', result.stdout)
+
+    def test_same_tree_says_a_list_in_one_argument_is_one_file_name(self):
+        result = self.comment_tool('same-tree', '--base', 'HEAD', 'lib/add.js lib/legacy.js')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('give each file as its own argument', result.stdout)
+        ok = self.comment_tool('same-tree', '--base', 'HEAD', 'lib/add.js', 'lib/legacy.js')
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
 
     def test_the_baseline_cannot_grow(self):
         path = self.dir / '.lint/baseline.json'
