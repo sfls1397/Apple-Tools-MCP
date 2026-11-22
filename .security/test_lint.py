@@ -183,6 +183,13 @@ class LintStep(unittest.TestCase):
         self.assertIn('same lib/wide.js', same.stdout)
         self.assertIn('same .githooks/wide', same.stdout)
 
+    def test_strip_cuts_the_whole_shell_comment_when_its_own_text_is_not_ascii(self):
+        text = '#!/bin/sh\n# caf\u00e9 r\u00e9sum\u00e9 note\necho ok # caf\u00e9 tail\necho "\u00e9" # caf\u00e9 more\n'
+        self.commit('multibyte', {'.githooks/multibyte': text})
+        result = self.comment_tool('strip', '.githooks/multibyte')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.dir / '.githooks/multibyte').read_text(), '#!/bin/sh\necho ok\necho "\u00e9"\n')
+
     def test_strip_warns_when_a_held_finding_sat_on_a_line_with_a_trailing_comment(self):
         result = self.comment_tool('strip', 'lib/held.js')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

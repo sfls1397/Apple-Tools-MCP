@@ -51,6 +51,14 @@ def in_characters(spans, lines, convert):
             for start, first, end, last in spans]
 
 
+def shell_in_characters(spans, lines):
+    converted = []
+    for start, first, end, last in spans:
+        begin = byte_index(lines[start - 1], first) if start <= len(lines) else first
+        converted.append((start, begin, end, begin + (last - first) if end == start else last))
+    return converted
+
+
 def spans_of(root, source, python, script, shell):
     spans = collections.defaultdict(list)
     for name in python:
@@ -62,7 +70,7 @@ def spans_of(root, source, python, script, shell):
         for name in script:
             spans[name] = in_characters(spans[name], file_lines(root, name), utf16_index)
     for name in shell:
-        spans[name] = in_characters(lint.shell_spans(root, '\n'.join(source.lines(name)) + '\n') or [], file_lines(root, name), byte_index)
+        spans[name] = shell_in_characters(lint.shell_spans(root, '\n'.join(source.lines(name)) + '\n') or [], file_lines(root, name))
     return spans
 
 
