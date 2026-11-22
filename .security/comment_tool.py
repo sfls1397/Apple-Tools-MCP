@@ -29,6 +29,36 @@ KINDS = (('peter citation', re.compile(r'\bPeter\b')), ('lesson reason', re.comp
 LESSON = re.compile(r'\bL-[0-9a-f]{10}\b')
 
 
+def utf16_index(line, column):
+    units = 0
+    for index, character in enumerate(line):
+        if units >= column:
+            return index
+        units += 2 if ord(character) > 0xFFFF else 1
+    return len(line)
+
+
+def byte_index(line, column):
+    return len(line.encode()[:column].decode(errors='ignore'))
+
+
+def file_lines(root, name):
+    return (Path(root) / name).read_text().split('\n')
+
+
+def in_characters(spans, lines, convert):
+    return [(start, convert(lines[start - 1], first) if start <= len(lines) else first, end, convert(lines[end - 1], last) if end <= len(lines) else last)
+            for start, first, end, last in spans]
+
+
+def shell_in_characters(spans, lines):
+    converted = []
+    for start, first, end, last in spans:
+        begin = byte_index(lines[start - 1], first) if start <= len(lines) else first
+        converted.append((start, begin, end, begin + (last - first) if end == start else last))
+    return converted
+
+
 def spans_of(root, source, python, script, shell):
     spans = collections.defaultdict(list)
     for name in python:
@@ -37,8 +67,10 @@ def spans_of(root, source, python, script, shell):
     if script:
         for item in source.script_reads(script)['comments']:
             spans[lint.relative(root, item['file'])].append((item['line'], item['column'], item['endLine'], item['endColumn']))
+        for name in script:
+            spans[name] = in_characters(spans[name], file_lines(root, name), utf16_index)
     for name in shell:
-        spans[name] = lint.shell_spans(root, '\n'.join(source.lines(name)) + '\n') or []
+        spans[name] = shell_in_characters(lint.shell_spans(root, '\n'.join(source.lines(name)) + '\n') or [], file_lines(root, name))
     return spans
 
 
@@ -182,12 +214,19 @@ def trees(root, name, texts, blank):
     return [None, None]
 
 
+def outside_baseline(root):
+    result = subprocess.run([sys.executable, str(HERE / 'lint.py'), 'counts'], cwd=str(root), capture_output=True, text=True)
+    match = re.search(r'(\d+) outside the baseline', result.stdout)
+    return int(match.group(1)) if match else 0
+
+
 def same_tree(root, base, names, blank):
     different = 0
     for name in names:
         shown = subprocess.run(['git', 'show', f'{base}:{name}'], cwd=str(root), capture_output=True, text=True)
         if shown.returncode:
-            print(f'UNREADABLE {name}: not in {base}')
+            hint = '; give each file as its own argument, a quoted list is one name' if re.search(r'\s', name) else ''
+            print(f'UNREADABLE {name}: not in {base}{hint}')
             different += 1
             continue
         try:
@@ -220,6 +259,10 @@ def main(argv):
         for name, count in sorted(changed.items()):
             print(f'stripped {count} comment lines from {name}')
         print(f'{sum(changed.values())} comment lines removed from {len(changed)} files')
+        held = outside_baseline(root) if changed else 0
+        if held:
+            print(f'WARNING: {held} lint findings are now outside the baseline. A held finding sat on a line with a trailing comment, and stripping it changed the finding key. '
+                  'Delete the dead variable, or rename it with a leading underscore if the read matters; do not re-key the baseline.')
         return 0
     if command == 'same-tree':
         base = 'origin/main'

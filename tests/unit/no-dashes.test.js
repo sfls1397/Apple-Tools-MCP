@@ -1,6 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 
 const osascript = vi.hoisted(() => vi.fn(() => ''))
+const appData = vi.hoisted(() => ({ dir: '' }))
+
+vi.mock('../../lib/config.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  appData.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atm-nodash-'))
+  return { ...actual, getAppleToolsDir: () => appData.dir }
+})
 
 vi.mock('../../lib/shell.js', async (importOriginal) => {
   const actual = await importOriginal()
@@ -14,6 +24,10 @@ function lastScript() {
   const calls = osascript.mock.calls
   return String(calls[calls.length - 1][0])
 }
+
+afterAll(() => {
+  fs.rmSync(appData.dir, { recursive: true, force: true })
+})
 
 beforeEach(() => {
   osascript.mockReset()
@@ -73,6 +87,12 @@ describe('send paths', () => {
     expect(result.message).toContain('subject "Plan, Friday"')
     expect(result.message).not.toMatch(/[–—]/)
     expect(result.message).toContain('Rewrote 2 dashes')
+  })
+
+  it('keeps the mail send fence in a temporary directory, never the real app data', () => {
+    executeWriteToolLocally('mail_draft', { to: ['a@example.com'], subject: 'Plan', body: 'Hi', dry_run: true })
+    expect(fs.existsSync(path.join(appData.dir, 'mail-send-claims'))).toBe(true)
+    expect(appData.dir.startsWith(os.tmpdir())).toBe(true)
   })
 
   it('rewrites a text message body before it reaches Messages', () => {

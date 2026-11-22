@@ -39,7 +39,7 @@ sha256() {
 
 ruff_dir="$lint_home/ruff-$version"
 if [[ ! -x "$ruff_dir/ruff" ]] || [[ "$("$ruff_dir/ruff" --version | awk '{print $2}')" != "$version" ]]; then
-  curl -fsSL "https://github.com/astral-sh/ruff/releases/download/$version/ruff-$target.tar.gz" -o "$temporary/ruff.tar.gz"
+  curl -fsSL --connect-timeout 20 --max-time 300 "https://github.com/astral-sh/ruff/releases/download/$version/ruff-$target.tar.gz" -o "$temporary/ruff.tar.gz"
   test "$(sha256 "$temporary/ruff.tar.gz")" = "$checksum" || { echo 'Ruff checksum mismatch' >&2; exit 1; }
   tar -xzf "$temporary/ruff.tar.gz" -C "$temporary"
   mkdir -p "$temporary/ruff-install"
@@ -51,7 +51,7 @@ test "$("$ruff_dir/ruff" --version | awk '{print $2}')" = "$version"
 
 shfmt_dir="$lint_home/shfmt-$shfmt_version"
 if [[ ! -x "$shfmt_dir/shfmt" ]] || [[ "$("$shfmt_dir/shfmt" --version)" != "v$shfmt_version" ]]; then
-  curl -fsSL "https://github.com/mvdan/sh/releases/download/v$shfmt_version/shfmt_v${shfmt_version}_$shfmt_target" -o "$temporary/shfmt"
+  curl -fsSL --connect-timeout 20 --max-time 300 "https://github.com/mvdan/sh/releases/download/v$shfmt_version/shfmt_v${shfmt_version}_$shfmt_target" -o "$temporary/shfmt"
   test "$(sha256 "$temporary/shfmt")" = "$shfmt_checksum" || { echo 'shfmt checksum mismatch' >&2; exit 1; }
   mkdir -p "$temporary/shfmt-install"
   install -m 755 "$temporary/shfmt" "$temporary/shfmt-install/shfmt"

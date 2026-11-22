@@ -13,7 +13,7 @@ if command -v shellcheck >/dev/null 2>&1 && shellcheck --version | awk '/version
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
 archive="shellcheck-v$version.$target.tar.gz"
-curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v$version/$archive" -o "$temporary/tool.tar.gz"
+curl -fsSL --connect-timeout 20 --max-time 300 "https://github.com/koalaman/shellcheck/releases/download/v$version/$archive" -o "$temporary/tool.tar.gz"
 if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$temporary/tool.tar.gz" | awk '{print $1}'); else actual=$(shasum -a 256 "$temporary/tool.tar.gz" | awk '{print $1}'); fi
 test "$actual" = "$checksum" || { echo 'ShellCheck checksum mismatch' >&2; exit 1; }
 tar -xzf "$temporary/tool.tar.gz" -C "$temporary"
